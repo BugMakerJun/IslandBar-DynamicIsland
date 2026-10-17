@@ -480,10 +480,9 @@ void DrawTopSheen(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, 
         float radiusY;
         float alpha;
     };
-    const Blob blobs[4] = {
-        // A tight glint near the left end, then three wider washes: the glint is what reads as a
-        // SPECULAR corner rather than as general brightness.
-        {0.16f, 0.20f, 0.09f, 0.30f, 1.00f},
+    const Blob blobs[3] = {
+        // No tight glint at the left end: at 1x it read as a separate pale cap rather than as a
+        // reflection, which is what the user circled. Three soft washes only.
         {0.34f, 0.20f, 0.20f, 0.55f, 0.95f},
         {0.54f, 0.15f, 0.24f, 0.40f, 0.70f},
         {0.74f, 0.26f, 0.16f, 0.48f, 0.50f},

@@ -575,9 +575,8 @@ void Renderer::RenderFrame(const FrameState& frame) {
         // The faint cool tints at the two ends: the colour a thick edge picks up from the room.
         island::DrawEdgeTints(d2dContext_, rounded, theme, 1.0f);
 
-        // THE EDGE OPTICS (round 56): a 2.2 DIP lit wall with two micro-offset dispersion hairlines,
-        // then the dark thickness, then the surface bending inside it.
-        island::DrawEdgeRefraction(d2dContext_, rounded, theme, 1.0f);
+        // No wide lit band: the user pointed at it -- a ring inside the rim reads as a second surface.
+        // Only the thin outside line and the dark thickness remain (and the curvature inside them).
         island::DrawGlassRim(d2dContext_, rounded, theme, 1.0f);
         island::DrawCurvature(d2dContext_, rounded, theme, 1.0f);
 
