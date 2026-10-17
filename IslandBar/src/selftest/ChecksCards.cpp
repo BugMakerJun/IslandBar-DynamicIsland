@@ -4687,29 +4687,6 @@ void TestMusicCardLayout() {
                 Check(!ThemeFromText(badKey, &parsed, &why),
                       L"an unknown key is refused, so a typo cannot be silently ignored");
 
-                // THE REAL BACKDROP (HANDOFF 8.166-8.168). A theme may ask for the second window that
-                // carries the system's acrylic, and exactly one built-in does; the switch is 0 or 1
-                // because "half a backdrop" is not a thing.
-                const char* withBackdrop = "name=glass\nbackdrop=1\n";
-                Check(ThemeFromText(withBackdrop, &parsed, &why) && parsed.backdrop,
-                      L"backdrop=1 turns the real backdrop on");
-                // One colour as well as the name: a file with nothing but a name is refused by the
-                // format ("nothing but a name"), which is a different rule and is checked above.
-                const char* withoutBackdrop = "name=plain\naccent=0.2,0.6,1.0\n";
-                Check(ThemeFromText(withoutBackdrop, &parsed, &why) && !parsed.backdrop,
-                      L"a theme that does not mention it keeps the painted material");
-                const char* halfBackdrop = "name=x\nbackdrop=0.5\n";
-                Check(!ThemeFromText(halfBackdrop, &parsed, &why),
-                      L"backdrop is a switch: 0 or 1, never a strength");
-                int backdrops = 0;
-                for (int i = 0; i < BuiltInThemeCount(); ++i) {
-                    if (BuiltInTheme(i).backdrop) ++backdrops;
-                }
-                // 玻璃 is index 3 in kThemes: 默认, 冰蓝, 石墨, 玻璃.
-                Check(backdrops == 1 && BuiltInTheme(3).backdrop,
-                      L"exactly the glass theme asks for the real backdrop",
-                      L"默认/冰蓝/石墨 keep their pixels and cost no second window");
-
                 for (int i = 0; i < BuiltInThemeCount(); ++i) {
                     const Theme& theme = BuiltInTheme(i);
                     const float contrast = ThemeInkContrast(theme);

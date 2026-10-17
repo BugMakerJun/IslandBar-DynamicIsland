@@ -113,7 +113,6 @@ target_link_libraries(island_render PUBLIC island_shell)
 add_library(island_app STATIC
     app/AppBar.cpp
     app/BarLoop.cpp
-    app/GlassWindow.cpp
     app/IslandWindow.cpp
     app/PlayerWindow.cpp
 )

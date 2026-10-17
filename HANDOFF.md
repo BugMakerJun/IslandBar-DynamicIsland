@@ -14074,3 +14074,38 @@ StandardDeviation 浮点、Optimization / BorderMode 枚举 UInt32），所以�
 照片：`captures/after-inset-6x.png`、`after-inset-island-3x.png`；日志 `glass: backdrop=acrylic …
 rect=1106,6 314x36`（内缩前 1094,6 338x36）。
 
+---
+
+## 8.174 **删除玻璃窗：用户仍能看出方角，选择不要真实背景模糊**（2026-10-17 傍晚）
+
+内缩 12 DIP 之后用户回复"**还是能看出来 删除吧**"。于是把 8.169 的第二扇窗整体删除，岛回到纯自绘材质。
+
+### 8.174.1 删除清单
+
+| 文件 | 动作 |
+|---|---|
+| `app/GlassWindow.{h,cpp}` | **删除**（整扇 acrylic 窗，约 300 行） |
+| `app/BarSystems.h` | 去掉成员与 include |
+| `app/BarLoop.cpp` | 去掉创建、`SyncGlassWindow`、退出汇总；`BarRuntime::glassReported` 一并删除 |
+| `render/Theme.{h,cpp}` | 去掉 `backdrop` 字段、`themes\*.txt` 的 `backdrop` 键、玻璃主题的 `true`；头注释改成"不模糊，经过实测" |
+| `selftest/ChecksWindow.cpp` | 去掉玻璃窗的 10 条断言 |
+| `selftest/ChecksCards.cpp` | 去掉 backdrop 的 4 条断言 |
+| `src/CMakeLists.txt` | 去掉源文件 |
+
+固定场景基线随之更新：`glass: backdrop=…` 与 `glass: setpos=…` 两行不再出现（66 → 62 行；
+`glass: grain built` 是材质自己的颗粒，仍在）。
+
+### 8.174.2 代价（写清楚）
+
+* **岛不再有真实背景模糊**：玻璃主题的 0.46~0.62 scrim 下面就是**清晰的桌面**（`captures/after-glass-removal-3x.png`
+  里能直接看到壁纸的马毛）。这是用户的选择：宁可不要模糊，也不要四角的方角。
+* 五层自绘材质（烟熏深度、三团顶光、内侧暗边、两端折射色、扫光）全部保留，边缘与厚度不受影响。
+* 玻璃窗的 DWM 边框/主窗非客户区渲染两项也保留为关闭（8.173），它们对自绘版本无害。
+
+### 8.174.3 验收
+
+* 自检 **0 失败**（Debug 退出码 0）；Debug/Release 零告警。
+* 真机重启 PID 14188，岛四角干净，无方角、无第二扇窗（枚举窗口只剩主窗 + 隐藏的缩略图宿主）。
+* 固定场景基线 62 行（注意：这套对比对 worker 线程行的落点敏感，偶发顺序差异是基线本身的噪声，
+  与本次删除无关）。
+

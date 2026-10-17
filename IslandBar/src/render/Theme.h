@@ -9,13 +9,11 @@
 //  of colours, so the colours are one struct rather than a style pass: switching a theme re-colours
 //  every surface at once and cannot leave two of them disagreeing.
 //
-//  WHETHER THE DESKTOP BEHIND THE BAR IS BLURRED IS ALSO A THEME FIELD (`backdrop`), and it was "no"
-//  for a while because this project's window could not have a backdrop: acrylic blurs the whole window
-//  rectangle, and that window is a full-width strip. The measurement that changed it is in HANDOFF
-//  8.166: a SECOND, island-sized window of the same per-pixel-alpha kind shows the material, needs no
-//  renderer at all, and can follow the island's geometry for under 1 ms a step. So a theme may now ask
-//  for it; the drawing in this struct stays the material either way, which is what keeps the fallback
-//  honest when the window cannot exist.
+//  THE DESKTOP BEHIND THE BAR IS NOT BLURRED, and that is measured rather than assumed. The second,
+//  island-sized acrylic window worked (HANDOFF 8.166-8.169) but DWM clips its material to a fixed ~8 px
+//  corner while the island is an 18 DIP stadium, so its four corners poked out as dark squares. Insetting
+//  it traded those squares for unblurred tips, and the user asked for only ONE thing: remove it. The
+//  material is therefore drawn -- all of it -- and no window behind the bar exists (HANDOFF 8.173).
 //
 //  THE CONTRAST FLOOR IS PART OF THE FORMAT, not a note in a document: 'no over-transparency that
 //  makes the text unreadable' is checked by ThemeInkContrast, and the self-test runs it over every
@@ -68,11 +66,6 @@ struct Theme {
     float sweep = 0.0f;             // 0..1
     float rim = 0.0f;               // 0..1
     float tint = 0.0f;              // 0..1
-    // Whether the island sits on the REAL blurred desktop (app/GlassWindow) or only on the painted
-    // material above. Off by default: 默认/冰蓝/石墨 keep their exact pixels and cost no second window.
-    // Its fill alphas MUST be low enough for a backdrop to show through -- 默认's 0.92/0.98 would hide
-    // the material completely, which is why only 玻璃 turns this on.
-    bool backdrop = false;
 };
 
 // The theme in force.

@@ -32,15 +32,15 @@ const Theme kThemes[] = {
     //               shadow grain
     {L"\u9ED8\u8BA4",   {0.05f, 0.05f, 0.07f, 0.92f}, {0.04f, 0.05f, 0.08f, 0.98f}, 0.06f,
      {0.05f, 0.05f, 0.07f, 0.97f}, 0.13f, {0.0f, 0.47f, 0.83f, 0.95f}, {0.93f, 0.93f, 0.93f, 1.0f},
-     0.0f, 0.0f, 0.0f, 0.0f, 0.0f, false},
+     0.0f, 0.0f, 0.0f, 0.0f, 0.0f},
     // 冰蓝
     {L"\u51B0\u84DD", {0.06f, 0.09f, 0.16f, 0.93f}, {0.02f, 0.03f, 0.07f, 0.97f}, 0.10f,
      {0.04f, 0.06f, 0.12f, 0.97f}, 0.16f, {0.20f, 0.62f, 0.98f, 0.95f}, {0.90f, 0.94f, 1.00f, 1.0f},
-     0.05f, 0.02f, 0.10f, 0.18f, 0.12f, false},
+     0.05f, 0.02f, 0.10f, 0.18f, 0.12f},
     // 石墨
     {L"\u77F3\u58A8", {0.13f, 0.13f, 0.14f, 0.94f}, {0.08f, 0.08f, 0.09f, 0.98f}, 0.05f,
      {0.11f, 0.11f, 0.12f, 0.97f}, 0.18f, {0.24f, 0.56f, 0.90f, 0.95f}, {0.99f, 0.99f, 0.99f, 1.0f},
-     0.05f, 0.0f, 0.06f, 0.16f, 0.10f, false},
+     0.05f, 0.0f, 0.06f, 0.16f, 0.10f},
     // 玻璃 -- asked for in these words: "加一个玻璃效果的".
     //
     // IT IS PAINTED GLASS, and the difference from real glass is measured rather than assumed. Three
@@ -67,7 +67,7 @@ const Theme kThemes[] = {
     // gloss and sweep carry the thickness that a photograph cannot (HANDOFF 8.170).
     {L"\u73BB\u7483", {0.14f, 0.18f, 0.26f, 0.46f}, {0.04f, 0.06f, 0.12f, 0.62f}, 0.30f,
      {0.08f, 0.10f, 0.16f, 0.60f}, 0.40f, {0.45f, 0.80f, 1.00f, 0.95f}, {1.00f, 1.00f, 1.00f, 1.0f},
-     0.22f, 0.03f, 0.45f, 0.65f, 0.30f, true},
+     0.22f, 0.03f, 0.45f, 0.65f, 0.30f},
 };
 constexpr int kThemeCount = static_cast<int>(sizeof(kThemes) / sizeof(kThemes[0]));
 
@@ -362,17 +362,6 @@ bool ThemeFromText(const char* utf8, Theme* out, std::string* why) {
             if (!scalarf(&theme.rim)) return false;
         } else if (key == "tint") {
             if (!scalarf(&theme.tint)) return false;
-        } else if (key == "backdrop") {
-            // 0 or 1, and nothing else: this is a switch, not a strength. A file that says 0.5 is a file
-            // whose author expected half a backdrop, and there is no such thing.
-            char* stop = nullptr;
-            const long flag = std::strtol(value.c_str(), &stop, 10);
-            if (stop == value.c_str() || *stop != '\0' || (flag != 0 && flag != 1)) {
-                if (why) *why = "backdrop must be 0 or 1: " + key + "=" + value;
-                return false;
-            }
-            theme.backdrop = flag == 1;
-            ++applied;
         } else {
             if (why) *why = "unknown key: " + key;
             return false;

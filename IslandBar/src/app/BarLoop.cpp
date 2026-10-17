@@ -566,10 +566,6 @@ static bool CreateBarWindowAndClaimAppBar(bool claimAppBar, const island::Monito
 
     systems.window.SetAppBar(&systems.appBar);
 
-    // The window that carries the system's acrylic BEHIND the island (HANDOFF 8.168). It is created once
-    // and hidden; SyncGlassWindow decides every drawn frame whether it has somewhere to be.
-    systems.glass.Create(systems.window.Handle());
-
     if (!claimAppBar) {
         // Off by default, and that is a deliberate safety decision rather than an unfinished
         // feature.
@@ -1157,64 +1153,7 @@ struct BarRuntime {
     long long lastShownSecond = -1;
     unsigned long long lastVolumeRevision = 0;
     unsigned long long lastMusicMeterMs = 0;
-    // Whether the one-time "the glass is actually up" line has been written (HANDOFF 8.168.3).
-    bool glassReported = false;
 };
-
-// THE GLASS BEHIND THE ISLAND (HANDOFF 8.168).
-//
-// The second window carries only the system's acrylic; the bar draws everything else on top of it. It is
-// placed from the SAME surface the renderer fills -- IslandSurfaceFor is the one rule, so the blur cannot
-// end where the drawing does not. Shown only when the theme asks for a backdrop AND the frame would draw
-// something: with 默认 there is no second window on screen at all, which is what keeps every existing
-// screenshot and the fixed-scenario log identical.
-static void SyncGlassWindow(const island::FrameState& frame, island::BarSystems& systems,
-                            BarRuntime& runtime) {
-    const island::RoundedBox surface = island::IslandSurfaceFor(
-        frame.pill.box, frame.restingPill,
-        island::IslandSurfaceShowsDecks(frame.contentOpacity, frame.fullscreenApp),
-        frame.trayIconCount > 0);
-
-    const float widthDip = surface.rect.right - surface.rect.left;
-    const float heightDip = surface.rect.bottom - surface.rect.top;
-    const bool wanted = island::CurrentTheme().backdrop &&
-                        frame.state != island::IslandState::FullBar &&
-                        frame.pill.opacity > 0.001f && widthDip > 1.0f && heightDip > 1.0f;
-    if (!wanted) {
-        systems.glass.Hide();
-        return;
-    }
-
-    // The box is window-local DIP and the bar's window starts at the monitor's top-left.
-    const RECT screen = systems.window.Monitor().screen;
-    const float scale = systems.window.Scale();
-    RECT pixels = {};
-    // THE MATERIAL WINDOW IS INSET FROM THE ISLAND'S BOUNDING BOX, horizontally only.
-    //
-    // DWM clips the acrylic to a rounded rectangle of its own fixed radius (~8 px), and that rectangle is
-    // the window's -- so at the island's four corners its 8 px curve pokes OUTSIDE the island's 18 DIP
-    // stadium. On a light wallpaper those four patches read as small dark squares stuck to the ends of the
-    // pill (reported with a photograph). Pulling the window in by 12 DIP puts its 8 px corners inside the
-    // stadium's curve; the price is that the last 12 DIP at each end are covered by the scrim but not
-    // blurred, which is invisible at the tips where the pill is only a scrim over the desktop.
-    constexpr float kInsetXDip = 12.0f;
-    pixels.left = screen.left + static_cast<LONG>(std::lround((surface.rect.left + kInsetXDip) * scale));
-    pixels.top = screen.top + static_cast<LONG>(std::lround(surface.rect.top * scale));
-    pixels.right = screen.left +
-                   static_cast<LONG>(std::lround((surface.rect.right - kInsetXDip) * scale));
-    pixels.bottom = pixels.top + static_cast<LONG>(std::lround(heightDip * scale));
-    systems.glass.ShowAt(pixels);
-
-    if (!runtime.glassReported && systems.glass.IsShown()) {
-        runtime.glassReported = true;
-        // The WIDE overload: the theme's name can be Chinese (玻璃), and the narrow one empties the whole
-        // line when a %ls argument is not ASCII (see the rule in core/Log.h).
-        island::LogAndPrint(L"  glass: backdrop=acrylic theme=%ls rect=%ld,%ld %ldx%ld",
-                            island::CurrentTheme().name, pixels.left, pixels.top,
-                            pixels.right - pixels.left, pixels.bottom - pixels.top);
-    }
-}
-
 
 // --- the interval and throttle lines ---
 //
@@ -5972,8 +5911,6 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                 // lives above RunBar; its place in the sequence is unchanged.
                 FillDecodedPictures(runtime, frame, runtime.nowPlaying);
 
-                // The material behind the island, placed from the surface this frame will fill.
-                SyncGlassWindow(frame, systems, runtime);
                 systems.renderer.Render(frame);
                 frameWork |= kWorkDraw;
 
@@ -6073,14 +6010,6 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
         systems.appBar.Release();
     }
 
-    // The glass window is placed relative to the bar's, so it goes before it -- and its numbers are the
-    // acceptance line (HANDOFF 8.168.3), written only when it was actually on screen.
-    if (systems.glass.Placements() > 0) {
-        island::LogAndPrint("  glass: setpos=%llu fail=%llu max_ms=%.2f",
-                            systems.glass.Placements(), systems.glass.Failures(),
-                            systems.glass.MaxPlacementMs());
-    }
-    systems.glass.Destroy();
     systems.window.Destroy();
 
     // Put the shell's taskbar back before exiting. This runs on every normal exit

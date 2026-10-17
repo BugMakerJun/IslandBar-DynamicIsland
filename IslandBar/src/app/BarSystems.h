@@ -27,7 +27,6 @@
 #include <memory>
 
 #include "app/AppBar.h"              // AppBarResult
-#include "app/GlassWindow.h"         // GlassWindow: the material window behind the island
 #include "app/IslandWindow.h"        // IslandWindow, AppBar
 #include "app/PlayerWindow.h"        // PlayerWindowWatch
 #include "media/AudioVolume.h"
@@ -74,10 +73,6 @@ struct BarSystems {
 
     // what the bar is made of
     IslandWindow window;
-    // Behind the island, and behind `window` in the z order: it carries the system's acrylic and draws
-    // nothing (see GlassWindow.h). Declared after `window` so it is destroyed FIRST -- it is placed
-    // relative to that window's handle.
-    GlassWindow glass;
     Renderer renderer;
     TextRenderer text;
 
