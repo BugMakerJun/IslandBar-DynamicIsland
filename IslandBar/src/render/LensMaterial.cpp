@@ -99,9 +99,16 @@ void Warp(const std::vector<unsigned char>& src, int srcW, int srcH, int pillW, 
             // A stadium bends more where it is more curved: the round ends take a stronger pull than
             // the flat top and bottom.
             shift *= 1.0f + 0.35f * std::fabs(nx);
+            // THE BODY OF THE LENS, not just its rim. A barrel term pulls the sample towards the middle
+            // line across the WHOLE height (zero on the centre line and at the extreme rim), so stripes
+            // and text behind the glass curve through it the way they do through the reference's thick
+            // lens. Without this the interior was a 1:1 copy and read as plain transparency.
+            const float nyN = (py - cy) / radius;
+            const float barrel = 1.05f * (1.0f - nyN * nyN);
+            const float lensY = -(py - cy) * barrel;
             unsigned char* out = &dst[(static_cast<size_t>(y) * pillW + x) * 4];
             Sample(src, srcW, srcH, static_cast<float>(kMarginPx) + px + nx * shift,
-                   static_cast<float>(kMarginPx) + py + ny * shift, out);
+                   static_cast<float>(kMarginPx) + py + ny * shift + lensY, out);
             // The captured frame is opaque; forcing alpha avoids a premultiplied bitmap that draws
             // nothing when a window's capture comes back with alpha 0.
             out[3] = 255;

@@ -267,9 +267,9 @@ bool EnsureMaterial(ID2D1DeviceContext2* context, const Theme& theme) {
     // at the top and again at the bottom where the glass catches the table. One DIP wide, so it reads as
     // the lit edge of the material rather than as a frame drawn round it.
     const D2D1_GRADIENT_STOP specularStops[3] = {
-        {0.0f, ThemeHighlight(theme.rim * 1.00f)},
-        {0.55f, ThemeHighlight(theme.rim * 0.45f)},
-        {1.0f, ThemeHighlight(theme.rim * 0.70f)},
+        {0.0f, ThemeHighlight(theme.rim * 1.35f)},
+        {0.55f, ThemeHighlight(theme.rim * 0.75f)},
+        {1.0f, ThemeHighlight(theme.rim * 1.05f)},
     };
     g_cache.specularRim = MakeLinear(context, specularStops, 3);
 
@@ -532,7 +532,7 @@ void DrawThinRim(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, c
     if (shape.rect.right <= shape.rect.left || shape.rect.bottom <= shape.rect.top) return;
     if (!EnsureMaterial(context, theme) || !g_cache.specularRim) return;
     PlaceLinear(g_cache.specularRim, shape.rect.left, shape.rect.top, shape.rect.bottom, opacity);
-    context->DrawRoundedRectangle(&shape, g_cache.specularRim, 1.05f);
+    context->DrawRoundedRectangle(&shape, g_cache.specularRim, 1.15f);
 }
 
 void DrawEdgeTints(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
