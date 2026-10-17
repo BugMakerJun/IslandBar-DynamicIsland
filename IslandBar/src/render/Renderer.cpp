@@ -508,9 +508,12 @@ void Renderer::RenderFrame(const FrameState& frame) {
         // Gated on the same condition as the decks themselves (content visible, no full-screen application
         // in front), because the surface exists FOR them: with the decks skipped the case would be a wider
         // pill with nothing in it at either end.
-        const bool decksDrawn = frame.contentOpacity > 0.01f && !frame.fullscreenApp;
-        const RoundedBox& shape =
-            decksDrawn ? island::BarClusterFor(pillBox, frame.trayIconCount > 0) : pillBox;
+        // The surface is assembled by the SAME function the glass window behind it is placed from
+        // (TaskStripLayout.h), so the blur cannot end somewhere the drawing does not.
+        const bool decksDrawn =
+            island::IslandSurfaceShowsDecks(frame.contentOpacity, frame.fullscreenApp);
+        const RoundedBox shape =
+            island::IslandSurfaceFromPillBox(pillBox, decksDrawn, frame.trayIconCount > 0);
 
         D2D1_ROUNDED_RECT rounded = {};
         rounded.rect.left    = shape.rect.left;

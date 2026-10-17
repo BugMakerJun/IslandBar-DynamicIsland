@@ -13842,3 +13842,45 @@ DPI 切换时怎么一起收放。这些写进了 `reviews/review-q49.txt`（第
   四个角仍有 ~10px 的"月牙"是锐利的（DWM 圆角 8px vs 胶囊 18px），需要真实壁纸验收。
 * **风险**：玻璃窗是第二扇 topmost 窗；z 序、输入穿透、全屏退场都要靠自检 + 现场验证。
 
+---
+
+## 8.169 **实施：玻璃窗落地，岛面背后是真的桌面**（2026-10-17 下午，用户"可以"之后）
+
+### 8.169.1 改了什么
+
+| 文件 | 内容 |
+|---|---|
+| `domain/TaskStripLayout.h` | `IslandSurfaceShowsDecks(opacity, fullscreen)` + `IslandSurfaceFromPillBox` / `IslandSurfaceFor`：**渲染器填的那块面**与**玻璃窗放的位置**从此是同一个函数（胶囊 / 通知条 / 带 deck 与托盘按钮的整块岛面） |
+| `app/GlassWindow.{h,cpp}`（新） | 裸 `WS_EX_NOREDIRECTIONBITMAP` 窗 + acrylic（tint `0x20000000`）+ `DWMWA_WINDOW_CORNER_PREFERENCE=ROUND`；无 D3D、无 swapchain、无内容；`WM_NCHITTEST`→`HTTRANSPARENT`；`ShowAt` 只在矩形变化时 `SetWindowPos`，并插到主窗**正下方**；记录 placements / failures / max ms |
+| `app/BarSystems.h`、`app/BarLoop.cpp` | 玻璃窗随主窗创建；每帧画完之后按 `frame` 同步（Surface 是同一个函数；FullBar / 无绘制 / 非玻璃主题 → 隐藏）；退出前销毁并打一行汇总 |
+| `render/Theme.{h,cpp}` | 主题新增 `backdrop`（默认 false，**只有「玻璃」= true**）；`themes\*.txt` 可写 `backdrop=1`（只收 0/1）；文件头那段"主题不控制背景模糊"改写成实测结论 |
+| `render/Renderer.cpp` | 岛面组装改用 `IslandSurfaceFromPillBox`（行为不变，只是去掉第二份规则） |
+| `selftest/ChecksCards.cpp`、`ChecksWindow.cpp`、`Diagnostics.cpp` | 自检 **1017 → 1037 条**：表面几何 5 条（静息/无 deck/通知条/卡片的动画盒不是岛面/托盘变宽）、主题开关 3 条、玻璃窗 10 条（窗口种类、topmost、tool window、不激活、每次 hit test 都穿透、落位逐像素相等、显示/隐藏、0 失败） |
+| `src/CMakeLists.txt` | 加 `app/GlassWindow.cpp` |
+
+### 8.169.2 验收（全部实测）
+
+* Debug / Release 都 **零告警**（`/WX`）；`island_smoke` RESULT: PASS。
+* `--self-test`：**1037 条，0 失败，退出码 0**（Debug 约 19 s，Release 约 50 s）。
+* 固定场景（`run-demo.ps1 -Config Release -Deploy`）：**66 行，第二次 0 差异**（基线已按流程更新；
+  新增两行：`glass: backdrop=acrylic theme=玻璃 rect=…` 与退出时的 `glass: setpos=… fail=… max_ms=…`）。
+  15 秒里 **`setpos=1`**（只在第一帧落位，之后空闲零调用），`max_ms=1.59`。
+* 真机照片（条纹背景垫在栏后）：`captures/glass-live-stripes.png`（岛内条纹完全消失、岛外锐利）、
+  `glass-live-left-6x.png`（左端 6x：材质边界就是胶囊边界，四角没有方形溢出）、
+  `glass-live-notice-later.png`（通知条 220→420 时玻璃窗跟着变宽）。
+* 日志原文：`glass: backdrop=acrylic theme=玻璃 rect=1094,6 338x36`（338 = 220 胶囊 + 左右 deck/托盘）。
+
+### 8.169.3 如实记的边界
+
+1. **只有「玻璃」主题会显示真背景模糊**。默认/冰蓝/石墨的填充是 0.92~0.98 alpha，会把材质完全盖住，
+   所以它们的 `backdrop` 保持 0、像素一个都没变。用户机器上的 `theme.txt` 本来就是「玻璃」。
+2. **DWM 圆角固定 ~8px**，岛面是 18px 半圆端。四个角的月牙现在被主题的 scrim（0.66~0.82）压在下面，
+   条纹照片里看不出来；**这一条要用户用真实壁纸确认**。如果露出，就按第 54 轮两家的结论停止调参，
+   重新评估 C（Windows.UI.Composition）。
+3. **卡片**（系统面板 / 音乐 / 通知）仍然只有画出来的玻璃：卡片挂在胶囊下方 8 DIP，与岛面之间有缝，
+   一扇窗盖不住两块不相连的形状。要不要给卡片加第二扇同样的窗，是下一片。
+4. **通知/通话时的左侧状态条**（日期时间天气那一块，滑出到岛面左边）也还是画的玻璃——它同样在岛面
+   之外。`captures/glass-live-notice-later.png` 里能看到它比中间的通知条"平"一点。
+5. 玻璃窗的 `SetWindowPos` 在这台机器上最坏 **2.18 ms**（15 s 固定场景那次）；探针里 60 步平均 0.977 ms。
+   都在 3 ms 的验收线内。
+

@@ -32,15 +32,15 @@ const Theme kThemes[] = {
     //               shadow grain
     {L"\u9ED8\u8BA4",   {0.05f, 0.05f, 0.07f, 0.92f}, {0.04f, 0.05f, 0.08f, 0.98f}, 0.06f,
      {0.05f, 0.05f, 0.07f, 0.97f}, 0.13f, {0.0f, 0.47f, 0.83f, 0.95f}, {0.93f, 0.93f, 0.93f, 1.0f},
-     0.0f, 0.0f, 0.0f, 0.0f, 0.0f},
+     0.0f, 0.0f, 0.0f, 0.0f, 0.0f, false},
     // 冰蓝
     {L"\u51B0\u84DD", {0.06f, 0.09f, 0.16f, 0.93f}, {0.02f, 0.03f, 0.07f, 0.97f}, 0.10f,
      {0.04f, 0.06f, 0.12f, 0.97f}, 0.16f, {0.20f, 0.62f, 0.98f, 0.95f}, {0.90f, 0.94f, 1.00f, 1.0f},
-     0.05f, 0.02f, 0.10f, 0.18f, 0.12f},
+     0.05f, 0.02f, 0.10f, 0.18f, 0.12f, false},
     // 石墨
     {L"\u77F3\u58A8", {0.13f, 0.13f, 0.14f, 0.94f}, {0.08f, 0.08f, 0.09f, 0.98f}, 0.05f,
      {0.11f, 0.11f, 0.12f, 0.97f}, 0.18f, {0.24f, 0.56f, 0.90f, 0.95f}, {0.99f, 0.99f, 0.99f, 1.0f},
-     0.05f, 0.0f, 0.06f, 0.16f, 0.10f},
+     0.05f, 0.0f, 0.06f, 0.16f, 0.10f, false},
     // 玻璃 -- asked for in these words: "加一个玻璃效果的".
     //
     // IT IS PAINTED GLASS, and the difference from real glass is measured rather than assumed. Three
@@ -54,15 +54,16 @@ const Theme kThemes[] = {
     //   * DwmEnableBlurBehindWindow WITH a region -- the one API documented to honour one -- returns
     //     S_OK and does nothing on Windows 11: the classic Aero glass it drove was removed.
     //
-    // The only route left is making the WINDOW itself exactly what is drawn (it is created once and
-    // never resized today, deliberately: resizing a DirectComposition swap-chain window flickers, and
-    // the cards would have to grow it too). So this theme does what a surface can do: much more
-    // transparent, cooler, the strongest top gloss of the four, a bright hairline along the edge -- the
-    // things that read as glass -- and its ink is kept bright enough that the contrast floor still
-    // passes. What you see behind the bar is the desktop itself, unblurred.
+    // THE ROUTE THAT WAS LEFT IS NOW TAKEN (HANDOFF 8.166-8.168): `backdrop = true` gives this theme a
+    // second, island-sized window that carries the system's acrylic, so the desktop behind the island IS
+    // blurred. The painted material stays, and it is not decoration: the second window can fail to exist
+    // (no export, a refused material), and then this theme is exactly what it used to be. Its fill is
+    // deliberately much more transparent than the other three, because a 0.92 alpha would hide the
+    // backdrop entirely; the gloss, the double rim, the grain and the wallpaper tint are what make the
+    // blurred content read as a THICK piece of glass rather than as frosted plastic.
     {L"\u73BB\u7483", {0.20f, 0.24f, 0.32f, 0.66f}, {0.06f, 0.08f, 0.14f, 0.82f}, 0.16f,
      {0.12f, 0.14f, 0.20f, 0.78f}, 0.34f, {0.42f, 0.78f, 1.00f, 0.95f}, {0.98f, 0.99f, 1.00f, 1.0f},
-     0.20f, 0.05f, 0.22f, 0.30f, 0.22f},
+     0.20f, 0.05f, 0.22f, 0.30f, 0.22f, true},
 };
 constexpr int kThemeCount = static_cast<int>(sizeof(kThemes) / sizeof(kThemes[0]));
 
@@ -357,6 +358,17 @@ bool ThemeFromText(const char* utf8, Theme* out, std::string* why) {
             if (!scalarf(&theme.rim)) return false;
         } else if (key == "tint") {
             if (!scalarf(&theme.tint)) return false;
+        } else if (key == "backdrop") {
+            // 0 or 1, and nothing else: this is a switch, not a strength. A file that says 0.5 is a file
+            // whose author expected half a backdrop, and there is no such thing.
+            char* stop = nullptr;
+            const long flag = std::strtol(value.c_str(), &stop, 10);
+            if (stop == value.c_str() || *stop != '\0' || (flag != 0 && flag != 1)) {
+                if (why) *why = "backdrop must be 0 or 1: " + key + "=" + value;
+                return false;
+            }
+            theme.backdrop = flag == 1;
+            ++applied;
         } else {
             if (why) *why = "unknown key: " + key;
             return false;

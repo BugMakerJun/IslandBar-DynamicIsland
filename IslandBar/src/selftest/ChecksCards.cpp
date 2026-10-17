@@ -4687,6 +4687,29 @@ void TestMusicCardLayout() {
                 Check(!ThemeFromText(badKey, &parsed, &why),
                       L"an unknown key is refused, so a typo cannot be silently ignored");
 
+                // THE REAL BACKDROP (HANDOFF 8.166-8.168). A theme may ask for the second window that
+                // carries the system's acrylic, and exactly one built-in does; the switch is 0 or 1
+                // because "half a backdrop" is not a thing.
+                const char* withBackdrop = "name=glass\nbackdrop=1\n";
+                Check(ThemeFromText(withBackdrop, &parsed, &why) && parsed.backdrop,
+                      L"backdrop=1 turns the real backdrop on");
+                // One colour as well as the name: a file with nothing but a name is refused by the
+                // format ("nothing but a name"), which is a different rule and is checked above.
+                const char* withoutBackdrop = "name=plain\naccent=0.2,0.6,1.0\n";
+                Check(ThemeFromText(withoutBackdrop, &parsed, &why) && !parsed.backdrop,
+                      L"a theme that does not mention it keeps the painted material");
+                const char* halfBackdrop = "name=x\nbackdrop=0.5\n";
+                Check(!ThemeFromText(halfBackdrop, &parsed, &why),
+                      L"backdrop is a switch: 0 or 1, never a strength");
+                int backdrops = 0;
+                for (int i = 0; i < BuiltInThemeCount(); ++i) {
+                    if (BuiltInTheme(i).backdrop) ++backdrops;
+                }
+                // 玻璃 is index 3 in kThemes: 默认, 冰蓝, 石墨, 玻璃.
+                Check(backdrops == 1 && BuiltInTheme(3).backdrop,
+                      L"exactly the glass theme asks for the real backdrop",
+                      L"默认/冰蓝/石墨 keep their pixels and cost no second window");
+
                 for (int i = 0; i < BuiltInThemeCount(); ++i) {
                     const Theme& theme = BuiltInTheme(i);
                     const float contrast = ThemeInkContrast(theme);
@@ -5046,6 +5069,60 @@ void TestMusicCardLayout() {
           L"the card is wide enough for a cover and two text lines");
     Check(cardRect.bottom - cardRect.top >= 200.0f,
           L"the card is tall enough for all five rows");
+}
+
+// THE SURFACE THE BAR FILLS, AND THE GLASS WINDOW THAT FOLLOWS IT (HANDOFF 8.168).
+//
+// These are the assertions that keep the second window honest without a photograph: it is placed from
+// `IslandSurfaceFor`, so whatever that function answers IS where the blur is. The cases below are the three
+// shapes the bar actually takes, plus the two conditions that switch the deck on and off.
+void TestIslandSurface() {
+    Section(L"the bar's surface, and the glass window that follows it");
+
+    const IslandAnchor anchor = AnchorForWindow(0.0f, 0.0f, 2560.0f);
+    const RoundedBox pill = BoxForState(IslandState::Collapsed, anchor);
+    const RoundedBox notice = BoxForState(IslandState::NoticeStrip, anchor);
+    const RoundedBox card = BoxForState(IslandState::Expanded, anchor);
+
+    const auto sameRect = [](const RoundedBox& a, const RoundedBox& b) {
+        return Nearly(a.rect.left, b.rect.left, 0.01f) && Nearly(a.rect.top, b.rect.top, 0.01f) &&
+               Nearly(a.rect.right, b.rect.right, 0.01f) &&
+               Nearly(a.rect.bottom, b.rect.bottom, 0.01f);
+    };
+
+    wchar_t detail[192];
+
+    // At rest, with the deck on screen: the cluster, which reaches past the pill on both sides.
+    const RoundedBox rest = IslandSurfaceFor(pill, pill, true, false);
+    std::swprintf(detail, 192, L"pill [%.0f, %.0f], surface [%.0f, %.0f]", pill.rect.left,
+                  pill.rect.right, rest.rect.left, rest.rect.right);
+    Check(rest.rect.left < pill.rect.left - 1.0f && rest.rect.right > pill.rect.right + 1.0f,
+          L"at rest the surface includes the deck and the tray room", detail);
+    Check(Nearly(rest.radiusX, (rest.rect.bottom - rest.rect.top) * 0.5f, 0.01f),
+          L"and it is a stadium, which is what the renderer fills");
+
+    // The full-screen case: the deck is suppressed, so the two must be the same rectangle -- otherwise
+    // the blur would sit wide under a narrow pill, or the reverse.
+    const RoundedBox alone = IslandSurfaceFor(pill, pill, false, false);
+    Check(sameRect(alone, pill), L"with the decks suppressed the surface is exactly the pill");
+
+    // The notice strip really does move the surface with it (this is the 220 -> 420 animation).
+    const RoundedBox announced = IslandSurfaceFor(notice, pill, true, false);
+    Check(announced.rect.right - announced.rect.left >
+              (rest.rect.right - rest.rect.left) + 150.0f,
+          L"an announced strip widens the surface with it");
+
+    // A card's ANIMATED box is 520x280, but the card is drawn by its own code hanging below the bar; the
+    // island surface stays the pill cluster. A glass window placed from the animated box would blur a
+    // 520x280 rectangle that nothing is drawn in.
+    const RoundedBox expanded = IslandSurfaceFor(card, pill, true, false);
+    Check(sameRect(expanded, rest),
+          L"a card's animated box is not the island surface");
+
+    // The tray button, when it is on screen, spends its room on the right.
+    const RoundedBox withTray = IslandSurfaceFor(pill, pill, true, true);
+    Check(withTray.rect.right > rest.rect.right + 1.0f,
+          L"a tray button widens the surface by its reserved room");
 }
 
 } // namespace island

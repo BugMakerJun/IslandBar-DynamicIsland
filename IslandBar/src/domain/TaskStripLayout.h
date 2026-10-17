@@ -841,6 +841,36 @@ inline RoundedBox BarClusterFor(const RoundedBox& island, bool trayButtonShown) 
     return out;
 }
 
+// Whether the deck and the tray button are part of the surface this frame.
+//
+// One predicate rather than two copies of `opacity > 0.01 && !fullscreen`: the renderer fills the
+// cluster, and the material window behind the bar is placed from the SAME cluster. If the two disagreed,
+// the blur would end where the drawn surface does not -- a blurred strip beside a sharp one, which is
+// exactly the kind of seam a second window makes easy to introduce and hard to see in a log.
+inline bool IslandSurfaceShowsDecks(float contentOpacity, bool fullscreenApp) {
+    return contentOpacity > 0.01f && !fullscreenApp;
+}
+
+// WHAT THE BAR'S OWN SURFACE IS, this frame: the pill, the notice strip, or the cluster that also holds
+// the deck and the tray button -- whichever is actually drawn.
+//
+// The animated box is only the outline while the notice strip is what is being announced (RowAnchorBox
+// answers the resting pill for every other wider state, including the card). The cluster then follows
+// whatever that outline is. Two callers use this and must agree pixel for pixel: the renderer
+// (Renderer::RenderFrame) and the glass window placed under it (app/GlassWindow through BarLoop).
+inline RoundedBox IslandSurfaceFromPillBox(const RoundedBox& pillBox, bool showsDecks,
+                                           bool trayButtonShown) {
+    return showsDecks ? BarClusterFor(pillBox, trayButtonShown) : pillBox;
+}
+
+inline RoundedBox IslandSurfaceFor(const RoundedBox& animated, const RoundedBox& restingPill,
+                                   bool showsDecks, bool trayButtonShown) {
+    const RoundedBox pillBox = (restingPill.rect.right > restingPill.rect.left)
+                                   ? RowAnchorBox(animated, restingPill)
+                                   : animated;
+    return IslandSurfaceFromPillBox(pillBox, showsDecks, trayButtonShown);
+}
+
 // The box the application icon row is laid out from, given that the tray button stands between the island
 // and the row.
 //

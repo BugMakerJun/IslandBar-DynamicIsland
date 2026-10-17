@@ -60,6 +60,7 @@
 #include "shell/SystemToggles.h"
 #include "render/Theme.h"
 #include "render/GlassMaterial.h"
+#include "app/GlassWindow.h"
 #include "shell/Weather.h"   // SkyMarkForCode: the word and the mark come from the same WMO code
 #include "domain/Motion.h"
 #include "render/Renderer.h"
@@ -185,6 +186,44 @@ void TestWindow(IslandWindow& window, const MonitorGeometry& monitor) {
 
     // A hidden window must still exist as a real window.
     Check(IsWindow(hwnd) != FALSE, L"window is alive after creation");
+
+    // THE MATERIAL WINDOW (HANDOFF 8.168): the right kind of window, placed exactly where it is told, and
+    // never a click. Whether the material is visible is a photograph, not an assertion; these three are
+    // what a screenshot cannot tell apart from "it happened to look right".
+    {
+        Section(L"the glass window behind the island");
+        GlassWindow glass;
+        Check(glass.Create(hwnd), L"the material window can be created");
+        const HWND glassHandle = glass.Handle();
+        if (glassHandle) {
+            const LONG_PTR glassEx = GetWindowLongPtrW(glassHandle, GWL_EXSTYLE);
+            Check((glassEx & WS_EX_NOREDIRECTIONBITMAP) != 0,
+                  L"glass: WS_EX_NOREDIRECTIONBITMAP, the kind of window that shows the material");
+            Check((glassEx & WS_EX_TOPMOST) != 0, L"glass: topmost");
+            Check((glassEx & WS_EX_TOOLWINDOW) != 0, L"glass: a tool window, so no Alt-Tab entry");
+            Check((glassEx & WS_EX_NOACTIVATE) != 0, L"glass: never activates");
+            Check(SendMessageW(glassHandle, WM_NCHITTEST, 0, 0) == HTTRANSPARENT,
+                  L"glass: every hit test is transparent, so the bar keeps its input");
+
+            const RECT wanted = {rect.left + 40, rect.top + 8, rect.left + 340, rect.top + 56};
+            glass.ShowAt(wanted);
+            RECT actual = {};
+            GetWindowRect(glassHandle, &actual);
+            std::swprintf(buf, 256, L"wanted %ld,%ld %ldx%ld, got %ld,%ld %ldx%ld", wanted.left,
+                          wanted.top, wanted.right - wanted.left, wanted.bottom - wanted.top,
+                          actual.left, actual.top, actual.right - actual.left,
+                          actual.bottom - actual.top);
+            Check(EqualRect(&wanted, &actual), L"glass: placed exactly where it was told", buf);
+            Check(glass.IsShown(), L"glass: shown");
+
+            glass.Hide();
+            Check(!glass.IsShown() && !IsWindowVisible(glassHandle),
+                  L"glass: hidden again on request");
+            Check(glass.Placements() == 1 && glass.Failures() == 0,
+                  L"glass: one placement, no failures");
+        }
+        glass.Destroy();
+    }
 }
 
 void TestClickThrough(IslandWindow& window, const MonitorGeometry& monitor) {

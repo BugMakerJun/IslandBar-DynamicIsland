@@ -306,6 +306,7 @@ int RunSelfTest() {
 
     TestGeometryPredicate(originX, originY, monitorWidthDip, workTopDip);
     TestCardLayout();
+    TestIslandSurface();
     TestMusicCardLayout();
     TestHoverSequence();
     TestPointerStateCycle();

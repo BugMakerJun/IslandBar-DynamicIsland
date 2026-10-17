@@ -19,6 +19,7 @@ void TestClock();
 void TestMiniJson();
 void TestNotifications();
 void TestCardLayout();
+void TestIslandSurface();
 void TestImageCodec();
 void TestAccentColour();
 void TestLyrics();

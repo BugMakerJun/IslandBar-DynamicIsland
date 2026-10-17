@@ -31,15 +31,17 @@ SHAPE  start: <N> pinned application(s) from <PATH>
 SHAPE  frame pacing: waitable
 SHAPE  wechat: audio baseline -- sessions <N> (was <N>), active <N> (was <N>), running <N>
 SHAPE  tray: <N> icon(s) -- the shell has not been asked for its registrations yet, so the registry list is drawn as it always was (entr(ies), process(es) seen)
-SHAPE  start: <N> application(s) in shell:AppsFolder
-SHAPE  brightness: DDC/CI on 'Generic PnP Monitor', range <N>..<N>, now <N>
-SHAPE  brightness: the panel gets a brightness row (now <N>%)
+SHAPE  brightness: the physical monitor could not be opened
 SHAPE  taskbar: state=collapsed
+SHAPE  glass: backdrop=acrylic theme=玻璃 rect=<N>,<N> <N>x<N>
 SHAPE  glass: grain built, <N>x<N>, mean <N> (deterministic seed <H>)
 SHAPE  strip says: date (state collapsed, resting collapsed, cardUp <N>, intoPill <N>, box <N>..<N>)
 SHAPE  start button: island x [<N>, <N>] -> button x [<N>, <N>] y [<N>, <N>], fill.a <N>.<N>, opacity <N>.<N>, context <N>
 SHAPE  interval [collapsed] drawn <N>: avg <N>.<N> ms, worst <N>.<N> ms, hitches(><N> ms) <N> | <<N>:<N> <<N>:<N> <<N>:<N> <<N>:<N> <<N>:<N> <<N>:<N> <<N>:<N> <N>+:<N> | idle <N> pass(es), worst wait <N>.<N> ms
 SHAPE  throttle: path=waitable frames=<N>/s waits=<N>/s maxLatency=<N>
+SHAPE  start: <N> application(s) in shell:AppsFolder
+SHAPE  brightness: DDC/CI on 'Generic PnP Monitor', range <N>..<N>, now <N>
+SHAPE  brightness: the panel gets a brightness row (now <N>%)
 SHAPE  interval [collapsed] drawn <N>: avg <N>.<N> ms, worst <N>.<N> ms, hitches(><N> ms) <N> | <<N>:<N> <<N>:<N> <<N>:<N> <<N>:<N> <<N>:<N> <<N>:<N> <<N>:<N> <N>+:<N> | idle <N> pass(es), worst wait <N>.<N> ms
 SHAPE  throttle: path=waitable frames=<N>/s waits=<N>/s maxLatency=<N>
 SHAPE  interval [collapsed] drawn <N>: avg <N>.<N> ms, worst <N>.<N> ms, hitches(><N> ms) <N> | <<N>:<N> <<N>:<N> <<N>:<N> <<N>:<N> <<N>:<N> <<N>:<N> <<N>:<N> <N>+:<N> | idle <N> pass(es), worst wait <N>.<N> ms
@@ -47,6 +49,7 @@ SHAPE  throttle: path=waitable frames=<N>/s waits=<N>/s maxLatency=<N>
 SHAPE  tray: <N> icon(s) -- <N> live of <N> registry entr(ies)
 SHAPE  interval [collapsed] drawn <N>: avg <N>.<N> ms, worst <N>.<N> ms, hitches(><N> ms) <N> | <<N>:<N> <<N>:<N> <<N>:<N> <<N>:<N> <<N>:<N> <<N>:<N> <<N>:<N> <N>+:<N> | idle <N> pass(es), worst wait <N>.<N> ms
 SHAPE  throttle: path=waitable frames=<N>/s waits=<N>/s maxLatency=<N>
+SHAPE  glass: setpos=<N> fail=<N> max_ms=<N>.<N>
 === unordered (worker threads; content only) ===
 SHAPE  mem[after-event]: private=<N>.<N>MB ws=<N>.<N>MB vram=<N>.<N>/<N>.<N>MB handles=<N> threads=<N> gdi=<N> user=<N> cover=<N>B lyrics=<N> tray=<N> winicons=<N> bitmaps=<N> notify=<N> tasks=<N>
 SHAPE  mem[start]: private=<N>.<N>MB ws=<N>.<N>MB vram=<N>.<N>/<N>.<N>MB handles=<N> threads=<N> gdi=<N> user=<N> cover=<N>B lyrics=<N> tray=<N> winicons=<N> bitmaps=<N> notify=<N> tasks=<N>

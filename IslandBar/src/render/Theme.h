@@ -9,11 +9,13 @@
 //  of colours, so the colours are one struct rather than a style pass: switching a theme re-colours
 //  every surface at once and cannot leave two of them disagreeing.
 //
-//  WHAT A THEME DELIBERATELY DOES NOT CONTROL: whether the desktop behind the bar is BLURRED. That is
-//  not a colour question -- it is whether this window can have a backdrop at all, and it is measured
-//  in scripts/probe-glass-blur.ps1 (acrylic does blur behind the window, but across its whole
-//  rectangle, so the window would have to be shaped to what is drawn first). A theme that claimed
-//  "glass" while the backdrop stayed sharp would be the kind of half-truth this project avoids.
+//  WHETHER THE DESKTOP BEHIND THE BAR IS BLURRED IS ALSO A THEME FIELD (`backdrop`), and it was "no"
+//  for a while because this project's window could not have a backdrop: acrylic blurs the whole window
+//  rectangle, and that window is a full-width strip. The measurement that changed it is in HANDOFF
+//  8.166: a SECOND, island-sized window of the same per-pixel-alpha kind shows the material, needs no
+//  renderer at all, and can follow the island's geometry for under 1 ms a step. So a theme may now ask
+//  for it; the drawing in this struct stays the material either way, which is what keeps the fallback
+//  honest when the window cannot exist.
 //
 //  THE CONTRAST FLOOR IS PART OF THE FORMAT, not a note in a document: 'no over-transparency that
 //  makes the text unreadable' is checked by ThemeInkContrast, and the self-test runs it over every
@@ -66,6 +68,11 @@ struct Theme {
     float sweep = 0.0f;             // 0..1
     float rim = 0.0f;               // 0..1
     float tint = 0.0f;              // 0..1
+    // Whether the island sits on the REAL blurred desktop (app/GlassWindow) or only on the painted
+    // material above. Off by default: 默认/冰蓝/石墨 keep their exact pixels and cost no second window.
+    // Its fill alphas MUST be low enough for a backdrop to show through -- 默认's 0.92/0.98 would hide
+    // the material completely, which is why only 玻璃 turns this on.
+    bool backdrop = false;
 };
 
 // The theme in force.
