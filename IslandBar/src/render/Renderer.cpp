@@ -709,14 +709,12 @@ void Renderer::RenderFrame(const FrameState& frame) {
         const float hoverLift = (frame.pointerOnIsland && CurrentTheme().lens) ? 1.12f : 1.0f;
         island::DrawSmokedBase(d2dContext_, rounded, theme, pillTopFill, pillBottomFill, hoverLift);
 
-        // THE LIGHTING, from the same function the cards use (GlassMaterial.h): a highlight along the top
-        // that fades down, a shade under it, and a hairline just inside the edge. It replaces two flat
-        // bands of gloss, which were the same idea drawn without following the pill's curve.
-        island::DrawSurfaceLighting(d2dContext_, rounded, theme, 1.0f);
-
-        // The reflection along the top: a few soft, offset blobs. Not a band -- a band is a white line
-        // drawn across the glass, which is the one thing the brief singles out.
-        island::DrawTopSheen(d2dContext_, rounded, theme, frame.pillPointerFraction, 1.0f);
+        // NO WASHES AT ALL on the clear lens: the top ellipse, the blobs and the grain all left a veil
+        // over the background. What is left is the refracted image and the lit contour.
+        if (!theme.lens) {
+            island::DrawSurfaceLighting(d2dContext_, rounded, theme, 1.0f);
+            island::DrawTopSheen(d2dContext_, rounded, theme, frame.pillPointerFraction, 1.0f);
+        }
 
         // The lit contour: thin enough to be an edge rather than a frame, and the one cue that still
         // reads as glass when the desktop behind is a smooth photograph.
@@ -739,7 +737,7 @@ void Renderer::RenderFrame(const FrameState& frame) {
 
         // ... and the grain over the whole surface, which is what keeps a flat translucent colour from
         // reading as plastic. Same rule as the shadow: a theme that asks for none gets none.
-        island::DrawGrain(d2dContext_, rounded, theme.grain);
+        if (!theme.lens) island::DrawGrain(d2dContext_, rounded, theme.grain);
 
         // Content last, so it sits on top of the fill. It is drawn only when the
         // frame asks for it: at zero content opacity the text is skipped rather
