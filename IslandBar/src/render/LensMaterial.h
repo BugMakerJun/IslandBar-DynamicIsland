@@ -26,11 +26,15 @@ public:
     bool Update(ID3D11Texture2D* texture, const RECT& source, const D2D1_ROUNDED_RECT& shape, float scale,
                 float pillLeft, float pillTop);
     bool Fill(ID2D1DeviceContext* target, const D2D1_ROUNDED_RECT& shape, float scale, float opacity);
+    // Average luminance (0..1) of the refracted backdrop under the pill, which is what the status
+    // line's ink has to stay readable against.
+    float BackdropLuminance() const { return backdropLuma_; }
 
 private:
     struct Cache;
     Cache* cache_ = nullptr;
     bool ready_ = false;
+    float backdropLuma_ = 1.0f;
 };
 
 }  // namespace island

@@ -291,6 +291,23 @@ bool LensMaterial::Update(ID3D11Texture2D* texture, const RECT& source, const D2
         cache_->pillH = pillH;
     }
     Warp(cache_->crop, cropW, cropH, pillW, pillH, cache_->image);
+    {
+        // The middle of the pill is where the date and time will sit.
+        double sum = 0.0;
+        int count = 0;
+        const int x0 = pillW / 5;
+        const int x1 = pillW - x0;
+        const int y0 = pillH / 4;
+        const int y1 = pillH - y0;
+        for (int y = y0; y < y1; y += 2) {
+            for (int x = x0; x < x1; x += 2) {
+                const unsigned char* p = cache_->image.data() + (static_cast<size_t>(y) * pillW + x) * 4;
+                sum += 0.0722 * p[0] + 0.7152 * p[1] + 0.2126 * p[2];
+                ++count;
+            }
+        }
+        backdropLuma_ = count ? static_cast<float>(sum / count / 255.0) : 1.0f;
+    }
     if (resized || !cache_->warped) {
         const D2D1_BITMAP_PROPERTIES properties = D2D1::BitmapProperties(
             D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));

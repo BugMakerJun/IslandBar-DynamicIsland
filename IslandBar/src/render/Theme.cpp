@@ -207,6 +207,35 @@ D2D1_COLOR_F ThemeInk(float alpha) {
     return D2D1::ColorF(ink.r, ink.g, ink.b, Clamp01(alpha) * Clamp01(ink.a));
 }
 
+namespace {
+// 1 = light backdrop, so the ink is the theme's dark colour; 0 = dark backdrop, so it is the highlight.
+float g_pillInkMix = 1.0f;
+ULONGLONG g_pillInkAt = 0;
+}
+
+void SetPillInkBackdrop(float luminance) {
+    // The crossover sits low on purpose: a mid-tone desktop (a blue sky, a photograph) still takes the
+    // theme's dark ink, which is the light-glass look; only genuinely dark content switches to the light
+    // ink. White text on a mid-blue sky reads as washed out, not as contrast.
+    const float target = Clamp01((luminance - 0.20f) / 0.15f);
+    // TIME-based, not call-based: the lens only updates while the backdrop changes, so a per-call step
+    // would freeze halfway on a window that has just gone dark and then gone quiet.
+    const ULONGLONG now = GetTickCount64();
+    const float dt = (g_pillInkAt == 0) ? 1.0f : static_cast<float>(now - g_pillInkAt) / 1000.0f;
+    g_pillInkAt = now;
+    const float step = Clamp01(dt * 4.0f);
+    g_pillInkMix += (target - g_pillInkMix) * step;
+}
+
+D2D1_COLOR_F PillInk(float alpha) {
+    const Theme& theme = CurrentTheme();
+    if (!theme.lens) return ThemeInk(alpha);
+    const float m = Clamp01(g_pillInkMix);
+    return D2D1::ColorF(theme.ink.r * m + theme.highlight.r * (1.0f - m),
+                        theme.ink.g * m + theme.highlight.g * (1.0f - m),
+                        theme.ink.b * m + theme.highlight.b * (1.0f - m), Clamp01(alpha));
+}
+
 D2D1_COLOR_F ThemeHighlight(float alpha) {
     const D2D1_COLOR_F& colour = CurrentTheme().highlight;
     return D2D1::ColorF(colour.r, colour.g, colour.b, Clamp01(colour.a * alpha));

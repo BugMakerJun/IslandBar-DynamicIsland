@@ -698,6 +698,9 @@ void Renderer::RenderFrame(const FrameState& frame) {
                                      static_cast<float>(origin.y) + rounded.rect.top * scale_);
                     }
                 }
+                // Fed every frame from the cached reading, so the crossover finishes even when the
+                // window behind has gone still and WGC is sending nothing.
+                island::SetPillInkBackdrop(lens_.BackdropLuminance());
                 lens_.Fill(d2dContext_, rounded, scale_, 1.0f);
             }
         }

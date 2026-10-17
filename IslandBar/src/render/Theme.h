@@ -97,6 +97,11 @@ void ApplyRememberedTheme();
 // The ink at an alpha, which is what most of the drawing asks for: a hundred call sites say "white at
 // 0.72" and the theme is what decides which colour that is.
 D2D1_COLOR_F ThemeInk(float alpha);
+// The ink for the words ON the glass. On a dark backdrop it crosses over to the theme's light colour,
+// so the date and time never disappear into a dark wallpaper or a dark window behind the pill.
+D2D1_COLOR_F PillInk(float alpha);
+// Feeds the measured backdrop luminance (0..1) in; the crossover is smoothed across calls.
+void SetPillInkBackdrop(float luminance);
 
 // The highlight at an alpha: the light reflected by the material, which is NOT the ink any more.
 D2D1_COLOR_F ThemeHighlight(float alpha);
