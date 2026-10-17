@@ -466,6 +466,12 @@ void DrawSurfaceLighting(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& 
         PlaceRadial(g_cache.sheen, (shape.rect.left + shape.rect.right) * 0.5f, shape.rect.top + 2.0f,
                     width * 0.46f, topBand * 0.95f, opacity);
         context->FillRoundedRectangle(&shape, g_cache.sheen);
+        // A NARROW specular just under the top edge: the wet gleam that makes the pane read as glass
+        // even when the desktop behind it is as bright as the surface. Narrow on purpose -- a wide one
+        // is the fog the user rejected.
+        PlaceRadial(g_cache.sheen, (shape.rect.left + shape.rect.right) * 0.5f, shape.rect.top + 1.5f,
+                    width * 0.40f, 4.5f, opacity * 0.55f);
+        context->FillRoundedRectangle(&shape, g_cache.sheen);
     } else if (g_cache.topWash) {
         PlaceLinear(g_cache.topWash, shape.rect.left, shape.rect.top, shape.rect.top + topBand, opacity);
         context->FillRoundedRectangle(&shape, g_cache.topWash);
