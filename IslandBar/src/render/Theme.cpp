@@ -68,7 +68,7 @@ const Theme kThemes[] = {
     // THE LIGHT GLASS, following the user's reference photograph (2026-10-17): a clear, pale-blue
     // surface that shows the desktop's own colours, a bright white specular, and BLACK text. The ink and
     // the highlight are separate colours for exactly this theme.
-    {L"\u73BB\u7483", {0.98f, 0.99f, 1.00f, 0.07f}, {0.85f, 0.92f, 1.00f, 0.05f}, 0.30f,
+    {L"\u73BB\u7483", {0.98f, 0.99f, 1.00f, 0.10f}, {0.85f, 0.92f, 1.00f, 0.03f}, 0.30f,
      {0.90f, 0.94f, 1.00f, 0.55f}, 0.30f, {0.15f, 0.45f, 0.85f, 0.95f}, {0.03f, 0.04f, 0.06f, 1.0f},
      0.0f, 0.03f, 0.55f, 0.55f, 0.25f, {1.0f, 1.0f, 1.0f, 1.0f}, true},
 };

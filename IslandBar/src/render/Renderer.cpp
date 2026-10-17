@@ -708,7 +708,10 @@ void Renderer::RenderFrame(const FrameState& frame) {
                 lens_.Fill(d2dContext_, rounded, scale_, 1.0f);
             }
         }
-        island::DrawSmokedBase(d2dContext_, rounded, theme, pillTopFill, pillBottomFill, 1.0f);
+        // The film lifts a touch while the pointer is on the island: the material answers the pointer
+        // before anything moves, which is the cheap half of "the glass notices you".
+        const float hoverLift = (frame.pointerOnIsland && CurrentTheme().lens) ? 1.12f : 1.0f;
+        island::DrawSmokedBase(d2dContext_, rounded, theme, pillTopFill, pillBottomFill, hoverLift);
 
         // ... and the smoke inside it: centre heavier than rim, gone before the edge.
         island::DrawSmokedDepth(d2dContext_, rounded, theme, 1.0f);
@@ -724,7 +727,7 @@ void Renderer::RenderFrame(const FrameState& frame) {
 
         // The lit contour: thin enough to be an edge rather than a frame, and the one cue that still
         // reads as glass when the desktop behind is a smooth photograph.
-        island::DrawThinRim(d2dContext_, rounded, theme, 1.0f);
+        island::DrawThinRim(d2dContext_, rounded, theme, frame.pointerOnIsland ? 1.10f : 1.0f);
 
         // THE LIQUID-GLASS LAYERS (round 53, Theme.h): a specular highlight that follows the pointer along
         // the top edge, and the double edge -- a faint dark line outside, a bright one inside -- that reads

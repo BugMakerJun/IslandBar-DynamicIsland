@@ -96,11 +96,15 @@ void Warp(const std::vector<unsigned char>& src, int srcW, int srcH, int pillW, 
                 const float falloff = 1.0f - std::max(0.0f, t);
                 shift = falloff * falloff * kLensShiftPx;
             }
+            // A stadium bends more where it is more curved: the round ends take a stronger pull than
+            // the flat top and bottom.
+            shift *= 1.0f + 0.35f * std::fabs(nx);
+            unsigned char* out = &dst[(static_cast<size_t>(y) * pillW + x) * 4];
             Sample(src, srcW, srcH, static_cast<float>(kMarginPx) + px + nx * shift,
-                   static_cast<float>(kMarginPx) + py + ny * shift, &dst[(static_cast<size_t>(y) * pillW + x) * 4]);
+                   static_cast<float>(kMarginPx) + py + ny * shift, out);
             // The captured frame is opaque; forcing alpha avoids a premultiplied bitmap that draws
             // nothing when a window's capture comes back with alpha 0.
-            dst[(static_cast<size_t>(y) * pillW + x) * 4 + 3] = 255;
+            out[3] = 255;
         }
     }
 }
