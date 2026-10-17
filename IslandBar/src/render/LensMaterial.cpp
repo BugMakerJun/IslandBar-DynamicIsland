@@ -25,8 +25,8 @@ namespace island {
 namespace {
 
 constexpr int kMarginPx = 32;
-constexpr float kLensBandPx = 18.0f;
-constexpr float kLensShiftPx = 15.0f;   // the largest displacement, at the very rim
+constexpr float kLensBandPx = 26.0f;
+constexpr float kLensShiftPx = 22.0f;   // the largest displacement, at the very rim
 
 ULONGLONG g_lastLensLog = 0;
 void LensFail(const wchar_t* why) {

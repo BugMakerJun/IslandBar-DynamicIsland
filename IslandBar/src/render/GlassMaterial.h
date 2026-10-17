@@ -60,6 +60,10 @@ void DrawSurfaceLighting(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& 
 // hovering pointer adds a little life without a decorative animation at rest.
 void DrawTopSheen(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
                   float pointerFraction, float opacity);
+// One-DIP specular contour: the lit edge of the glass, brighter at the top and again at the bottom.
+// Distinct from DrawGlassRim below, which is the old thick double edge.
+void DrawThinRim(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
+                 float opacity);
 
 // THE EDGE REFRACTION: a very weak cool-blue blob at the left end and a violet-blue one at the right, kept
 // away from the middle where the text lives. Driven by `theme.tint`.

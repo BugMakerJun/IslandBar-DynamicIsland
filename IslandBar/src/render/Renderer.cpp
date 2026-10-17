@@ -689,6 +689,10 @@ void Renderer::RenderFrame(const FrameState& frame) {
         // drawn across the glass, which is the one thing the brief singles out.
         island::DrawTopSheen(d2dContext_, rounded, theme, frame.pillPointerFraction, 1.0f);
 
+        // The lit contour: thin enough to be an edge rather than a frame, and the one cue that still
+        // reads as glass when the desktop behind is a smooth photograph.
+        island::DrawThinRim(d2dContext_, rounded, theme, 1.0f);
+
         // THE LIQUID-GLASS LAYERS (round 53, Theme.h): a specular highlight that follows the pointer along
         // the top edge, and the double edge -- a faint dark line outside, a bright one inside -- that reads
         // as the thickness of the glass. Both are drawn from the theme's own fields, so 默认 is unchanged.

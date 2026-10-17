@@ -175,6 +175,7 @@ struct MaterialCache {
     ID2D1LinearGradientBrush* topWash = nullptr;
     ID2D1LinearGradientBrush* bottomShade = nullptr;
     ID2D1LinearGradientBrush* rimLine = nullptr;
+    ID2D1LinearGradientBrush* specularRim = nullptr;
     ID2D1RadialGradientBrush* sweep = nullptr;
     ID2D1RadialGradientBrush* depth = nullptr;
     ID2D1RadialGradientBrush* sheen = nullptr;
@@ -206,6 +207,7 @@ void ReleaseCache() {
     if (g_cache.topWash) g_cache.topWash->Release();
     if (g_cache.bottomShade) g_cache.bottomShade->Release();
     if (g_cache.rimLine) g_cache.rimLine->Release();
+    if (g_cache.specularRim) g_cache.specularRim->Release();
     if (g_cache.sweep) g_cache.sweep->Release();
     if (g_cache.depth) g_cache.depth->Release();
     if (g_cache.sheen) g_cache.sheen->Release();
@@ -258,6 +260,16 @@ bool EnsureMaterial(ID2D1DeviceContext2* context, const Theme& theme) {
         {1.0f, ThemeHighlight(theme.gloss * 0.10f)},
     };
     g_cache.rimLine = MakeLinear(context, rimStops, 2);
+
+    // THE THIN SPECULAR RIM: the bright contour the reference material has all the way round, brighter
+    // at the top and again at the bottom where the glass catches the table. One DIP wide, so it reads as
+    // the lit edge of the material rather than as a frame drawn round it.
+    const D2D1_GRADIENT_STOP specularStops[3] = {
+        {0.0f, ThemeHighlight(theme.rim * 1.00f)},
+        {0.55f, ThemeHighlight(theme.rim * 0.45f)},
+        {1.0f, ThemeHighlight(theme.rim * 0.70f)},
+    };
+    g_cache.specularRim = MakeLinear(context, specularStops, 3);
 
     const D2D1_GRADIENT_STOP sweepStops[3] = {
         {0.0f, ThemeHighlight(theme.sweep * 0.95f)},
@@ -481,6 +493,15 @@ void DrawTopSheen(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, 
                     opacity * blob.alpha);
         context->FillRoundedRectangle(&shape, g_cache.sheen);
     }
+}
+
+void DrawThinRim(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
+                 float opacity) {
+    if (!context || opacity <= 0.01f || theme.rim <= 0.001f) return;
+    if (shape.rect.right <= shape.rect.left || shape.rect.bottom <= shape.rect.top) return;
+    if (!EnsureMaterial(context, theme) || !g_cache.specularRim) return;
+    PlaceLinear(g_cache.specularRim, shape.rect.left, shape.rect.top, shape.rect.bottom, opacity);
+    context->DrawRoundedRectangle(&shape, g_cache.specularRim, 1.05f);
 }
 
 void DrawEdgeTints(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
