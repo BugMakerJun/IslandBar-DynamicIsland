@@ -248,8 +248,8 @@ bool EnsureMaterial(ID2D1DeviceContext2* context, const Theme& theme) {
     // THE TOP SHEEN: one soft brush, drawn as a few blobs at different places. Irregular by construction;
     // a horizontal band across the whole top is the "light bar" the brief forbids.
     const D2D1_GRADIENT_STOP sheenStops[3] = {
-        {0.0f, ThemeInk(theme.gloss * 0.55f)},
-        {0.55f, ThemeInk(theme.gloss * 0.16f)},
+        {0.0f, ThemeInk(theme.gloss * 0.85f)},
+        {0.55f, ThemeInk(theme.gloss * 0.22f)},
         {1.0f, ThemeInk(0.0f)},
     };
     g_cache.sheen = MakeRadial(context, sheenStops, 3);
@@ -408,10 +408,13 @@ void DrawTopSheen(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, 
         float radiusY;
         float alpha;
     };
-    const Blob blobs[3] = {
-        {0.30f, 0.22f, 0.20f, 0.55f, 1.00f},
-        {0.52f, 0.16f, 0.26f, 0.42f, 0.75f},
-        {0.72f, 0.26f, 0.17f, 0.50f, 0.55f},
+    const Blob blobs[4] = {
+        // A tight glint near the left end, then three wider washes: the glint is what reads as a
+        // SPECULAR corner rather than as general brightness.
+        {0.16f, 0.20f, 0.09f, 0.30f, 1.00f},
+        {0.34f, 0.20f, 0.20f, 0.55f, 0.95f},
+        {0.54f, 0.15f, 0.24f, 0.40f, 0.70f},
+        {0.74f, 0.26f, 0.16f, 0.48f, 0.50f},
     };
     for (const Blob& blob : blobs) {
         PlaceRadial(g_cache.sheen, shape.rect.left + width * blob.x + shift,
@@ -477,15 +480,19 @@ void DrawGlassRim(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, 
     g_cache.solid->SetOpacity(1.0f);
     context->DrawRoundedRectangle(&shape, g_cache.solid, 1.0f);
 
-    // ... and the bright line just inside it.
+    // ... and the bright line just inside it. DIRECTIONAL, like light on a rim: brightest along the
+    // top, almost gone at the bottom, and a little heavier than a hairline so it reads as a lit edge
+    // rather than as a frame drawn around the pill.
     const float inset = 1.75f;
     const D2D1_ROUNDED_RECT inner = {
         D2D1::RectF(shape.rect.left + inset, shape.rect.top + inset,
                     shape.rect.right - inset, shape.rect.bottom - inset),
         shape.radiusX > inset ? shape.radiusX - inset : 0.0f,
         shape.radiusY > inset ? shape.radiusY - inset : 0.0f};
-    g_cache.solid->SetColor(ThemeInk(theme.rim * 0.60f * opacity));
-    context->DrawRoundedRectangle(&inner, g_cache.solid, 1.0f);
+    if (g_cache.rimLine) {
+        PlaceLinear(g_cache.rimLine, shape.rect.left, shape.rect.top, shape.rect.bottom, opacity);
+        context->DrawRoundedRectangle(&inner, g_cache.rimLine, 1.5f);
+    }
 
     // THE INNER DARK EDGE: a second, darker hairline further in. Without it the bright line is a frame
     // drawn on a surface; with it there is a lit edge, a dark thickness, and then the face of the glass.
