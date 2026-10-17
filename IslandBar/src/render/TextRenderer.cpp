@@ -1101,9 +1101,11 @@ void TextRenderer::DrawStatusLine(ID2D1DeviceContext2* context, const RoundedBox
 
             case StatusPiece::Kind::Text: {
                 ID2D1SolidColorBrush* brush = nullptr;
-                const float luminance = piece.luminance;
-                if (SUCCEEDED(context->CreateSolidColorBrush(
-                        D2D1::ColorF(luminance, luminance, luminance, opacity), &brush)) &&
+                // The theme's ink, with the piece's own luminance as its ALPHA: the time stays the
+                // strongest, the date and the reading sit back a step. A grey value here was the last
+                // hard-coded white in the bar, and on the light glass it was unreadable.
+                const D2D1_COLOR_F colour = island::ThemeInk(opacity * piece.luminance);
+                if (SUCCEEDED(context->CreateSolidColorBrush(colour, &brush)) &&
                     brush) {
                     // The piece's own box, which is exactly as wide as the text measured: the format
                     // centres within it, so the run's arithmetic and the drawing cannot drift.

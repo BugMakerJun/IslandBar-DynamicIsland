@@ -68,7 +68,7 @@ const Theme kThemes[] = {
     // THE LIGHT GLASS, following the user's reference photograph (2026-10-17): a clear, pale-blue
     // surface that shows the desktop's own colours, a bright white specular, and BLACK text. The ink and
     // the highlight are separate colours for exactly this theme.
-    {L"\u73BB\u7483", {0.98f, 0.99f, 1.00f, 0.00f}, {0.85f, 0.92f, 1.00f, 0.00f}, 0.75f,
+    {L"\u73BB\u7483", {0.98f, 0.99f, 1.00f, 0.00f}, {0.85f, 0.92f, 1.00f, 0.00f}, 0.18f,
      {0.90f, 0.94f, 1.00f, 0.55f}, 0.30f, {0.15f, 0.45f, 0.85f, 0.95f}, {0.03f, 0.04f, 0.06f, 1.0f},
      0.0f, 0.03f, 0.55f, 0.55f, 0.25f, {1.0f, 1.0f, 1.0f, 1.0f}, true},
 };
@@ -265,7 +265,12 @@ D2D1_COLOR_F TintedFill(const Theme& theme, const D2D1_COLOR_F& fill, const D2D1
     // answer only has to be good enough to pass a floor -- not exact.
     float applied = wanted;
     for (int step = 0; step < 4; ++step) {
-        const D2D1_COLOR_F candidate = Mix(fill, wallpaper, applied);
+        D2D1_COLOR_F candidate = Mix(fill, wallpaper, applied);
+        // Tinting changes the COLOUR, not how much of the surface there is: a fill at alpha 0 stays
+        // invisible (the glass theme), and a nearly clear one stays nearly clear. Mixing the wallpaper's
+        // alpha 1 in raised a transparent fill to 0.25 -- a flat grey-blue scrim across the whole pill,
+        // which is the "雾蒙蒙" the lens was hidden under.
+        candidate.a = fill.a;
         if (ContrastAgainst(candidate, theme.ink) >= kInkContrastFloor) return candidate;
         applied *= 0.5f;
     }

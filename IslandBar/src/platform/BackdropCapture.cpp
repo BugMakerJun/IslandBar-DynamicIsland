@@ -13,8 +13,13 @@
 #include <windows.graphics.capture.interop.h>
 #include <windows.graphics.directx.direct3d11.interop.h>
 
+#include <dwmapi.h>
+
+#include <cstdlib>
 #include <mutex>
 #include <wrl/client.h>
+
+#pragma comment(lib, "dwmapi.lib")
 
 using namespace winrt::Windows::Graphics::Capture;
 using namespace winrt::Windows::Graphics::DirectX;
@@ -32,25 +37,54 @@ struct BackdropCapture::Impl {
     std::uint64_t revision = 0;
     std::uint64_t acquired = 0;
     bool running = false;
+    HWND behind = nullptr;
+    // Whether the capture item covers the window frame rather than only its client area. Resolved in
+    // StartForWindow by matching the item size against both, because WGC does not say which one it uses.
+    bool frameSpace = false;
+    UINT startWidth = 0;
+    UINT startHeight = 0;
+    Microsoft::WRL::ComPtr<ID3D11DeviceContext> context;
+    // The frame pool's textures are not reliably drawable by D2D. Every frame is copied into this
+    // private texture, which is: same size, BGRA, shader-resource + render-target.
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> stable;
+    UINT stableWidth = 0;
+    UINT stableHeight = 0;
 };
 
 BackdropCapture::BackdropCapture() : impl_(std::make_unique<Impl>()) {}
 BackdropCapture::~BackdropCapture() { Stop(); }
 
-bool BackdropCapture::Start(ID3D11Device* device, HWND exclude, HMONITOR monitor) {
+bool BackdropCapture::StartForWindow(ID3D11Device* device, HWND behind) {
     Impl& impl = *impl_;
     if (impl.running) return true;
-    if (!device || !monitor) return false;
-    if (exclude && !SetWindowDisplayAffinity(exclude, WDA_EXCLUDEFROMCAPTURE)) {
-        LogLine(L"  lens: the bar could not be excluded from capture (error %lu)", GetLastError());
+    if (!device || !behind) return false;
+    if (behind == GetDesktopWindow()) {
+        LogLine(L"  lens: the desktop window itself cannot be captured");
         return false;
     }
     try {
         const auto interop = winrt::get_activation_factory<GraphicsCaptureItem, ::IGraphicsCaptureItemInterop>();
-        if (FAILED(interop->CreateForMonitor(monitor, winrt::guid_of<GraphicsCaptureItem>(),
-                                             winrt::put_abi(impl.item)))) {
+        if (FAILED(interop->CreateForWindow(behind, winrt::guid_of<GraphicsCaptureItem>(),
+                                            winrt::put_abi(impl.item)))) {
             return false;
         }
+        impl.behind = behind;
+        impl.context.Reset();
+        device->GetImmediateContext(&impl.context);
+        impl.stable.Reset();
+        impl.stableWidth = 0;
+        impl.stableHeight = 0;
+        RECT client = {};
+        GetClientRect(behind, &client);
+        RECT frame = {};
+        const bool haveFrame = SUCCEEDED(DwmGetWindowAttribute(behind, DWMWA_EXTENDED_FRAME_BOUNDS, &frame,
+                                                               sizeof(frame)));
+        const auto size = impl.item.Size();
+        impl.startWidth = size.Width;
+        impl.startHeight = size.Height;
+        impl.frameSpace = haveFrame &&
+                          std::abs(static_cast<int>(size.Width) - (frame.right - frame.left)) <= 1 &&
+                          std::abs(static_cast<int>(size.Height) - (frame.bottom - frame.top)) <= 1;
         Microsoft::WRL::ComPtr<IDXGIDevice> dxgi;
         if (FAILED(device->QueryInterface(IID_PPV_ARGS(&dxgi)))) return false;
         winrt::com_ptr<::IInspectable> inspectable;
@@ -76,7 +110,10 @@ bool BackdropCapture::Start(ID3D11Device* device, HWND exclude, HMONITOR monitor
             });
         impl.session.StartCapture();
         impl.running = true;
-        LogLine(L"  lens: capture started (%dx%d)", impl.item.Size().Width, impl.item.Size().Height);
+        wchar_t cls[64] = {};
+        GetClassNameW(behind, cls, 64);
+        LogLine(L"  lens: capture started (%ux%u, %s) on %s", impl.startWidth, impl.startHeight,
+                impl.frameSpace ? L"frame" : L"client", cls);
         return true;
     } catch (const winrt::hresult_error& error) {
         LogLine(L"  lens: capture failed (0x%08lX)", static_cast<unsigned long>(error.code().value));
@@ -99,6 +136,35 @@ void BackdropCapture::Stop() {
 
 bool BackdropCapture::Running() const { return impl_->running; }
 
+HWND BackdropCapture::CapturedWindow() const { return impl_->behind; }
+
+RECT BackdropCapture::SourceRect() const {
+    Impl& impl = *impl_;
+    if (!impl.running || !impl.behind || !impl.item) return {};
+    RECT at = {};
+    if (impl.frameSpace &&
+        SUCCEEDED(DwmGetWindowAttribute(impl.behind, DWMWA_EXTENDED_FRAME_BOUNDS, &at, sizeof(at)))) {
+        // The extended frame bounds carry the window's own position already.
+    } else {
+        POINT origin = {0, 0};
+        if (!ClientToScreen(impl.behind, &origin)) return {};
+        at = {origin.x, origin.y, origin.x, origin.y};
+    }
+    const auto size = impl.item.Size();
+    return {at.left, at.top, at.left + static_cast<LONG>(size.Width),
+            at.top + static_cast<LONG>(size.Height)};
+}
+
+bool BackdropCapture::SizeChanged() const {
+    const Impl& impl = *impl_;
+    if (!impl.running || !impl.item) return false;
+    const auto size = impl.item.Size();
+    return static_cast<UINT>(size.Width) != impl.startWidth ||
+           static_cast<UINT>(size.Height) != impl.startHeight;
+}
+
+ID3D11Texture2D* BackdropCapture::LatestTexture() const { return impl_->stable.Get(); }
+
 bool BackdropCapture::HasNewFrame() const {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     return impl_->revision != impl_->acquired;
@@ -115,6 +181,32 @@ bool BackdropCapture::AcquireLatest(ID3D11Texture2D** texture, std::uint64_t* re
     Microsoft::WRL::ComPtr<ID3D11Texture2D> latest;
     if (FAILED(access->GetInterface(IID_PPV_ARGS(&latest))) || !latest) return false;
     latest.CopyTo(texture);
+    if (impl.context) {
+        D3D11_TEXTURE2D_DESC desc = {};
+        latest->GetDesc(&desc);
+        if (!impl.stable || impl.stableWidth != desc.Width || impl.stableHeight != desc.Height) {
+            D3D11_TEXTURE2D_DESC copyDesc = desc;
+            copyDesc.Usage = D3D11_USAGE_DEFAULT;
+            copyDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+            copyDesc.CPUAccessFlags = 0;
+            copyDesc.MiscFlags = 0;
+            Microsoft::WRL::ComPtr<ID3D11Texture2D> stable;
+            ID3D11Device* device = nullptr;
+            latest->GetDevice(&device);
+            const HRESULT created =
+                device ? device->CreateTexture2D(&copyDesc, nullptr, &stable) : E_FAIL;
+            if (device) device->Release();
+            if (SUCCEEDED(created)) {
+                impl.stable = stable;
+                impl.stableWidth = desc.Width;
+                impl.stableHeight = desc.Height;
+            }
+        }
+        if (impl.stable) {
+            impl.context->CopyResource(impl.stable.Get(), latest.Get());
+            impl.stable.CopyTo(texture);
+        }
+    }
     if (revision) *revision = impl.revision;
     impl.acquired = impl.revision;
     return true;

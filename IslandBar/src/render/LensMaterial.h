@@ -21,7 +21,10 @@ public:
     void Shutdown();
     bool Ready() const { return ready_; }
 
-    bool Update(ID3D11Texture2D* texture, const RECT& monitor, const D2D1_ROUNDED_RECT& shape, float scale);
+    // `source` is the captured window's screen rect in physical pixels; `pillLeft`/`pillTop` are the
+    // island's top-left on screen, so the crop follows the pill wherever the captured window sits.
+    bool Update(ID3D11Texture2D* texture, const RECT& source, const D2D1_ROUNDED_RECT& shape, float scale,
+                float pillLeft, float pillTop);
     bool Fill(ID2D1DeviceContext* target, const D2D1_ROUNDED_RECT& shape, float scale, float opacity);
 
 private:

@@ -671,13 +671,21 @@ private:
     void DrawDecks(const RoundedBox& box, const FrameState& frame);
     void ReleaseTarget();
     void RenderFrame(const FrameState& frame);
+    // Keeps the lens capture pointed at the window directly below the island.
+    void UpdateLensCapture(POINT at);
 
     // --- device chain ---
     ID3D11Device*            d3dDevice_   = nullptr;
     BackdropCapture          capture_;
     LensMaterial             lens_;
-    RECT                     monitorRect_ = {};
     bool                     lensActive_  = false;
+    HWND                     lensWindow_  = nullptr;
+    HWND                     window_      = nullptr;
+    ULONGLONG                lensRetryAt_ = 0;
+    // The pill's size the lens was last shaped for. A change re-warps the last captured frame, because
+    // WGC is silent while the window behind is static.
+    int                      lensPillW_   = 0;
+    int                      lensPillH_   = 0;
     // The refracted backdrop, when the theme asks for it and the capture started.
     ID3D11DeviceContext*     d3dContext_  = nullptr;
     IDXGISwapChain1*         swapChain_   = nullptr;

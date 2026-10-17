@@ -15,6 +15,8 @@
 
 #include <wrl/client.h>
 
+#include <dwmapi.h>
+
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -23,6 +25,7 @@
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "d2d1.lib")
 #pragma comment(lib, "dcomp.lib")
+#pragma comment(lib, "dwmapi.lib")
 
 namespace island {
 namespace {
@@ -48,6 +51,49 @@ UINT DipToSurfacePixels(LONG pixels, float scale) {
     if (scale <= 0.0f) return static_cast<UINT>(std::max<LONG>(pixels, 1));
     const float dip = static_cast<float>(pixels) / scale;
     return static_cast<UINT>(std::max(1.0f, std::floor(dip + 0.5f)));
+}
+
+// The window the lens samples: the first visible top-level window below ours in the Z order. Windows
+// of this process are skipped -- the bar, the settings popup, the backdrop window -- because capturing
+// one of them would either show the island itself or an empty surface.
+bool IsBehindCandidate(HWND window, DWORD ownPid) {
+    if (!window || !IsWindowVisible(window)) return false;
+    DWORD pid = 0;
+    GetWindowThreadProcessId(window, &pid);
+    if (pid == ownPid) return false;
+    int cloaked = 0;
+    if (SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) && cloaked != 0) {
+        return false;
+    }
+    if (GetAncestor(window, GA_ROOT) != window) return false;
+    RECT box = {};
+    if (!GetWindowRect(window, &box)) return false;
+    return (box.right - box.left) >= 32 && (box.bottom - box.top) >= 32;
+}
+
+HWND FindWindowBehind(HWND self, POINT at) {
+    if (!self) return nullptr;
+    const DWORD ownPid = GetCurrentProcessId();
+    HWND walk = self;
+    for (int step = 0; step < 64; ++step) {
+        walk = GetWindow(walk, GW_HWNDNEXT);
+        if (!walk) break;
+        if (!IsBehindCandidate(walk, ownPid)) continue;
+        // The first window BELOW us is not necessarily under us -- a maximised editor can start
+        // below the bar while the desktop is what the bar actually covers. Only a window whose rect
+        // contains the sample point can supply the pixels.
+        RECT box = {};
+        if (GetWindowRect(walk, &box) && PtInRect(&box, at)) return walk;
+    }
+    // The desktop is the parent of every top-level window, so it is not in that chain at all: over
+    // bare wallpaper the loop above finds nothing. Progman owns the wallpaper and is the one surface
+    // left to sample.
+    HWND desktop = FindWindowW(L"Progman", nullptr);
+    if (desktop && IsBehindCandidate(desktop, ownPid)) {
+        RECT box = {};
+        if (GetWindowRect(desktop, &box) && PtInRect(&box, at)) return desktop;
+    }
+    return nullptr;
 }
 
 } // namespace
@@ -196,6 +242,7 @@ bool Renderer::Initialize(HWND hwnd, UINT widthPx, UINT heightPx, float scale) {
 
     scale_ = (scale > 0.0f) ? scale : 1.0f;
     dpi_   = static_cast<UINT>(std::lround(scale_ * kDipPerInch));
+    window_ = hwnd;
 
     if (!CreateDeviceResources()) {
         Shutdown();
@@ -212,14 +259,10 @@ bool Renderer::Initialize(HWND hwnd, UINT widthPx, UINT heightPx, float scale) {
 
     // THE LENS (theme.lens): the desktop behind the island, displaced at the rim. A failure is not fatal.
     if (CurrentTheme().lens) {
-        HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
-        MONITORINFO info = {};
-        info.cbSize = sizeof(info);
-        if (monitor && GetMonitorInfoW(monitor, &info)) {
-            monitorRect_ = info.rcMonitor;
-            lensActive_ = lens_.Initialize(d2dDevice_) && capture_.Start(d3dDevice_, hwnd, monitor);
-        }
+        // The capture itself starts per frame, on the window under the island (see UpdateLensCapture).
+        lensActive_ = lens_.Initialize(d2dDevice_);
         if (!lensActive_) LogLine(L"  lens: off -- the island keeps its painted material");
+        else LogLine(L"  lens: material ready for theme %s", CurrentTheme().name);
     }
 
     return true;
@@ -227,6 +270,27 @@ bool Renderer::Initialize(HWND hwnd, UINT widthPx, UINT heightPx, float scale) {
 
 bool Renderer::TakeLensFrame() {
     return lensActive_ && capture_.HasNewFrame();
+}
+
+void Renderer::UpdateLensCapture(POINT at) {
+    if (!lensActive_ || !window_) return;
+    const HWND behind = FindWindowBehind(window_, at);
+    const bool lost = lensWindow_ && (!IsWindow(lensWindow_) || capture_.SizeChanged());
+    if (behind == lensWindow_ && !lost) return;
+
+    capture_.Stop();
+    lensWindow_ = nullptr;
+    if (!behind) return;
+    const ULONGLONG now = GetTickCount64();
+    if (now < lensRetryAt_) return;
+    if (capture_.StartForWindow(d3dDevice_, behind)) {
+        lensWindow_ = behind;
+        lensRetryAt_ = 0;
+    } else {
+        // A window that refuses capture (protection, a child of the shell, a closed session) must not
+        // be retried thirty times a second.
+        lensRetryAt_ = now + 2000;
+    }
 }
 
 // widthPx and heightPx are not needed here: the swap chain is created once at a
@@ -568,10 +632,42 @@ void Renderer::RenderFrame(const FrameState& frame) {
         // THE LENS FIRST: with the glass theme's fill at zero, this IS the surface -- the desktop behind
         // the island, bent at the rim. A light scrim and the washes sit on top of it.
         if (lensActive_) {
+            // A size change re-warps the LAST captured frame: the window behind did not change, so WGC
+            // sends nothing new, and re-opening the session would hand back a blank first frame.
+            const int pillW = static_cast<int>(std::lround((rounded.rect.right - rounded.rect.left) * scale_));
+            const int pillH = static_cast<int>(std::lround((rounded.rect.bottom - rounded.rect.top) * scale_));
+            bool reshaped = false;
+            if (pillW != lensPillW_ || pillH != lensPillH_) {
+                lensPillW_ = pillW;
+                lensPillH_ = pillH;
+                reshaped = true;
+            }
+            POINT origin = {0, 0};
+            if (window_ && ClientToScreen(window_, &origin)) {
+                const POINT lensAt = {
+                    static_cast<LONG>(static_cast<float>(origin.x) +
+                                      (rounded.rect.left + rounded.rect.right) * 0.5f * scale_),
+                    static_cast<LONG>(static_cast<float>(origin.y) +
+                                      (rounded.rect.top + rounded.rect.bottom) * 0.5f * scale_)};
+                UpdateLensCapture(lensAt);
+            }
             Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
             std::uint64_t revision = 0;
-            if (capture_.AcquireLatest(&texture, &revision) &&
-                lens_.Update(texture.Get(), monitorRect_, rounded, scale_)) {
+            const RECT source = capture_.SourceRect();
+            if (capture_.Running() && ClientToScreen(window_, &origin)) {
+                // A new captured frame re-warps the lens; without one the last warp is still the right
+                // image to draw (WGC sends nothing while the window behind is static).
+                if (capture_.AcquireLatest(&texture, &revision)) {
+                    lens_.Update(texture.Get(), source, rounded, scale_,
+                                 static_cast<float>(origin.x) + rounded.rect.left * scale_,
+                                 static_cast<float>(origin.y) + rounded.rect.top * scale_);
+                } else if (reshaped) {
+                    if (ID3D11Texture2D* last = capture_.LatestTexture()) {
+                        lens_.Update(last, source, rounded, scale_,
+                                     static_cast<float>(origin.x) + rounded.rect.left * scale_,
+                                     static_cast<float>(origin.y) + rounded.rect.top * scale_);
+                    }
+                }
                 lens_.Fill(d2dContext_, rounded, scale_, 1.0f);
             }
         }
@@ -1750,6 +1846,8 @@ void Renderer::Shutdown() {
     SafeRelease(&compTarget_);
     SafeRelease(&compVisual_);
     capture_.Stop();
+    window_ = nullptr;
+    lensWindow_ = nullptr;
     lens_.Shutdown();
     lensActive_ = false;
     SafeRelease(&effectGroup_);
