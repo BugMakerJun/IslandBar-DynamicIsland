@@ -884,7 +884,7 @@ void TextRenderer::DrawTrayButton(ID2D1DeviceContext2* context, const RectF& box
     ID2D1SolidColorBrush* ink = nullptr;
     const float brightness = open ? 1.0f : 0.90f;
     if (FAILED(context->CreateSolidColorBrush(
-            D2D1::ColorF(brightness, brightness, brightness, 0.94f * opacity), &ink)) ||
+            ThemeInk(brightness * 0.94f * opacity), &ink)) ||
         !ink) {
         return;
     }
@@ -2669,7 +2669,7 @@ void TextRenderer::DrawSystemButton(ID2D1DeviceContext2* context, const RectF& b
     // close", down means "this will open". Drawing it makes the direction a parameter rather than a
     // second codepoint to get wrong, which is exactly how the Bluetooth glyph went wrong.
     ID2D1SolidColorBrush* ink = nullptr;
-    const D2D1_COLOR_F colour = D2D1::ColorF(0.94f, 0.95f, 0.98f, 0.92f * opacity);
+    const D2D1_COLOR_F colour = ThemeInk(0.92f * opacity);
     if (FAILED(context->CreateSolidColorBrush(colour, &ink)) || !ink) return;
 
     const float cx = (box.left + box.right) * 0.5f;
@@ -3663,7 +3663,7 @@ void TextRenderer::DrawStartButton(ID2D1DeviceContext2* context, const RoundedBo
     // cannot go missing.
     {
         ID2D1SolidColorBrush* mark = nullptr;
-        const D2D1_COLOR_F colour = D2D1::ColorF(0.92f, 0.94f, 0.98f, 0.95f * opacity);
+        const D2D1_COLOR_F colour = ThemeInk(0.95f * opacity);
         if (SUCCEEDED(context->CreateSolidColorBrush(colour, &mark)) && mark) {
             const float side = kStartIconDip;
             const float centreX = (box.left + box.right) * 0.5f;
