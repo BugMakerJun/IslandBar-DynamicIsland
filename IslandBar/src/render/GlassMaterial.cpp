@@ -504,21 +504,6 @@ void DrawThinRim(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, c
     context->DrawRoundedRectangle(&shape, g_cache.specularRim, 1.05f);
 }
 
-void DrawRimGlint(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
-                  float pointerFraction, float opacity) {
-    if (!context || opacity <= 0.01f || theme.sweep <= 0.001f) return;
-    const float width = shape.rect.right - shape.rect.left;
-    const float height = shape.rect.bottom - shape.rect.top;
-    if (width < 40.0f || height < 8.0f) return;
-    if (!EnsureMaterial(context, theme) || !g_cache.sweep) return;
-    // A small radial source sitting ON the top edge: the stroke only picks it up where the contour
-    // passes through it, so the highlight runs along the glass instead of washing over the face.
-    const float centreX = SpecularCentreX(shape.rect.left, shape.rect.right, pointerFraction);
-    PlaceRadial(g_cache.sweep, centreX, shape.rect.top + 2.0f, std::min(width * 0.30f, 70.0f), 16.0f,
-                opacity);
-    context->DrawRoundedRectangle(&shape, g_cache.sweep, 1.4f);
-}
-
 void DrawEdgeTints(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
                    float opacity) {
     if (!context || opacity <= 0.01f || theme.tint <= 0.001f) return;

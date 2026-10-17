@@ -610,8 +610,21 @@ void Renderer::RenderFrame(const FrameState& frame) {
         // (TaskStripLayout.h), so the blur cannot end somewhere the drawing does not.
         const bool decksDrawn =
             island::IslandSurfaceShowsDecks(frame.contentOpacity, frame.fullscreenApp);
-        const RoundedBox shape =
+        RoundedBox shape =
             island::IslandSurfaceFromPillBox(pillBox, decksDrawn, frame.trayIconCount > 0);
+        // A wide notice/call strip is drawn beside the island, and the glass surface has to reach its
+        // ends: the film and the rim otherwise stop at the pill's edge, which read as a vertical knife
+        // cut through the right-hand end of the strip.
+        if (frame.statusStripOpacity > 0.01f && CurrentTheme().lens) {
+            // Same anchor the strip itself is measured from, so the two cannot drift apart.
+            const RoundedBox anchor =
+                (frame.restingPill.rect.right > frame.restingPill.rect.left)
+                    ? island::RowAnchorBox(box, frame.restingPill)
+                    : box;
+            const RoundedBox strip = island::StatusStripFor(anchor);
+            shape.rect.left = std::min(shape.rect.left, strip.rect.left);
+            shape.rect.right = std::max(shape.rect.right, strip.rect.right);
+        }
 
         D2D1_ROUNDED_RECT rounded = {};
         rounded.rect.left    = shape.rect.left;
@@ -648,9 +661,11 @@ void Renderer::RenderFrame(const FrameState& frame) {
         // THE LENS FIRST: with the glass theme's fill at zero, this IS the surface -- the desktop behind
         // the island, bent at the rim. A light scrim and the washes sit on top of it.
         // THE NOTICE/CALL STRIP: the strip is wider than the pill, and a lens sized to the pill cut a
-        // visible seam where its refraction ended. While a strip is up the whole bar stays clean glass
-        // (film and rim only); the lens returns with the strip's own fade.
-        if (lensActive_ && frame.statusStripOpacity <= 0.01f) {
+        // visible seam where its refraction ended ("the right side looks cut with a knife"). A call does
+        // not go through statusStripOpacity, so the notice line and the call flag are part of the test.
+        const bool stripOnScreen = frame.statusStripOpacity > 0.01f || frame.callUp ||
+                                   (frame.noticeLine && frame.noticeLine[0] != '\0');
+        if (lensActive_ && !stripOnScreen) {
             // A size change re-warps the LAST captured frame: the window behind did not change, so WGC
             // sends nothing new, and re-opening the session would hand back a blank first frame.
             const int pillW = static_cast<int>(std::lround((rounded.rect.right - rounded.rect.left) * scale_));
@@ -710,9 +725,6 @@ void Renderer::RenderFrame(const FrameState& frame) {
         // The lit contour: thin enough to be an edge rather than a frame, and the one cue that still
         // reads as glass when the desktop behind is a smooth photograph.
         island::DrawThinRim(d2dContext_, rounded, theme, 1.0f);
-        if (frame.pointerOnIsland) {
-            island::DrawRimGlint(d2dContext_, rounded, theme, frame.pillPointerFraction, 1.0f);
-        }
 
         // THE LIQUID-GLASS LAYERS (round 53, Theme.h): a specular highlight that follows the pointer along
         // the top edge, and the double edge -- a faint dark line outside, a bright one inside -- that reads
