@@ -71,9 +71,21 @@ bool IsBehindCandidate(HWND window, DWORD ownPid) {
     return (box.right - box.left) >= 32 && (box.bottom - box.top) >= 32;
 }
 
-HWND FindWindowBehind(HWND self, POINT at) {
+HWND FindWindowBehind(HWND self, POINT at, POINT probe) {
     if (!self) return nullptr;
     const DWORD ownPid = GetCurrentProcessId();
+    // WHAT IS ACTUALLY ON SCREEN wins over the Z-order walk. `probe` is just below the island, where
+    // the island itself is click-through, so WindowFromPoint answers with the window the user sees --
+    // including a desktop wallpaper window that sits above a maximised browser. The walk below only
+    // knows the Z-order of ordinary windows and picked that browser, which is how the lens ended up
+    // showing a different image than the one around it.
+    if (probe.x != at.x || probe.y != at.y) {
+        HWND hit = GetAncestor(WindowFromPoint(probe), GA_ROOT);
+        if (hit && IsBehindCandidate(hit, ownPid)) {
+            RECT box = {};
+            if (GetWindowRect(hit, &box) && PtInRect(&box, at)) return hit;
+        }
+    }
     HWND walk = self;
     for (int step = 0; step < 64; ++step) {
         walk = GetWindow(walk, GW_HWNDNEXT);
@@ -276,9 +288,9 @@ bool Renderer::TakeLensFrame() {
     return true;
 }
 
-void Renderer::UpdateLensCapture(POINT at) {
+void Renderer::UpdateLensCapture(POINT at, POINT probe) {
     if (!lensActive_ || !window_) return;
-    const HWND behind = FindWindowBehind(window_, at);
+    const HWND behind = FindWindowBehind(window_, at, probe);
     const bool lost = lensWindow_ && (!IsWindow(lensWindow_) || capture_.SizeChanged());
     if (behind == lensWindow_ && !lost) return;
 
@@ -635,7 +647,10 @@ void Renderer::RenderFrame(const FrameState& frame) {
         // The surface itself: the two-stop tinted fill and its fringe hairline, from the cached material.
         // THE LENS FIRST: with the glass theme's fill at zero, this IS the surface -- the desktop behind
         // the island, bent at the rim. A light scrim and the washes sit on top of it.
-        if (lensActive_) {
+        // THE NOTICE/CALL STRIP: the strip is wider than the pill, and a lens sized to the pill cut a
+        // visible seam where its refraction ended. While a strip is up the whole bar stays clean glass
+        // (film and rim only); the lens returns with the strip's own fade.
+        if (lensActive_ && frame.statusStripOpacity <= 0.01f) {
             // A size change re-warps the LAST captured frame: the window behind did not change, so WGC
             // sends nothing new, and re-opening the session would hand back a blank first frame.
             const int pillW = static_cast<int>(std::lround((rounded.rect.right - rounded.rect.left) * scale_));
@@ -653,7 +668,10 @@ void Renderer::RenderFrame(const FrameState& frame) {
                                       (rounded.rect.left + rounded.rect.right) * 0.5f * scale_),
                     static_cast<LONG>(static_cast<float>(origin.y) +
                                       (rounded.rect.top + rounded.rect.bottom) * 0.5f * scale_)};
-                UpdateLensCapture(lensAt);
+                const POINT probe = {
+                    lensAt.x,
+                    static_cast<LONG>(static_cast<float>(origin.y) + rounded.rect.bottom * scale_ + 12.0f)};
+                UpdateLensCapture(lensAt, probe);
             }
             Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
             std::uint64_t revision = 0;
@@ -945,7 +963,11 @@ void Renderer::RenderFrame(const FrameState& frame) {
                 text_->DrawStatusLine(d2dContext_, strip,
                                       frame.statusStripOpacity * frame.contentOpacity,
                                       frame.statusSky, frame.statusTemperature, frame.statusCode,
-                                      frame.pill.fill);
+                                      // The lens already IS the surface: its own film and rim cover
+                                      // the strip. A second rectangular fill here showed up as a hard
+                                      // box with vertical edges sitting on the glass.
+                                      island::CurrentTheme().lens ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f)
+                                                                  : frame.pill.fill);
             }
 
             // The card hangs from the control that was pressed, so its LEFT edge is moved to where that

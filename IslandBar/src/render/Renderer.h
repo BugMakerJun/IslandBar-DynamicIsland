@@ -672,7 +672,7 @@ private:
     void ReleaseTarget();
     void RenderFrame(const FrameState& frame);
     // Keeps the lens capture pointed at the window directly below the island.
-    void UpdateLensCapture(POINT at);
+    void UpdateLensCapture(POINT at, POINT probe);
 
     // --- device chain ---
     ID3D11Device*            d3dDevice_   = nullptr;
