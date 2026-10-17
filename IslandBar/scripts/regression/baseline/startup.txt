@@ -5,7 +5,7 @@ SHAPE  console: inherited=<N> attach=<N> err=<N> -> usable; log = <PATH>
 SHAPE  integrity: same as the shell's -- this process may act on Explorer
 STRICT theme: 示例青 (from themes\) -- ink contrast 17.6:1
 STRICT theme: 1 theme(s) loaded from themes\
-STRICT theme: 玻璃 (remembered by theme.txt) -- ink contrast 8.1:1
+STRICT theme: 玻璃 (remembered by theme.txt) -- ink contrast 5.3:1
 SHAPE  wallpaper: tint #<N>BCDC from the top band of '<PATH> (<N>x<N> sample)
 SHAPE  IslandBar
 SHAPE  monitor <N><H>, work <N><H>, <N> dpi, taskbar inset <N> px

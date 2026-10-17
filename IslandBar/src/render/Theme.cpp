@@ -61,9 +61,13 @@ const Theme kThemes[] = {
     // deliberately much more transparent than the other three, because a 0.92 alpha would hide the
     // backdrop entirely; the gloss, the double rim, the grain and the wallpaper tint are what make the
     // blurred content read as a THICK piece of glass rather than as frosted plastic.
-    {L"\u73BB\u7483", {0.20f, 0.24f, 0.32f, 0.66f}, {0.06f, 0.08f, 0.14f, 0.82f}, 0.16f,
-     {0.12f, 0.14f, 0.20f, 0.78f}, 0.34f, {0.42f, 0.78f, 1.00f, 0.95f}, {0.98f, 0.99f, 1.00f, 1.0f},
-     0.20f, 0.05f, 0.22f, 0.30f, 0.22f, true},
+    // The numbers moved toward Apple's material on 2026-10-17, after the first real backdrop was judged
+    // "still not liquid glass": it was a flat, nearly opaque grey slab. The backdrop is really blurred
+    // now, so the fill can be much more transparent -- the colour behind comes through -- and the rim,
+    // gloss and sweep carry the thickness that a photograph cannot (HANDOFF 8.170).
+    {L"\u73BB\u7483", {0.14f, 0.18f, 0.26f, 0.46f}, {0.04f, 0.06f, 0.12f, 0.62f}, 0.30f,
+     {0.08f, 0.10f, 0.16f, 0.60f}, 0.40f, {0.45f, 0.80f, 1.00f, 0.95f}, {1.00f, 1.00f, 1.00f, 1.0f},
+     0.22f, 0.03f, 0.45f, 0.65f, 0.30f, true},
 };
 constexpr int kThemeCount = static_cast<int>(sizeof(kThemes) / sizeof(kThemes[0]));
 

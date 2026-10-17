@@ -61,3 +61,11 @@ option(ISLANDBAR_BUILD_GLASSPROBE "Build the acrylic pill probe" ON)
 if(ISLANDBAR_BUILD_GLASSPROBE)
     add_subdirectory(glassprobe)
 endif()
+
+# Asks whether the DESKTOP'S PIXELS can be reached without capturing the screen: Windows.UI.Composition's
+# host backdrop brush on a pill-sized window, and whether a hand-written IGraphicsEffect is accepted by
+# CreateEffectFactory. That is the difference between frosted glass and a lens (HANDOFF 8.170).
+option(ISLANDBAR_BUILD_LENSPROBE "Build the host-backdrop lens probe" ON)
+if(ISLANDBAR_BUILD_LENSPROBE)
+    add_subdirectory(lensprobe)
+endif()

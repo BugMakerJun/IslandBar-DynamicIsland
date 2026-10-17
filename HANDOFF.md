@@ -13884,3 +13884,67 @@ DPI 切换时怎么一起收放。这些写进了 `reviews/review-q49.txt`（第
 5. 玻璃窗的 `SetWindowPos` 在这台机器上最坏 **2.18 ms**（15 s 固定场景那次）；探针里 60 步平均 0.977 ms。
    都在 3 ms 的验收线内。
 
+---
+
+## 8.170 **"这也不是液态玻璃"：真模糊 ≠ 液态，以及唯一不抓屏的路被卡在哪里**（2026-10-17 下午）
+
+### 8.170.1 先承认差别
+
+用户看完 8.169 的原话是"**这也不是液态玻璃啊**"。对，8.169 做出来的是**磨砂玻璃**：真模糊、真透明，
+但苹果液态玻璃的灵魂是**折射**——边缘把背景像素压弯，看起来是一块有厚度的玻璃。acrylic 只给
+"糊过的颜色"，不给像素，所以画不出位移。
+
+### 8.170.2 探针：Windows.UI.Composition 的 host backdrop（`tools/lensprobe`）
+
+不抓屏拿到背景像素的唯一办法是 `CreateHostBackdropBrush` + `CompositionEffectBrush`。这一轮把
+**手写 `IGraphicsEffect` + `IGraphicsEffectD2D1Interop`** 跑通了（这是 Win2D 平时替你做的那件事）：
+
+* `CreateEffectFactory` 先报 "Null effect input" → 原因是 `IGraphicsEffectD2D1Interop::GetSource`
+  里用 `detach_abi` 取 ABI 指针取错了；改成 `get_abi` + `AddRef` 后通过；
+* 接着报 "Unexpected property type" / "Invalid blur border mode" → D2D 高斯模糊其实有**三个**属性
+  （`StandardDeviation` 浮点、`Optimization` 枚举、`BorderMode` 枚举），补齐并全部用 **UInt32** 装箱、
+  `BorderMode = HARD(1)` 之后，**effect factory 返回成功**。
+
+也就是说："手写效果图"这条路本身是通的。**卡住的是合成根本身**：同一扇窗里放一个
+`CreateColorBrush(不透明红)` 的 `SpriteVisual`，窗口 `visible=1`、`GetClientRect 220x36`、
+`CreateDesktopWindowTarget` 返回 0x0，但**全屏扫描 0 个红像素**。试过的组合：
+
+* `SpriteVisual` 直接做根 / `ContainerVisual` 做根（Size + RelativeSizeAdjustment 1,1）；
+* 根/子都设 Size、Offset、RelativeSizeAdjustment；
+* `CreateDesktopWindowTarget` 的 isTopmost 取 TRUE 与 FALSE；
+* 窗口带 / 不带 `WS_EX_NOREDIRECTIONBITMAP`（另建一扇普通窗口）；
+* 先建窗口后建 Compositor / 先建 Compositor 后建窗口；
+* `PeekMessage` 泵 / 阻塞 `GetMessage` 泵（窗口带定时器自动退出）；
+* 去掉几何裁剪 / 保留裁剪。
+
+**全部看不见。** 这不是"host backdrop 采样为空"，而是整棵视觉树没有上屏——连纯色都没有。
+所以 C 路线在本机这个窗口配置下**没有被证实可行**，不能拿它向用户许诺折射。
+
+（附带确认：`CreateDispatcherQueueController` 是必需的，没有它 `CreateDesktopWindowTarget` 直接
+返回 `E_ACCESSDENIED` 并说 "The caller must initialize DispatcherQueue on this thread"。）
+
+### 8.170.3 能立刻做的：把"磨砂"做成"像玻璃"
+
+同样是「玻璃」主题，换了一组数（`render/Theme.cpp`）：
+
+| 字段 | 之前 | 现在 |
+|---|---|---|
+| pillTop | 0.20,0.24,0.32 @ **0.66** | 0.14,0.18,0.26 @ **0.46** |
+| pillBottom | 0.06,0.08,0.14 @ **0.82** | 0.04,0.06,0.12 @ **0.62** |
+| cardFill | 0.12,0.14,0.20 @ 0.78 | 0.08,0.10,0.16 @ 0.60 |
+| gloss / rim / sweep / tint | 0.16 / 0.30 / 0.22 / 0.22 | **0.30 / 0.65 / 0.45 / 0.30** |
+| 自检字色对比度 | 8.1:1 | **5.3:1**（底线 4.5） |
+
+效果：背后的颜色**真的透进来**（`captures/glass-tuned-color.png`：洋红→青的渐变直接映在岛上；
+`glass-tuned-stripes.png`：条纹被糊掉但明暗层次还在；`glass-tuned-desktop.png`：壁纸的暖色进来了），
+边缘一圈亮线 + 顶部高光开始像一块有厚度的玻璃。
+
+**但它仍然没有折射。** 真正的"液态"要么走 Windows.Graphics.Capture 抓背景（新的常驻子系统，
+GPU 带宽换像素，且与仓库"不抓屏"的旧规矩冲突），要么就停在"高质量磨砂玻璃"。
+
+### 8.170.4 这一轮留下的东西
+
+* `tools/lensprobe/`（新探针，不进产品）：host backdrop / 手写模糊 / 纯色对照，三种模式；
+* `captures/lens*-*.png` 与 `lens*.log`：每一次失败与成功的确切返回值和照片；
+* 固定场景基线因对比度变化更新（STRICT 行里带着 8.1 → 5.3），复跑 **0 差异**。
+
