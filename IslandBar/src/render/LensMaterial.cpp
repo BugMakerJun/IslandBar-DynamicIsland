@@ -104,7 +104,7 @@ void Warp(const std::vector<unsigned char>& src, int srcW, int srcH, int pillW, 
             // and text behind the glass curve through it the way they do through the reference's thick
             // lens. Without this the interior was a 1:1 copy and read as plain transparency.
             const float nyN = (py - cy) / radius;
-            const float barrel = 1.05f * (1.0f - nyN * nyN);
+            const float barrel = 1.35f * (1.0f - nyN * nyN);
             const float lensY = -(py - cy) * barrel;
             unsigned char* out = &dst[(static_cast<size_t>(y) * pillW + x) * 4];
             Sample(src, srcW, srcH, static_cast<float>(kMarginPx) + px + nx * shift,

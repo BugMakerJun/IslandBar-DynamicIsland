@@ -268,7 +268,7 @@ bool EnsureMaterial(ID2D1DeviceContext2* context, const Theme& theme) {
     // the lit edge of the material rather than as a frame drawn round it.
     const D2D1_GRADIENT_STOP specularStops[3] = {
         {0.0f, ThemeHighlight(theme.rim * 1.35f)},
-        {0.55f, ThemeHighlight(theme.rim * 0.75f)},
+        {0.55f, ThemeHighlight(theme.rim * 0.95f)},
         {1.0f, ThemeHighlight(theme.rim * 1.05f)},
     };
     g_cache.specularRim = MakeLinear(context, specularStops, 3);
