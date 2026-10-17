@@ -28,6 +28,20 @@
 
 namespace island {
 
+// THE SMOKED BASE: the two-stop fill the surface is made of, plus the hairline in the top colour that
+// covers the antialiased fringe along the curve. The two colours come from the caller because they are the
+// theme's pill colours MIXED WITH THE WALLPAPER (TintedFill), which the renderer already owns.
+//
+// Its gradient brush is cached (device + colours), so an animated shape costs a transform rather than a
+// stop collection and a brush every frame.
+void DrawSmokedBase(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
+                    const D2D1_COLOR_F& top, const D2D1_COLOR_F& bottom, float opacity);
+
+// THE SMOKED DEPTH: the centre of the glass is heavier than its rim -- a blue-black ellipse that fades out
+// before the edge. `theme.rim` drives it, so a theme with no glass gets none of it.
+void DrawSmokedDepth(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
+                     float opacity);
+
 // THE LIGHTING A GLASS SURFACE GETS FROM THE ROOM: a highlight along the top, a shade along the bottom, and
 // a hairline just inside the edge.
 //
@@ -40,6 +54,17 @@ namespace island {
 // amount of lighting, and a theme that asks for no gloss gets a flat surface, as 默认 does.
 void DrawSurfaceLighting(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape,
                          const Theme& theme, float opacity);
+
+// THE TOP SHEEN: the reflection along the top is a few overlapping soft blobs, not a band across the whole
+// shape -- a band is the "整条白线" the brief forbids. `pointerFraction` only shifts them a little, so a
+// hovering pointer adds a little life without a decorative animation at rest.
+void DrawTopSheen(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
+                  float pointerFraction, float opacity);
+
+// THE EDGE REFRACTION: a very weak cool-blue blob at the left end and a violet-blue one at the right, kept
+// away from the middle where the text lives. Driven by `theme.tint`.
+void DrawEdgeTints(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
+                   float opacity);
 
 // A soft shadow: nested rounded rectangles, each inflated a little and drawn fainter, which is a shadow
 // with no intermediate surface, no effect graph and no allocation. `spreadDip` is how far it reaches.

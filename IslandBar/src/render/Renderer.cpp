@@ -530,9 +530,8 @@ void Renderer::RenderFrame(const FrameState& frame) {
         // lighter where the light is, and the highlight along the top is a narrow gradient rather than a
         // hard band, because a hard edge across the pill reads as a line drawn on it.
         //
-        // The brushes are per-frame and NOT cached: the gradient's geometry is the animated box, which
-        // changes every frame of a transition, so a cache would build one entry per frame of every
-        // animation and hold them all.
+        // The brushes are CACHED in GlassMaterial (2026-10-17): each gradient is built in a unit space and
+        // moved with a transform, so an animated box costs a matrix rather than a new brush per frame.
         const island::Theme& theme = island::CurrentTheme();
         // The shadow FIRST, so the surface sits on it rather than the shadow on the surface. A theme with
         // shadow 0 (默认) draws nothing here, which is why adding all of this cannot change that one's
@@ -547,46 +546,30 @@ void Renderer::RenderFrame(const FrameState& frame) {
             island::TintedFill(theme, theme.pillTop, island::WallpaperTint(), 1.0f);
         const D2D1_COLOR_F pillBottomFill =
             island::TintedFill(theme, theme.pillBottom, island::WallpaperTint(), 0.85f);
-        ID2D1SolidColorBrush* edge = nullptr;
-        if (SUCCEEDED(d2dContext_->CreateSolidColorBrush(pillTopFill, &edge)) && edge) {
-            ID2D1GradientStopCollection* stops = nullptr;
-            const D2D1_GRADIENT_STOP gradientStops[2] = {
-                {0.0f, pillTopFill},
-                {1.0f, pillBottomFill},
-            };
-            if (SUCCEEDED(d2dContext_->CreateGradientStopCollection(
-                    gradientStops, 2, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP, &stops)) &&
-                stops) {
-                ID2D1LinearGradientBrush* fill = nullptr;
-                const D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES properties = {
-                    D2D1::Point2F(rounded.rect.left, rounded.rect.top),
-                    D2D1::Point2F(rounded.rect.left, rounded.rect.bottom)};
-                if (SUCCEEDED(d2dContext_->CreateLinearGradientBrush(properties, stops, &fill)) &&
-                    fill) {
-                    d2dContext_->FillRoundedRectangle(&rounded, fill);
-                    SafeRelease(&fill);
-                }
-                SafeRelease(&stops);
-            } else {
-                // A device that will not give a gradient still gets a surface rather than nothing.
-                d2dContext_->FillRoundedRectangle(&rounded, edge);
-            }
+        // The surface itself: the two-stop tinted fill and its fringe hairline, from the cached material.
+        island::DrawSmokedBase(d2dContext_, rounded, theme, pillTopFill, pillBottomFill, 1.0f);
 
-            // A hairline stroke in the fill colour covers the antialiased fringe a plain fill leaves
-            // along the curve, which otherwise shows as a pale seam against the desktop.
-            d2dContext_->DrawRoundedRectangle(&rounded, edge, 1.0f);
-            SafeRelease(&edge);
-        }
+        // ... and the smoke inside it: centre heavier than rim, gone before the edge.
+        island::DrawSmokedDepth(d2dContext_, rounded, theme, 1.0f);
 
         // THE LIGHTING, from the same function the cards use (GlassMaterial.h): a highlight along the top
         // that fades down, a shade under it, and a hairline just inside the edge. It replaces two flat
         // bands of gloss, which were the same idea drawn without following the pill's curve.
         island::DrawSurfaceLighting(d2dContext_, rounded, theme, 1.0f);
 
+        // The reflection along the top: a few soft, offset blobs. Not a band -- a band is a white line
+        // drawn across the glass, which is the one thing the brief singles out.
+        island::DrawTopSheen(d2dContext_, rounded, theme, frame.pillPointerFraction, 1.0f);
+
         // THE LIQUID-GLASS LAYERS (round 53, Theme.h): a specular highlight that follows the pointer along
         // the top edge, and the double edge -- a faint dark line outside, a bright one inside -- that reads
         // as the thickness of the glass. Both are drawn from the theme's own fields, so 默认 is unchanged.
         island::DrawSpecularSweep(d2dContext_, rounded, theme, frame.pillPointerFraction, 1.0f);
+
+        // The faint cool tints at the two ends: the colour a thick edge picks up from the room.
+        island::DrawEdgeTints(d2dContext_, rounded, theme, 1.0f);
+
+        // The lit edge, its dark thickness, and the outside line that separates the glass from the desktop.
         island::DrawGlassRim(d2dContext_, rounded, theme, 1.0f);
 
         // ... and the grain over the whole surface, which is what keeps a flat translucent colour from

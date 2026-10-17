@@ -1,5 +1,10 @@
 // =====================================================================
 //  GlassMaterial.cpp -- see the header for what belongs here and what does not.
+//
+//  EVERY BRUSH IS CACHED (2026-10-17, the user's liquid-glass brief). The gradients are built in a UNIT
+//  space -- a vertical 0..1 line, a circle at (0.5,0.5) -- and each draw moves them with SetTransform, so
+//  an animated shape costs a matrix, not an allocation. The cache is keyed by the DEVICE and the THEME:
+//  a device loss rebuilds it, a theme switch rebuilds it, and nothing else does.
 // =====================================================================
 #include "render/GlassMaterial.h"
 
@@ -16,8 +21,7 @@ using std::min;
 constexpr int kNoiseSize = 256;
 std::vector<unsigned char> g_noise;
 
-// The grain, once. A 32-bit xorshift with a fixed seed: reproducible on every machine and every run, and
-// nothing here needs a cryptographic source.
+// The grain, once. A 32-bit xorshift with a fixed seed: reproducible on every machine and every run.
 void BuildNoise() {
     if (!g_noise.empty()) return;
     g_noise.resize(static_cast<size_t>(kNoiseSize) * kNoiseSize * 4);
@@ -33,15 +37,7 @@ void BuildNoise() {
     unsigned long long sum = 0;
     const size_t pixels = static_cast<size_t>(kNoiseSize) * kNoiseSize;
     for (size_t i = 0; i < pixels; ++i) {
-        // A narrow band around the middle rather than the full 0..255: at the alphas this is drawn at
-        // (2-5%) a full-range grain is visible as speckle, and the point of it is to break up flatness.
         const unsigned char grey = static_cast<unsigned char>(112 + (next() % 32));
-        // BGRA, opaque: a grey pixel with the strength applied later by the brush's own opacity.
-        //
-        // NOT an A8 alpha-only texture, and that was measured the hard way -- an A8 bitmap drawn into this
-        // target made the WHOLE FRAME disappear (the island simply stopped being painted), which is what a
-        // D2D format/compatibility error looks like from outside. The colour is in the pixels and the
-        // strength in the brush, which is the arrangement with nothing left to go wrong.
         g_noise[i * 4 + 0] = grey;
         g_noise[i * 4 + 1] = grey;
         g_noise[i * 4 + 2] = grey;
@@ -52,8 +48,6 @@ void BuildNoise() {
             kNoiseSize, sum / pixels);
 }
 
-// The grain as a D2D bitmap. Cached against the DEVICE it was made on: a device loss (a driver restart,
-// a remote session) replaces it, and a bitmap from the dead device would fail every draw from then on.
 ID2D1Bitmap1* g_noiseBitmap = nullptr;
 ID2D1Device* g_noiseDevice = nullptr;
 
@@ -90,11 +84,200 @@ ID2D1Bitmap1* NoiseBitmap(ID2D1DeviceContext2* context) {
         return nullptr;
     }
     g_noiseBitmap = bitmap;
-    g_noiseDevice = device;   // kept, to compare against next time
+    g_noiseDevice = device;
     return g_noiseBitmap;
 }
 
-} // namespace
+// --- the brush cache ------------------------------------------------------------------------------
+
+ID2D1LinearGradientBrush* MakeLinear(ID2D1DeviceContext2* context, const D2D1_GRADIENT_STOP* stops,
+                                     UINT count) {
+    ID2D1GradientStopCollection* collection = nullptr;
+    if (FAILED(context->CreateGradientStopCollection(stops, count, D2D1_GAMMA_2_2,
+                                                     D2D1_EXTEND_MODE_CLAMP, &collection)) ||
+        !collection) {
+        return nullptr;
+    }
+    ID2D1LinearGradientBrush* brush = nullptr;
+    const D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES properties = {D2D1::Point2F(0.0f, 0.0f),
+                                                              D2D1::Point2F(0.0f, 1.0f)};
+    if (FAILED(context->CreateLinearGradientBrush(properties, collection, &brush))) {
+        brush = nullptr;
+    }
+    collection->Release();
+    return brush;
+}
+
+ID2D1RadialGradientBrush* MakeRadial(ID2D1DeviceContext2* context, const D2D1_GRADIENT_STOP* stops,
+                                     UINT count) {
+    ID2D1GradientStopCollection* collection = nullptr;
+    if (FAILED(context->CreateGradientStopCollection(stops, count, D2D1_GAMMA_2_2,
+                                                     D2D1_EXTEND_MODE_CLAMP, &collection)) ||
+        !collection) {
+        return nullptr;
+    }
+    ID2D1RadialGradientBrush* brush = nullptr;
+    const D2D1_RADIAL_GRADIENT_BRUSH_PROPERTIES properties = {
+        D2D1::Point2F(0.5f, 0.5f), D2D1::Point2F(0.5f, 0.5f), 0.5f, 0.5f};
+    if (FAILED(context->CreateRadialGradientBrush(properties, collection, &brush))) {
+        brush = nullptr;
+    }
+    collection->Release();
+    return brush;
+}
+
+// A unit vertical line mapped onto the given band; the stops run from its top to its bottom.
+void PlaceLinear(ID2D1LinearGradientBrush* brush, float left, float top, float bottom, float opacity) {
+    if (!brush) return;
+    brush->SetTransform(D2D1::Matrix3x2F::Scale(1.0f, bottom - top) *
+                        D2D1::Matrix3x2F::Translation(left, top));
+    brush->SetOpacity(opacity);
+}
+
+// A unit circle mapped onto the ellipse (centre, radii).
+void PlaceRadial(ID2D1RadialGradientBrush* brush, float centreX, float centreY, float radiusX,
+                 float radiusY, float opacity) {
+    if (!brush) return;
+    brush->SetTransform(D2D1::Matrix3x2F::Scale(radiusX * 2.0f, radiusY * 2.0f) *
+                        D2D1::Matrix3x2F::Translation(centreX - radiusX, centreY - radiusY));
+    brush->SetOpacity(opacity);
+}
+
+struct MaterialCache {
+    ID2D1Device* device = nullptr;
+    const Theme* theme = nullptr;
+
+    ID2D1SolidColorBrush* solid = nullptr;
+    ID2D1LinearGradientBrush* topWash = nullptr;
+    ID2D1LinearGradientBrush* bottomShade = nullptr;
+    ID2D1LinearGradientBrush* rimLine = nullptr;
+    ID2D1RadialGradientBrush* sweep = nullptr;
+    ID2D1RadialGradientBrush* depth = nullptr;
+    ID2D1RadialGradientBrush* sheen = nullptr;
+    ID2D1RadialGradientBrush* tintLeft = nullptr;
+    ID2D1RadialGradientBrush* tintRight = nullptr;
+    ID2D1BitmapBrush1* grain = nullptr;
+
+    // The base fill depends on the theme AND on the wallpaper tint, so it is compared by colour.
+    ID2D1LinearGradientBrush* fill = nullptr;
+    D2D1_COLOR_F fillTop = {};
+    D2D1_COLOR_F fillBottom = {};
+
+    bool valid = false;
+};
+
+MaterialCache g_cache;
+
+bool SameColour(const D2D1_COLOR_F& a, const D2D1_COLOR_F& b) {
+    return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
+}
+
+void ReleaseCache() {
+    if (g_cache.solid) g_cache.solid->Release();
+    if (g_cache.topWash) g_cache.topWash->Release();
+    if (g_cache.bottomShade) g_cache.bottomShade->Release();
+    if (g_cache.rimLine) g_cache.rimLine->Release();
+    if (g_cache.sweep) g_cache.sweep->Release();
+    if (g_cache.depth) g_cache.depth->Release();
+    if (g_cache.sheen) g_cache.sheen->Release();
+    if (g_cache.tintLeft) g_cache.tintLeft->Release();
+    if (g_cache.tintRight) g_cache.tintRight->Release();
+    if (g_cache.grain) g_cache.grain->Release();
+    if (g_cache.fill) g_cache.fill->Release();
+    if (g_cache.device) g_cache.device->Release();
+    g_cache = MaterialCache{};
+}
+
+// Rebuilds on a device change or a theme change, and only then. `CurrentTheme()` returns a reference into a
+// list that lives for the process, so the pointer is a stable identity for the theme in force.
+bool EnsureMaterial(ID2D1DeviceContext2* context, const Theme& theme) {
+    if (!context) return false;
+    ID2D1Device* device = nullptr;
+    context->GetDevice(&device);
+    if (!device) return false;
+
+    if (g_cache.valid && g_cache.device == device && g_cache.theme == &theme) {
+        device->Release();
+        return true;
+    }
+
+    ReleaseCache();
+    g_cache.device = device;   // kept
+    g_cache.theme = &theme;
+
+    context->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f), &g_cache.solid);
+
+    const D2D1_GRADIENT_STOP topStops[2] = {
+        {0.0f, ThemeInk(theme.gloss * 1.25f)},
+        {1.0f, ThemeInk(0.0f)},
+    };
+    g_cache.topWash = MakeLinear(context, topStops, 2);
+
+    const D2D1_GRADIENT_STOP bottomStops[2] = {
+        {0.0f, D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f)},
+        {1.0f, D2D1::ColorF(0.0f, 0.0f, 0.0f, theme.gloss * 0.6f)},
+    };
+    g_cache.bottomShade = MakeLinear(context, bottomStops, 2);
+
+    const D2D1_GRADIENT_STOP rimStops[2] = {
+        {0.0f, ThemeInk(theme.gloss * 0.95f)},
+        {1.0f, ThemeInk(theme.gloss * 0.10f)},
+    };
+    g_cache.rimLine = MakeLinear(context, rimStops, 2);
+
+    const D2D1_GRADIENT_STOP sweepStops[3] = {
+        {0.0f, ThemeInk(theme.sweep * 1.10f)},
+        {0.55f, ThemeInk(theme.sweep * 0.35f)},
+        {1.0f, ThemeInk(0.0f)},
+    };
+    g_cache.sweep = MakeRadial(context, sweepStops, 3);
+
+    // THE SMOKED DEPTH: the centre of the glass is heavier than its rim. Blue-black rather than neutral
+    // black, because a cold shadow is what smoke reads as. The strength rides on `rim`, so a theme that
+    // asks for a material gets this layer and one that does not gets nothing.
+    const float depthStrength = theme.rim * 0.30f;
+    const D2D1_GRADIENT_STOP depthStops[3] = {
+        {0.0f, D2D1::ColorF(0.005f, 0.012f, 0.030f, depthStrength)},
+        {0.62f, D2D1::ColorF(0.005f, 0.012f, 0.030f, depthStrength * 0.42f)},
+        {1.0f, D2D1::ColorF(0.005f, 0.012f, 0.030f, 0.0f)},
+    };
+    g_cache.depth = MakeRadial(context, depthStops, 3);
+
+    // THE TOP SHEEN: one soft brush, drawn as a few blobs at different places. Irregular by construction;
+    // a horizontal band across the whole top is the "light bar" the brief forbids.
+    const D2D1_GRADIENT_STOP sheenStops[3] = {
+        {0.0f, ThemeInk(theme.gloss * 0.55f)},
+        {0.55f, ThemeInk(theme.gloss * 0.16f)},
+        {1.0f, ThemeInk(0.0f)},
+    };
+    g_cache.sheen = MakeRadial(context, sheenStops, 3);
+
+    // THE EDGE REFRACTION TINTS: cool blue on one side, violet-blue on the other, at the strength the
+    // theme's wallpaper `tint` already expresses. Soft ellipses pinned to each end, never reaching the
+    // middle where the text is.
+    const D2D1_GRADIENT_STOP leftStops[2] = {
+        {0.0f, D2D1::ColorF(0.42f, 0.56f, 1.00f, theme.tint * 0.38f)},
+        {1.0f, D2D1::ColorF(0.42f, 0.56f, 1.00f, 0.0f)},
+    };
+    g_cache.tintLeft = MakeRadial(context, leftStops, 2);
+
+    const D2D1_GRADIENT_STOP rightStops[2] = {
+        {0.0f, D2D1::ColorF(0.62f, 0.46f, 1.00f, theme.tint * 0.32f)},
+        {1.0f, D2D1::ColorF(0.62f, 0.46f, 1.00f, 0.0f)},
+    };
+    g_cache.tintRight = MakeRadial(context, rightStops, 2);
+
+    if (ID2D1Bitmap1* noise = NoiseBitmap(context)) {
+        const D2D1_BITMAP_BRUSH_PROPERTIES1 properties = D2D1::BitmapBrushProperties1(
+            D2D1_EXTEND_MODE_WRAP, D2D1_EXTEND_MODE_WRAP, D2D1_INTERPOLATION_MODE_LINEAR);
+        context->CreateBitmapBrush(noise, properties, &g_cache.grain);
+    }
+
+    g_cache.valid = true;
+    return true;
+}
+
+}  // namespace
 
 int NoiseSize() { return kNoiseSize; }
 
@@ -103,41 +286,68 @@ const unsigned char* NoisePixels() {
     return g_noise.data();
 }
 
+void DrawSmokedBase(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
+                    const D2D1_COLOR_F& top, const D2D1_COLOR_F& bottom, float opacity) {
+    if (!context || opacity <= 0.001f) return;
+    if (shape.rect.right <= shape.rect.left || shape.rect.bottom <= shape.rect.top) return;
+    if (!EnsureMaterial(context, theme)) return;
+
+    if (!g_cache.fill || !SameColour(g_cache.fillTop, top) || !SameColour(g_cache.fillBottom, bottom)) {
+        const D2D1_GRADIENT_STOP stops[2] = {{0.0f, top}, {1.0f, bottom}};
+        if (g_cache.fill) g_cache.fill->Release();
+        g_cache.fill = MakeLinear(context, stops, 2);
+        g_cache.fillTop = top;
+        g_cache.fillBottom = bottom;
+    }
+    if (g_cache.fill) {
+        PlaceLinear(g_cache.fill, shape.rect.left, shape.rect.top, shape.rect.bottom, opacity);
+        context->FillRoundedRectangle(&shape, g_cache.fill);
+    }
+
+    // The hairline in the fill colour covers the antialiased fringe a plain fill leaves along the curve,
+    // which otherwise shows as a pale seam against the desktop.
+    if (g_cache.solid) {
+        g_cache.solid->SetColor(top);
+        g_cache.solid->SetOpacity(opacity);
+        context->DrawRoundedRectangle(&shape, g_cache.solid, 1.0f);
+    }
+}
+
 void DrawSoftShadow(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, float opacity,
                     float spreadDip) {
     if (!context || opacity <= 0.001f || spreadDip <= 0.01f) return;
     if (shape.rect.right <= shape.rect.left || shape.rect.bottom <= shape.rect.top) return;
+    if (!EnsureMaterial(context, CurrentTheme()) || !g_cache.solid) return;
 
-    // ONE BRUSH, RE-COLOURED per step, rather than six created and released.
-    //
-    // A solid brush can be re-coloured, which is cheaper than a device call per step and leaves nothing to
-    // release in a loop that runs twice a frame (the pill and the card). The colours are all the same black
-    // at different alphas, so `SetColor` is exactly the operation needed.
-    ID2D1SolidColorBrush* brush = nullptr;
-    if (FAILED(context->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f), &brush)) || !brush) {
-        return;
-    }
-
-    // NESTED, WIDEST FIRST, each one fainter: six steps, each adding `spread/6`. Drawn outside-in so the
-    // darker inner ones are not covered by the fainter outer ones.
     constexpr int kSteps = 6;
     const float stepDip = spreadDip / static_cast<float>(kSteps);
     for (int step = kSteps; step >= 1; --step) {
         const float grow = stepDip * static_cast<float>(step);
-        // A quadratic falloff, so the outermost is a whisper and the innermost carries most of the weight:
-        // a linear ramp reads as a hard edge with a soft halo, which is the "重" this is meant to avoid.
         const float t = static_cast<float>(step) / static_cast<float>(kSteps);
         const float alpha = opacity * (1.0f - t) * (1.0f - t) / static_cast<float>(kSteps) * 2.2f;
         if (alpha <= 0.001f) continue;
 
-        brush->SetColor(D2D1::ColorF(0.0f, 0.0f, 0.0f, alpha));
+        g_cache.solid->SetColor(D2D1::ColorF(0.0f, 0.0f, 0.0f, alpha));
+        g_cache.solid->SetOpacity(1.0f);
         const D2D1_ROUNDED_RECT grown = {
             D2D1::RectF(shape.rect.left - grow, shape.rect.top - grow, shape.rect.right + grow,
                         shape.rect.bottom + grow),
             shape.radiusX + grow * 0.6f, shape.radiusY + grow * 0.6f};
-        context->FillRoundedRectangle(&grown, brush);
+        context->FillRoundedRectangle(&grown, g_cache.solid);
     }
-    brush->Release();
+}
+
+void DrawSmokedDepth(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
+                     float opacity) {
+    if (!context || opacity <= 0.01f || theme.rim <= 0.001f) return;
+    const float width = shape.rect.right - shape.rect.left;
+    const float height = shape.rect.bottom - shape.rect.top;
+    if (width < 6.0f || height < 6.0f) return;
+    if (!EnsureMaterial(context, theme) || !g_cache.depth) return;
+
+    PlaceRadial(g_cache.depth, (shape.rect.left + shape.rect.right) * 0.5f,
+                (shape.rect.top + shape.rect.bottom) * 0.5f, width * 0.5f, height * 0.5f, opacity);
+    context->FillRoundedRectangle(&shape, g_cache.depth);
 }
 
 void DrawSurfaceLighting(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape,
@@ -146,108 +356,96 @@ void DrawSurfaceLighting(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& 
     const float height = shape.rect.bottom - shape.rect.top;
     const float width = shape.rect.right - shape.rect.left;
     if (height < 6.0f || width < 6.0f || theme.gloss <= 0.001f) return;
+    if (!EnsureMaterial(context, theme)) return;
 
-    // The gradient's own band, in DIP: a share of the shape but never the whole of a tall card, where a
-    // wash over 45% of 280 DIP would read as a second surface rather than as light.
     const float topBand = min(height * 0.45f, 20.0f);
     const float bottomBand = min(height * 0.35f, 26.0f);
 
-    const auto gradientFill = [&](const D2D1_COLOR_F& from, const D2D1_COLOR_F& to, float band,
-                                  bool fromTop) {
-        const D2D1_GRADIENT_STOP stops[2] = {{0.0f, from}, {1.0f, to}};
-        ID2D1GradientStopCollection* collection = nullptr;
-        if (FAILED(context->CreateGradientStopCollection(stops, 2, D2D1_GAMMA_2_2,
-                                                         D2D1_EXTEND_MODE_CLAMP, &collection)) ||
-            !collection) {
-            return;
-        }
-        D2D1_ROUNDED_RECT band1 = shape;
-        if (fromTop) {
-            band1.rect.bottom = shape.rect.top + band;
-        } else {
-            band1.rect.top = shape.rect.bottom - band;
-        }
-        ID2D1LinearGradientBrush* brush = nullptr;
-        const D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES properties = {
-            D2D1::Point2F(band1.rect.left, band1.rect.top),
-            D2D1::Point2F(band1.rect.left, band1.rect.bottom)};
-        if (SUCCEEDED(context->CreateLinearGradientBrush(properties, collection, &brush)) && brush) {
-            // Filled over the SHAPE and not over the band: filling the band's own rectangle would draw its
-            // straight bottom edge across the curve. The gradient's stops are what limit it in time; the
-            // rectangle is what limits it in space, and the shape is the only rectangle that fits.
-            context->FillRoundedRectangle(&shape, brush);
-            brush->Release();
-        }
-        collection->Release();
-    };
-
-    // Light from above: the ink at the gloss strength, gone by the bottom of its band.
-    gradientFill(ThemeInk(theme.gloss * 1.25f * opacity), ThemeInk(0.0f), topBand, /*fromTop=*/true);
-    // ... and the shade under it, which is the same lighting seen from the other side: the surface is
-    // darker where no light lands. Black rather than the ink, because the shading of a surface is the
-    // absence of light and not a colour of its own.
-    gradientFill(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f),
-                 D2D1::ColorF(0.0f, 0.0f, 0.0f, theme.gloss * 0.6f * opacity), bottomBand,
-                 /*fromTop=*/false);
-
-    // The hairline just inside the edge -- the glass's own rim, which is what makes the edge read as a
-    // surface seen through rather than as a shape drawn on the desktop. INSET by the stroke width so it
-    // cannot spill outside the shape, which is why it needs no clipping layer.
-    //
-    // AND IT IS DIRECTIONAL: bright along the top, almost gone by the bottom, because that is where the
-    // light is. A rim of one strength all the way round reads as a frame drawn inside the shape -- measured
-    // on the screen, that is exactly what the first version of this looked like -- and it fights the shade
-    // at the bottom, which is the one place the surface is supposed to be darker.
-    const float inset = 1.0f;
-    const D2D1_GRADIENT_STOP rimStops[2] = {
-        {0.0f, ThemeInk(theme.gloss * 0.95f * opacity)},
-        {1.0f, ThemeInk(theme.gloss * 0.10f * opacity)},
-    };
-    ID2D1GradientStopCollection* rimCollection = nullptr;
-    ID2D1LinearGradientBrush* rim = nullptr;
-    if (SUCCEEDED(context->CreateGradientStopCollection(rimStops, 2, D2D1_GAMMA_2_2,
-                                                        D2D1_EXTEND_MODE_CLAMP, &rimCollection)) &&
-        rimCollection) {
-        const D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES rimProperties = {
-            D2D1::Point2F(shape.rect.left, shape.rect.top),
-            D2D1::Point2F(shape.rect.left, shape.rect.bottom)};
-        if (FAILED(context->CreateLinearGradientBrush(rimProperties, rimCollection, &rim))) {
-            rim = nullptr;
-        }
+    if (g_cache.topWash) {
+        PlaceLinear(g_cache.topWash, shape.rect.left, shape.rect.top, shape.rect.top + topBand, opacity);
+        context->FillRoundedRectangle(&shape, g_cache.topWash);
     }
-    if (rim) {
+    if (g_cache.bottomShade) {
+        PlaceLinear(g_cache.bottomShade, shape.rect.left, shape.rect.bottom - bottomBand,
+                    shape.rect.bottom, opacity);
+        context->FillRoundedRectangle(&shape, g_cache.bottomShade);
+    }
+
+    // The hairline just inside the edge -- the glass's own rim. INSET by the stroke width so it cannot spill
+    // outside the shape, and DIRECTIONAL (bright at the top, almost gone at the bottom).
+    const float inset = 1.0f;
+    if (g_cache.rimLine) {
+        PlaceLinear(g_cache.rimLine, shape.rect.left, shape.rect.top, shape.rect.bottom, opacity);
         const D2D1_ROUNDED_RECT inner = {
             D2D1::RectF(shape.rect.left + inset, shape.rect.top + inset,
                         shape.rect.right - inset, shape.rect.bottom - inset),
             shape.radiusX > inset ? shape.radiusX - inset : 0.0f,
             shape.radiusY > inset ? shape.radiusY - inset : 0.0f};
-        context->DrawRoundedRectangle(&inner, rim, 1.0f);
-        rim->Release();
+        context->DrawRoundedRectangle(&inner, g_cache.rimLine, 1.0f);
     }
-    if (rimCollection) rimCollection->Release();
+}
+
+void DrawTopSheen(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
+                  float pointerFraction, float opacity) {
+    if (!context || opacity <= 0.01f || theme.gloss <= 0.001f) return;
+    const float width = shape.rect.right - shape.rect.left;
+    const float height = shape.rect.bottom - shape.rect.top;
+    if (width < 40.0f || height < 8.0f) return;
+    if (!EnsureMaterial(context, theme) || !g_cache.sheen) return;
+
+    // Three blobs, not one band. Their places and sizes are fixed fractions of the shape -- deterministic,
+    // so a screenshot is the same every run -- and the pointer only SHIFTS them a little (the brief's
+    // "悬停时只增强少量高光并进行轻微偏移").
+    const float band = min(height * 0.45f, 20.0f);
+    const float t = pointerFraction < 0.0f ? 0.0f : (pointerFraction > 1.0f ? 1.0f : pointerFraction);
+    const float shift = (t - 0.5f) * width * 0.035f;
+    struct Blob {
+        float x;
+        float y;
+        float radiusX;
+        float radiusY;
+        float alpha;
+    };
+    const Blob blobs[3] = {
+        {0.30f, 0.22f, 0.20f, 0.55f, 1.00f},
+        {0.52f, 0.16f, 0.26f, 0.42f, 0.75f},
+        {0.72f, 0.26f, 0.17f, 0.50f, 0.55f},
+    };
+    for (const Blob& blob : blobs) {
+        PlaceRadial(g_cache.sheen, shape.rect.left + width * blob.x + shift,
+                    shape.rect.top + band * blob.y, width * blob.radiusX, height * blob.radiusY,
+                    opacity * blob.alpha);
+        context->FillRoundedRectangle(&shape, g_cache.sheen);
+    }
+}
+
+void DrawEdgeTints(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
+                   float opacity) {
+    if (!context || opacity <= 0.01f || theme.tint <= 0.001f) return;
+    const float width = shape.rect.right - shape.rect.left;
+    const float height = shape.rect.bottom - shape.rect.top;
+    if (width < 40.0f || height < 8.0f) return;
+    if (!EnsureMaterial(context, theme)) return;
+
+    const float midY = (shape.rect.top + shape.rect.bottom) * 0.5f;
+    if (g_cache.tintLeft) {
+        PlaceRadial(g_cache.tintLeft, shape.rect.left + width * 0.06f, midY, width * 0.17f,
+                    height * 0.85f, opacity);
+        context->FillRoundedRectangle(&shape, g_cache.tintLeft);
+    }
+    if (g_cache.tintRight) {
+        PlaceRadial(g_cache.tintRight, shape.rect.right - width * 0.07f, midY, width * 0.15f,
+                    height * 0.80f, opacity);
+        context->FillRoundedRectangle(&shape, g_cache.tintRight);
+    }
 }
 
 void DrawGrain(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, float opacity) {
     if (!context || opacity <= 0.001f) return;
     if (shape.rect.right <= shape.rect.left || shape.rect.bottom <= shape.rect.top) return;
-    ID2D1Bitmap1* noise = NoiseBitmap(context);
-    if (!noise) return;
-
-    // A BITMAP BRUSH FILLING THE SHAPE, which needs no layer and is clipped by the rounded rectangle the
-    // fill is made of -- the grain cannot escape the pill, and there is no intermediate surface, no
-    // layer push and nothing to balance.
-    //
-    // The first version pushed a layer with the rounded geometry as its mask and called DrawBitmap. It
-    // looked right and killed the whole frame: with the grain on, the island stopped being painted at all
-    // (measured by switching a user theme's `grain` between 0 and 0.05 with nothing else changed), which is
-    // what a D2D error inside the draw looks like from outside -- no message, no island.
-    const D2D1_BITMAP_BRUSH_PROPERTIES1 brushProperties = D2D1::BitmapBrushProperties1(
-        D2D1_EXTEND_MODE_WRAP, D2D1_EXTEND_MODE_WRAP, D2D1_INTERPOLATION_MODE_LINEAR);
-    ID2D1BitmapBrush1* brush = nullptr;
-    if (FAILED(context->CreateBitmapBrush(noise, brushProperties, &brush)) || !brush) return;
-    brush->SetOpacity(opacity);
-    context->FillRoundedRectangle(&shape, brush);
-    brush->Release();
+    if (!EnsureMaterial(context, CurrentTheme()) || !g_cache.grain) return;
+    g_cache.grain->SetOpacity(opacity);
+    context->FillRoundedRectangle(&shape, g_cache.grain);
 }
 
 void DrawSpecularSweep(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
@@ -256,70 +454,47 @@ void DrawSpecularSweep(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& sh
     const float width = shape.rect.right - shape.rect.left;
     const float height = shape.rect.bottom - shape.rect.top;
     if (width < 24.0f || height < 6.0f) return;
+    if (!EnsureMaterial(context, theme) || !g_cache.sweep) return;
 
-    // THE BAND THE LIGHT LIVES IN is the one the top gloss already uses (a share of the height, capped),
-    // so the two gradients read as one lighting rather than as two things happening on the surface.
     const float band = min(height * 0.45f, 20.0f);
     const float centreX = SpecularCentreX(shape.rect.left, shape.rect.right, pointerFraction);
     const float centreY = shape.rect.top + band * 0.5f;
-    // Wide and flat rather than circular: on a 36 DIP pill a round spot is a dot, and the elongation is
-    // what makes it read as light travelling along a curved surface. The radial brush takes two radii, so
-    // this needs no transform.
-    const float radiusX = width * 0.30f;
-    const float radiusY = band * 1.15f;
-
-    const D2D1_GRADIENT_STOP stops[3] = {
-        {0.0f, ThemeInk(theme.sweep * 1.10f * opacity)},
-        {0.55f, ThemeInk(theme.sweep * 0.35f * opacity)},
-        {1.0f, ThemeInk(0.0f)},
-    };
-    ID2D1GradientStopCollection* collection = nullptr;
-    if (FAILED(context->CreateGradientStopCollection(stops, 3, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP,
-                                                     &collection)) ||
-        !collection) {
-        return;
-    }
-    ID2D1RadialGradientBrush* brush = nullptr;
-    const D2D1_RADIAL_GRADIENT_BRUSH_PROPERTIES properties = {
-        D2D1::Point2F(centreX, centreY), D2D1::Point2F(centreX, centreY), radiusX, radiusY};
-    if (SUCCEEDED(context->CreateRadialGradientBrush(properties, collection, &brush)) && brush) {
-        // Filled over the SHAPE, not over the highlight's own circle, for the reason DrawGrain records:
-        // a fill of the rounded rectangle cannot escape the glass, and the falloff is what limits it.
-        context->FillRoundedRectangle(&shape, brush);
-        brush->Release();
-    }
-    collection->Release();
+    PlaceRadial(g_cache.sweep, centreX, centreY, width * 0.30f, band * 1.15f, opacity);
+    context->FillRoundedRectangle(&shape, g_cache.sweep);
 }
 
 void DrawGlassRim(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
                   float opacity) {
     if (!context || opacity <= 0.01f || theme.rim <= 0.001f) return;
     if (shape.rect.right <= shape.rect.left || shape.rect.bottom <= shape.rect.top) return;
+    if (!EnsureMaterial(context, theme) || !g_cache.solid) return;
 
     // THE OUTSIDE LINE, faint and dark: on the desktop side of the edge it separates the glass from
     // whatever is behind it, and that separation is half of what reads as thickness.
-    ID2D1SolidColorBrush* dark = nullptr;
-    if (SUCCEEDED(context->CreateSolidColorBrush(
-            D2D1::ColorF(0.0f, 0.0f, 0.0f, theme.rim * 0.22f * opacity), &dark)) &&
-        dark) {
-        context->DrawRoundedRectangle(&shape, dark, 1.0f);
-        dark->Release();
-    }
+    g_cache.solid->SetColor(D2D1::ColorF(0.0f, 0.0f, 0.0f, theme.rim * 0.22f * opacity));
+    g_cache.solid->SetOpacity(1.0f);
+    context->DrawRoundedRectangle(&shape, g_cache.solid, 1.0f);
 
-    // ... and the bright line just inside it. A little further in than DrawSurfaceLighting's hairline
-    // (which is inset 1 DIP) so the two do not draw over one another.
+    // ... and the bright line just inside it.
     const float inset = 1.75f;
     const D2D1_ROUNDED_RECT inner = {
         D2D1::RectF(shape.rect.left + inset, shape.rect.top + inset,
                     shape.rect.right - inset, shape.rect.bottom - inset),
         shape.radiusX > inset ? shape.radiusX - inset : 0.0f,
         shape.radiusY > inset ? shape.radiusY - inset : 0.0f};
-    ID2D1SolidColorBrush* bright = nullptr;
-    if (SUCCEEDED(context->CreateSolidColorBrush(ThemeInk(theme.rim * 0.60f * opacity), &bright)) &&
-        bright) {
-        context->DrawRoundedRectangle(&inner, bright, 1.0f);
-        bright->Release();
-    }
+    g_cache.solid->SetColor(ThemeInk(theme.rim * 0.60f * opacity));
+    context->DrawRoundedRectangle(&inner, g_cache.solid, 1.0f);
+
+    // THE INNER DARK EDGE: a second, darker hairline further in. Without it the bright line is a frame
+    // drawn on a surface; with it there is a lit edge, a dark thickness, and then the face of the glass.
+    const float darkInset = 3.1f;
+    const D2D1_ROUNDED_RECT thickness = {
+        D2D1::RectF(shape.rect.left + darkInset, shape.rect.top + darkInset,
+                    shape.rect.right - darkInset, shape.rect.bottom - darkInset),
+        shape.radiusX > darkInset ? shape.radiusX - darkInset : 0.0f,
+        shape.radiusY > darkInset ? shape.radiusY - darkInset : 0.0f};
+    g_cache.solid->SetColor(D2D1::ColorF(0.0f, 0.0f, 0.0f, theme.rim * 0.30f * opacity));
+    context->DrawRoundedRectangle(&thickness, g_cache.solid, 1.0f);
 }
 
-} // namespace island
+}  // namespace island
