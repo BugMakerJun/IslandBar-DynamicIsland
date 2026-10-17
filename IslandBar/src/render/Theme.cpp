@@ -32,15 +32,15 @@ const Theme kThemes[] = {
     //               shadow grain
     {L"\u9ED8\u8BA4",   {0.05f, 0.05f, 0.07f, 0.92f}, {0.04f, 0.05f, 0.08f, 0.98f}, 0.06f,
      {0.05f, 0.05f, 0.07f, 0.97f}, 0.13f, {0.0f, 0.47f, 0.83f, 0.95f}, {0.93f, 0.93f, 0.93f, 1.0f},
-     0.0f, 0.0f, 0.0f, 0.0f, 0.0f},
+     0.0f, 0.0f, 0.0f, 0.0f, 0.0f, {1.0f, 1.0f, 1.0f, 1.0f}},
     // 冰蓝
     {L"\u51B0\u84DD", {0.06f, 0.09f, 0.16f, 0.93f}, {0.02f, 0.03f, 0.07f, 0.97f}, 0.10f,
      {0.04f, 0.06f, 0.12f, 0.97f}, 0.16f, {0.20f, 0.62f, 0.98f, 0.95f}, {0.90f, 0.94f, 1.00f, 1.0f},
-     0.05f, 0.02f, 0.10f, 0.18f, 0.12f},
+     0.05f, 0.02f, 0.10f, 0.18f, 0.12f, {1.0f, 1.0f, 1.0f, 1.0f}},
     // 石墨
     {L"\u77F3\u58A8", {0.13f, 0.13f, 0.14f, 0.94f}, {0.08f, 0.08f, 0.09f, 0.98f}, 0.05f,
      {0.11f, 0.11f, 0.12f, 0.97f}, 0.18f, {0.24f, 0.56f, 0.90f, 0.95f}, {0.99f, 0.99f, 0.99f, 1.0f},
-     0.05f, 0.0f, 0.06f, 0.16f, 0.10f},
+     0.05f, 0.0f, 0.06f, 0.16f, 0.10f, {1.0f, 1.0f, 1.0f, 1.0f}},
     // 玻璃 -- asked for in these words: "加一个玻璃效果的".
     //
     // IT IS PAINTED GLASS, and the difference from real glass is measured rather than assumed. Three
@@ -65,9 +65,12 @@ const Theme kThemes[] = {
     // "still not liquid glass": it was a flat, nearly opaque grey slab. The backdrop is really blurred
     // now, so the fill can be much more transparent -- the colour behind comes through -- and the rim,
     // gloss and sweep carry the thickness that a photograph cannot (HANDOFF 8.170).
-    {L"\u73BB\u7483", {0.14f, 0.18f, 0.26f, 0.18f}, {0.04f, 0.06f, 0.12f, 0.28f}, 0.55f,
-     {0.08f, 0.10f, 0.16f, 0.60f}, 0.40f, {0.45f, 0.80f, 1.00f, 0.95f}, {1.00f, 1.00f, 1.00f, 1.0f},
-     0.0f, 0.04f, 0.50f, 0.95f, 0.34f},
+    // THE LIGHT GLASS, following the user's reference photograph (2026-10-17): a clear, pale-blue
+    // surface that shows the desktop's own colours, a bright white specular, and BLACK text. The ink and
+    // the highlight are separate colours for exactly this theme.
+    {L"\u73BB\u7483", {0.94f, 0.97f, 1.00f, 0.42f}, {0.70f, 0.80f, 0.93f, 0.30f}, 0.75f,
+     {0.90f, 0.94f, 1.00f, 0.55f}, 0.30f, {0.15f, 0.45f, 0.85f, 0.95f}, {0.03f, 0.04f, 0.06f, 1.0f},
+     0.0f, 0.03f, 0.55f, 0.55f, 0.25f, {1.0f, 1.0f, 1.0f, 1.0f}},
 };
 constexpr int kThemeCount = static_cast<int>(sizeof(kThemes) / sizeof(kThemes[0]));
 
@@ -202,6 +205,11 @@ const Theme& BuiltInTheme(int index) {
 D2D1_COLOR_F ThemeInk(float alpha) {
     const D2D1_COLOR_F ink = CurrentTheme().ink;
     return D2D1::ColorF(ink.r, ink.g, ink.b, Clamp01(alpha) * Clamp01(ink.a));
+}
+
+D2D1_COLOR_F ThemeHighlight(float alpha) {
+    const D2D1_COLOR_F& colour = CurrentTheme().highlight;
+    return D2D1::ColorF(colour.r, colour.g, colour.b, Clamp01(colour.a * alpha));
 }
 
 float ThemeInkContrast(const Theme& theme) {

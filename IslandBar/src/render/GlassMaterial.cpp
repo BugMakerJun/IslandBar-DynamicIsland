@@ -242,8 +242,8 @@ bool EnsureMaterial(ID2D1DeviceContext2* context, const Theme& theme) {
     context->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f), &g_cache.solid);
 
     const D2D1_GRADIENT_STOP topStops[2] = {
-        {0.0f, ThemeInk(theme.gloss * 1.25f)},
-        {1.0f, ThemeInk(0.0f)},
+        {0.0f, ThemeHighlight(theme.gloss * 1.25f)},
+        {1.0f, ThemeHighlight(0.0f)},
     };
     g_cache.topWash = MakeLinear(context, topStops, 2);
 
@@ -254,15 +254,15 @@ bool EnsureMaterial(ID2D1DeviceContext2* context, const Theme& theme) {
     g_cache.bottomShade = MakeLinear(context, bottomStops, 2);
 
     const D2D1_GRADIENT_STOP rimStops[2] = {
-        {0.0f, ThemeInk(theme.gloss * 0.95f)},
-        {1.0f, ThemeInk(theme.gloss * 0.10f)},
+        {0.0f, ThemeHighlight(theme.gloss * 0.95f)},
+        {1.0f, ThemeHighlight(theme.gloss * 0.10f)},
     };
     g_cache.rimLine = MakeLinear(context, rimStops, 2);
 
     const D2D1_GRADIENT_STOP sweepStops[3] = {
-        {0.0f, ThemeInk(theme.sweep * 0.95f)},
-        {0.30f, ThemeInk(theme.sweep * 0.30f)},
-        {1.0f, ThemeInk(0.0f)},
+        {0.0f, ThemeHighlight(theme.sweep * 0.95f)},
+        {0.30f, ThemeHighlight(theme.sweep * 0.30f)},
+        {1.0f, ThemeHighlight(0.0f)},
     };
     g_cache.sweep = MakeRadial(context, sweepStops, 3);
 
@@ -282,9 +282,9 @@ bool EnsureMaterial(ID2D1DeviceContext2* context, const Theme& theme) {
     // THE TOP SHEEN: one soft brush, drawn as a few blobs at different places. Irregular by construction;
     // a horizontal band across the whole top is the "light bar" the brief forbids.
     const D2D1_GRADIENT_STOP sheenStops[3] = {
-        {0.0f, ThemeInk(theme.gloss * 0.85f)},
-        {0.55f, ThemeInk(theme.gloss * 0.22f)},
-        {1.0f, ThemeInk(0.0f)},
+        {0.0f, ThemeHighlight(theme.gloss * 0.85f)},
+        {0.55f, ThemeHighlight(theme.gloss * 0.22f)},
+        {1.0f, ThemeHighlight(0.0f)},
     };
     g_cache.sheen = MakeRadial(context, sheenStops, 3);
 
@@ -307,9 +307,9 @@ bool EnsureMaterial(ID2D1DeviceContext2* context, const Theme& theme) {
     // gradient over a 2.2 DIP stroke is the whole trick -- it turns the rim from a line into a curved
     // wall, without a second geometry or a layer.
     const D2D1_GRADIENT_STOP bandStops[3] = {
-        {0.0f, ThemeInk(theme.rim * 0.23f)},
-        {0.50f, ThemeInk(theme.rim * 0.10f)},
-        {1.0f, ThemeInk(theme.rim * 0.02f)},
+        {0.0f, ThemeHighlight(theme.rim * 0.23f)},
+        {0.50f, ThemeHighlight(theme.rim * 0.10f)},
+        {1.0f, ThemeHighlight(theme.rim * 0.02f)},
     };
     g_cache.edgeBand = MakeLinear(context, bandStops, 3);
 
@@ -335,9 +335,9 @@ bool EnsureMaterial(ID2D1DeviceContext2* context, const Theme& theme) {
     };
     g_cache.curveShade = MakeLinear(context, shadeStops, 3);
     const D2D1_GRADIENT_STOP causticStops[3] = {
-        {0.0f, ThemeInk(0.0f)},
-        {0.50f, ThemeInk(theme.rim * 0.075f)},
-        {1.0f, ThemeInk(0.0f)},
+        {0.0f, ThemeHighlight(0.0f)},
+        {0.50f, ThemeHighlight(theme.rim * 0.075f)},
+        {1.0f, ThemeHighlight(0.0f)},
     };
     g_cache.caustic = MakeLinearHorizontal(context, causticStops, 3);
 

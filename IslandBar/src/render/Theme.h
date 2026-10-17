@@ -66,6 +66,9 @@ struct Theme {
     float sweep = 0.0f;             // 0..1
     float rim = 0.0f;               // 0..1
     float tint = 0.0f;              // 0..1
+    // THE LIGHT ON THE MATERIAL, separate from the ink. They were the same colour while every theme had
+    // white text; a light glass needs black text AND white highlights, and one field cannot be both.
+    D2D1_COLOR_F highlight = {1.0f, 1.0f, 1.0f, 1.0f};
 };
 
 // The theme in force.
@@ -92,6 +95,9 @@ void ApplyRememberedTheme();
 // The ink at an alpha, which is what most of the drawing asks for: a hundred call sites say "white at
 // 0.72" and the theme is what decides which colour that is.
 D2D1_COLOR_F ThemeInk(float alpha);
+
+// The highlight at an alpha: the light reflected by the material, which is NOT the ink any more.
+D2D1_COLOR_F ThemeHighlight(float alpha);
 
 // The contrast floor the ink has to keep against its own surface (WCAG's 4.5:1 for body text). Named so
 // that the theme loader's warning, the tint clamp and the self-test all quote one number.
