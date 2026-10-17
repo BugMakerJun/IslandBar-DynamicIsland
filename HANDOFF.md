@@ -13697,3 +13697,60 @@ acrylic 探针（**溢出圆角就死心，全盘走 C**）。
 折射（真正的"液态"）仍然没有路：它需要**背景像素被位移**，即抓屏那条路（第 53 轮 Gemini 反对、
 ChatGPT 建议先做离线位移图实验）。
 
+---
+
+## 8.166 **探针 A 第二轮：胶囊大小的 DComp 窗口有真模糊，但 DWM 的圆角只有 ~8px**（2026-10-17）
+
+### 8.166.1 这一轮问的两个问题，都有了答案
+
+工具：`tools/glassprobe --dcomp`（新文件 `glass_common.h` / `dcomp_probe.h` / `dcomp_probe.cpp`），
+窗口种类**和栏完全一样**：D3D11 + D2D + `CreateSwapChainForComposition`（预乘 alpha）+
+DirectComposition 视觉 + `WS_EX_NOREDIRECTIONBITMAP`，尺寸 **220x36**（就是 `kPillWidthDip` x
+`kPillHeightDip`），位置 1180,300。材质：`ACCENT_ENABLE_ACRYLICBLURBEHIND`（tint `0x40FFFFFF`）+
+`DWMWA_WINDOW_CORNER_PREFERENCE = DWMWCP_ROUND`。驱动脚本 `scripts/probe-glass-dcomp.ps1`：
+在探针后面放一扇 **4px 黑白条纹**的 WinForms 窗口当高对比背景，逐次拍照并算边缘能量。
+（探针 exe 复制到 `%TEMP%` 再启动，避开项目目录 LOW 完整性那条老坑。）
+
+**① 材质显示不显示：显示，而且是真的模糊。**
+
+| 运行 | 边缘能量（胶囊内 204x24） |
+|---|---|
+| `--plain`（同种窗口，无材质） | **57.75** |
+| acrylic | **1.14** |
+
+条纹在 acrylic 下被抹成一块均匀灰，不是"一层灰盖上去"：`--plain` 与 acrylic 的差别是 50 倍。
+
+**② 圆角裁不裁：裁，但半径不是胶囊的 18px。**
+
+四角**没有方形溢出**（第一轮担心的四个小方块不存在），材质被 DWM 的圆角裁住。
+可是把照片逐行量"第一列有材质的 x"：y=10 → 26、y=12 → 24、y=13 → 23、y=16 → 20，
+也就是半径 **~8px**；把窗口做成 **220x60** 再拍，圆角还是 ~8px——**DWM 的圆角是固定的，不随窗口高度走**。
+`--region`（r=18 的胶囊 region）加进去**形状一个像素都没变**（边缘能量仍 1.14），
+和 8.91 在栏自己的窗口上得到的"region 不裁 acrylic"一致。
+
+**③ 一个附带的好消息**：`--scrim 0`（窗口内容**完全不画**，只留透明 swapchain）时材质照样显示
+（`captures/dcomp-scrim0.png` 与 `--scrim 24` 版本肉眼无差）。所以将来那扇玻璃窗可以**不画任何东西**，
+scrim 由主窗画在上面——这正好是苹果的做法（tinted scrim over the refracted backdrop）。
+
+### 8.166.2 由此产生的形状冲突（这是下一片要拍板的事）
+
+岛是 `220x36`、`kCornerRadiusDip = 18` 的**胶囊**；窗口矩形等于胶囊时，DWM 给的是 **r≈8 的圆角矩形**。
+两个形状的差集是四个角上各一块**月牙形**（最宽 ~10px）：那块区域**没有模糊**，锐利的壁纸会透过
+胶囊自己的 scrim（玻璃主题 0.66~0.82 alpha）透出来——在繁忙壁纸上看起来像"胶囊两端没有玻璃"。
+`captures/dcomp-shape-overlay.png` 把 18px 的胶囊轮廓（红）画在 acrylic 照片上，月牙一眼可见。
+
+三条候选（第 54 轮评审要两家表态）：
+
+| | 做法 | 代价 |
+|---|---|---|
+| **A** | 接受 8px：玻璃窗 = 胶囊矩形，月牙靠 scrim / 边缘高光 / 阴影掩盖 | 两端可能看得出"没糊"；不动轮廓 |
+| **B** | 把岛的轮廓改成 r=8~10 的圆角矩形，与材质同形 | 不再是 Apple 的胶囊端 |
+| **C** | 改用 `Windows.UI.Composition`：`CreateHostBackdropBrush` + `CompositionEffectBrush`(模糊) + `CompositionRoundedRectangleGeometry(r=18)` 几何裁剪 | 形状精确；但要在 C++/WinRT 里手写 `IGraphicsEffect`(+ `IGraphicsEffectD2D1Interop`) 才能把 D2D blur 接进 effect factory，**未验证** |
+
+### 8.166.3 还没做的
+
+产品形态仍是 8.165.2 的**两扇窗**：玻璃窗（胶囊大小、只承载材质、不画内容）+ 现有主窗（画内容）。
+真正落地前要回答的工程问题：玻璃窗要不要**每帧跟着 220→720 的展开动画 SetWindowPos**（会不会闪）、
+输入怎么穿透（`WM_NCHITTEST` → `HTTRANSPARENT`）、两扇 topmost 窗的 z 序谁在谁下面、全屏退场与
+DPI 切换时怎么一起收放。这些写进了 `reviews/review-q49.txt`（第 54 轮）。
+

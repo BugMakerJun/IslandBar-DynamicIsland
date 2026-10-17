@@ -4,6 +4,8 @@
 //      glassprobe                     acrylic, rounded, 300x40, 20 s
 //      glassprobe --plain             the same window with NO material: the control
 //      glassprobe --region            acrylic + a rounded window REGION instead of a corner preference
+//      glassprobe --dcomp             the same window as the BAR owns: per-pixel alpha + DirectComposition
+//      glassprobe --dcomp --scrim 0   the composition window with nothing drawn in it at all
 //      glassprobe --at 1180,120 --size 300x40 --seconds 30
 //
 //  WHY THIS QUESTION, ASKED AGAIN (2026-10-17). The bar's three blur attempts were all made on a
@@ -15,6 +17,12 @@
 //
 //  That is the whole experiment, and it is why this program draws nothing: what is being looked at is the
 //  material the system puts under it.
+//
+//  AND THEN IT HAD TO BE ASKED AGAIN (HANDOFF 8.165). On an ORDINARY window the material is invisible --
+//  measured, not assumed: acrylic and no-material photographs came out pixel-for-pixel identical, because
+//  the material is drawn BEHIND the window's content and an ordinary window's content is opaque. The bar's
+//  window is the per-pixel-alpha kind, so `--dcomp` repeats the same experiment on that kind of window,
+//  where the only content is a transparent surface and an optional faint scrim.
 //
 //  WHAT EACH OUTPUT MEANS
 //    * every call's return value, because this project has been burned five times by a call that returned
@@ -33,40 +41,14 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "dcomp_probe.h"
+#include "glass_common.h"
+
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "gdi32.lib")
 #pragma comment(lib, "dwmapi.lib")
 
 namespace {
-
-// The composition attribute setter is not declared in any SDK header; the structure is the one every
-// acrylic sample in the world uses.
-enum AccentState {
-    ACCENT_DISABLED = 0,
-    ACCENT_ENABLE_GRADIENT = 1,
-    ACCENT_ENABLE_TRANSPARENTGRADIENT = 2,
-    ACCENT_ENABLE_BLURBEHIND = 3,
-    ACCENT_ENABLE_ACRYLICBLURBEHIND = 4,
-};
-
-struct AccentPolicy {
-    AccentState state;
-    int flags;
-    unsigned int colour;   // ABGR, and only the alpha matters to acrylic
-    int animationId;
-};
-
-struct WindowCompositionAttributeData {
-    int attribute;
-    void* data;
-    size_t size;
-};
-
-constexpr int kAccentPolicy = 19;
-constexpr int kCornerPreference = 33;   // DWMWA_WINDOW_CORNER_PREFERENCE
-constexpr int kCornerRound = 2;         // DWMWCP_ROUND
-
-using SetWindowCompositionAttributeFn = BOOL(WINAPI*)(HWND, WindowCompositionAttributeData*);
 
 int g_seconds = 20;
 
@@ -93,6 +75,8 @@ int main(int argc, char** argv) {
     bool plain = false;
     bool useRegion = false;
     bool layered = false;
+    bool dcomp = false;
+    int scrimAlpha = 24;
     unsigned int tint = 0x40FFFFFF;   // ABGR: a faint white, which is the least a material can be asked for
     int x = 1180, y = 140, width = 300, height = 40;
 
@@ -100,6 +84,12 @@ int main(int argc, char** argv) {
         if (std::strcmp(argv[i], "--plain") == 0) plain = true;
         else if (std::strcmp(argv[i], "--region") == 0) useRegion = true;
         else if (std::strcmp(argv[i], "--layered") == 0) layered = true;
+        else if (std::strcmp(argv[i], "--dcomp") == 0) dcomp = true;
+        else if (std::strcmp(argv[i], "--scrim") == 0 && i + 1 < argc) {
+            scrimAlpha = std::atoi(argv[++i]);
+            if (scrimAlpha < 0) scrimAlpha = 0;
+            if (scrimAlpha > 255) scrimAlpha = 255;
+        }
         else if (std::strcmp(argv[i], "--dark") == 0) tint = 0x99000000;
         else if (std::strcmp(argv[i], "--at") == 0 && i + 1 < argc) {
             std::sscanf(argv[++i], "%d,%d", &x, &y);
@@ -110,6 +100,20 @@ int main(int argc, char** argv) {
         } else {
             std::printf("glassprobe: unknown argument '%s'\n", argv[i]);
         }
+    }
+
+    if (dcomp) {
+        DCompOptions options;
+        options.x = x;
+        options.y = y;
+        options.width = width;
+        options.height = height;
+        options.seconds = g_seconds;
+        options.plain = plain;
+        options.region = useRegion;
+        options.tint = tint;
+        options.scrimAlpha = scrimAlpha;
+        return RunDCompProbe(options);
     }
 
     const wchar_t* className = L"IslandBar.GlassProbe";
@@ -144,8 +148,7 @@ int main(int argc, char** argv) {
         return 2;
     }
 
-    const HRESULT corner =
-        DwmSetWindowAttribute(hwnd, kCornerPreference, &kCornerRound, sizeof(kCornerRound));
+    const HRESULT corner = glassprobe::SetRoundCorners(hwnd);
 
     if (layered) {
         const BOOL ok = SetLayeredWindowAttributes(hwnd, 0, 0, LWA_ALPHA);
@@ -156,20 +159,11 @@ int main(int argc, char** argv) {
     HRESULT acrylic = E_NOTIMPL;
     const char* material = "none (--plain)";
     if (!plain) {
-        HMODULE user32 = GetModuleHandleW(L"user32.dll");
-        auto setAttribute = reinterpret_cast<SetWindowCompositionAttributeFn>(
-            user32 ? reinterpret_cast<void*>(GetProcAddress(user32, "SetWindowCompositionAttribute"))
-                   : nullptr);
-        if (setAttribute) {
-            AccentPolicy policy = {};
-            policy.state = ACCENT_ENABLE_ACRYLICBLURBEHIND;
-            policy.colour = tint;
-            WindowCompositionAttributeData data = {kAccentPolicy, &policy, sizeof(policy)};
-            // The HRESULT is what the call returns as a BOOL; recorded rather than trusted.
-            acrylic = setAttribute(hwnd, &data) ? S_OK : HRESULT_FROM_WIN32(GetLastError());
-            material = "ACRYLIC (ACCENT_ENABLE_ACRYLICBLURBEHIND)";
-        } else {
+        acrylic = glassprobe::SetAcrylic(hwnd, tint);
+        if (acrylic == E_NOTIMPL) {
             std::printf("glassprobe: SetWindowCompositionAttribute is not exported by user32\n");
+        } else {
+            material = "ACRYLIC (ACCENT_ENABLE_ACRYLICBLURBEHIND)";
         }
     }
 

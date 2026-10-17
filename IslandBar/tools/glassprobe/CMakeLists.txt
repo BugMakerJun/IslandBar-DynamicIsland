@@ -10,5 +10,5 @@
 #  Not part of the shipped bar, like every other probe here.
 # =====================================================================
 
-add_executable(glassprobe main.cpp)
+add_executable(glassprobe main.cpp dcomp_probe.cpp)
 target_include_directories(glassprobe PRIVATE "${CMAKE_SOURCE_DIR}/src")
