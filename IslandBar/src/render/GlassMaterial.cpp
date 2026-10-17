@@ -437,6 +437,9 @@ void DrawSoftShadow(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape
 void DrawSmokedDepth(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
                      float opacity) {
     if (!context || opacity <= 0.01f || theme.rim <= 0.001f) return;
+    // The lens theme is CLEAR glass: the refracted backdrop already gives it depth, and a smoke layer on
+    // top of it was the "雾蒙蒙" the user kept seeing.
+    if (theme.lens) return;
     const float width = shape.rect.right - shape.rect.left;
     const float height = shape.rect.bottom - shape.rect.top;
     if (width < 6.0f || height < 6.0f) return;
