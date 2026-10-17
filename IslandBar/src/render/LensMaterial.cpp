@@ -251,6 +251,33 @@ bool LensMaterial::Update(ID3D11Texture2D* texture, const RECT& source, const D2
                     static_cast<size_t>(takeW) * 4);
     }
     d3d->Unmap(cache_->staging[write ^ 1].Get(), 0);
+
+    // The crop's margin can fall outside the captured frame (the bar sits on the screen's top edge).
+    // Those rows were never written and stay black, which the rim's outward sampling then paints as a
+    // hard dark line along the top. Replicate the nearest covered row/column into the empty margin: the
+    // lens then bends the screen's edge instead of a hole.
+    const auto rowAt = [&](int y) { return cache_->crop.data() + static_cast<size_t>(y) * cropW * 4; };
+    for (int y = 0; y < atY; ++y) {
+        std::memcpy(rowAt(y), rowAt(std::min(atY, cropH - 1)), static_cast<size_t>(cropW) * 4);
+    }
+    const int lastRow = std::min(atY + takeH - 1, cropH - 1);
+    for (int y = atY + takeH; y < cropH; ++y) {
+        std::memcpy(rowAt(y), rowAt(lastRow), static_cast<size_t>(cropW) * 4);
+    }
+    for (int x = 0; x < atX; ++x) {
+        for (int y = 0; y < cropH; ++y) {
+            std::memcpy(cache_->crop.data() + (static_cast<size_t>(y) * cropW + x) * 4,
+                        cache_->crop.data() + (static_cast<size_t>(y) * cropW + atX) * 4, 4);
+        }
+    }
+    const int lastCol = std::min(atX + takeW - 1, cropW - 1);
+    for (int x = atX + takeW; x < cropW; ++x) {
+        for (int y = 0; y < cropH; ++y) {
+            std::memcpy(cache_->crop.data() + (static_cast<size_t>(y) * cropW + x) * 4,
+                        cache_->crop.data() + (static_cast<size_t>(y) * cropW + lastCol) * 4, 4);
+        }
+    }
+
     const size_t imageBytes = static_cast<size_t>(pillW) * pillH * 4;
     const bool resized = cache_->image.size() != imageBytes || cache_->pillW != pillW ||
                          cache_->pillH != pillH;
