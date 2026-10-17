@@ -176,6 +176,7 @@ struct MaterialCache {
     ID2D1LinearGradientBrush* bottomShade = nullptr;
     ID2D1LinearGradientBrush* rimLine = nullptr;
     ID2D1LinearGradientBrush* specularRim = nullptr;
+    ID2D1LinearGradientBrush* sweepBand = nullptr;
     ID2D1RadialGradientBrush* sweep = nullptr;
     ID2D1RadialGradientBrush* depth = nullptr;
     ID2D1RadialGradientBrush* sheen = nullptr;
@@ -208,6 +209,7 @@ void ReleaseCache() {
     if (g_cache.bottomShade) g_cache.bottomShade->Release();
     if (g_cache.rimLine) g_cache.rimLine->Release();
     if (g_cache.specularRim) g_cache.specularRim->Release();
+    if (g_cache.sweepBand) g_cache.sweepBand->Release();
     if (g_cache.sweep) g_cache.sweep->Release();
     if (g_cache.depth) g_cache.depth->Release();
     if (g_cache.sheen) g_cache.sheen->Release();
@@ -277,6 +279,15 @@ bool EnsureMaterial(ID2D1DeviceContext2* context, const Theme& theme) {
         {1.0f, ThemeHighlight(0.0f)},
     };
     g_cache.sweep = MakeRadial(context, sweepStops, 3);
+
+    // The pointer's light as a HORIZONTAL band: brightest at the pointer's x and zero at both ends.
+    // The radial pool it replaces rendered as a rectangle with hard vertical edges on this surface.
+    const D2D1_GRADIENT_STOP sweepBandStops[3] = {
+        {0.0f, ThemeHighlight(0.0f)},
+        {0.5f, ThemeHighlight(theme.sweep * 0.85f)},
+        {1.0f, ThemeHighlight(0.0f)},
+    };
+    g_cache.sweepBand = MakeLinearHorizontal(context, sweepBandStops, 3);
 
     // THE SMOKED DEPTH: the centre of the glass is heavier than its rim. Blue-black rather than neutral
     // black, because a cold shadow is what smoke reads as. The strength rides on `rim`, so a theme that
@@ -553,15 +564,11 @@ void DrawSpecularSweep(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& sh
     const float width = shape.rect.right - shape.rect.left;
     const float height = shape.rect.bottom - shape.rect.top;
     if (width < 24.0f || height < 6.0f) return;
-    if (!EnsureMaterial(context, theme) || !g_cache.sweep) return;
-
-    const float band = min(height * 0.45f, 20.0f);
+    if (!EnsureMaterial(context, theme) || !g_cache.sweepBand) return;
     const float centreX = SpecularCentreX(shape.rect.left, shape.rect.right, pointerFraction);
-    const float centreY = shape.rect.top + band * 0.5f;
-    // A tighter, rounder pool than the old wide smear: 45 DIP is what reads as a drop of light on the
-    // surface rather than as a band sliding along it.
-    PlaceRadial(g_cache.sweep, centreX, centreY, std::min(width * 0.30f, 45.0f), band * 1.6f, opacity);
-    context->FillRoundedRectangle(&shape, g_cache.sweep);
+    const float reach = std::min(width * 0.42f, 110.0f);
+    PlaceLinearHorizontal(g_cache.sweepBand, centreX - reach, centreX + reach, shape.rect.top, opacity);
+    context->FillRoundedRectangle(&shape, g_cache.sweepBand);
 }
 
 void DrawGlassRim(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
