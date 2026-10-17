@@ -709,9 +709,6 @@ void Renderer::RenderFrame(const FrameState& frame) {
         const float hoverLift = (frame.pointerOnIsland && CurrentTheme().lens) ? 1.12f : 1.0f;
         island::DrawSmokedBase(d2dContext_, rounded, theme, pillTopFill, pillBottomFill, hoverLift);
 
-        // ... and the smoke inside it: centre heavier than rim, gone before the edge.
-        island::DrawSmokedDepth(d2dContext_, rounded, theme, 1.0f);
-
         // THE LIGHTING, from the same function the cards use (GlassMaterial.h): a highlight along the top
         // that fades down, a shade under it, and a hairline just inside the edge. It replaces two flat
         // bands of gloss, which were the same idea drawn without following the pill's curve.

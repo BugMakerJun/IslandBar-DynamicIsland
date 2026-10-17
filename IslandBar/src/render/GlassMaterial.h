@@ -37,11 +37,6 @@ namespace island {
 void DrawSmokedBase(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
                     const D2D1_COLOR_F& top, const D2D1_COLOR_F& bottom, float opacity);
 
-// THE SMOKED DEPTH: the centre of the glass is heavier than its rim -- a blue-black ellipse that fades out
-// before the edge. `theme.rim` drives it, so a theme with no glass gets none of it.
-void DrawSmokedDepth(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
-                     float opacity);
-
 // THE LIGHTING A GLASS SURFACE GETS FROM THE ROOM: a highlight along the top, a shade along the bottom, and
 // a hairline just inside the edge.
 //

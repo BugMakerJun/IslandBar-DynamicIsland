@@ -178,7 +178,6 @@ struct MaterialCache {
     ID2D1LinearGradientBrush* specularRim = nullptr;
     ID2D1LinearGradientBrush* sweepBand = nullptr;
     ID2D1RadialGradientBrush* sweep = nullptr;
-    ID2D1RadialGradientBrush* depth = nullptr;
     ID2D1RadialGradientBrush* sheen = nullptr;
     ID2D1RadialGradientBrush* tintLeft = nullptr;
     ID2D1RadialGradientBrush* tintRight = nullptr;
@@ -211,7 +210,6 @@ void ReleaseCache() {
     if (g_cache.specularRim) g_cache.specularRim->Release();
     if (g_cache.sweepBand) g_cache.sweepBand->Release();
     if (g_cache.sweep) g_cache.sweep->Release();
-    if (g_cache.depth) g_cache.depth->Release();
     if (g_cache.sheen) g_cache.sheen->Release();
     if (g_cache.tintLeft) g_cache.tintLeft->Release();
     if (g_cache.tintRight) g_cache.tintRight->Release();
@@ -288,19 +286,6 @@ bool EnsureMaterial(ID2D1DeviceContext2* context, const Theme& theme) {
         {1.0f, ThemeHighlight(0.0f)},
     };
     g_cache.sweepBand = MakeLinearHorizontal(context, sweepBandStops, 3);
-
-    // THE SMOKED DEPTH: the centre of the glass is heavier than its rim. Blue-black rather than neutral
-    // black, because a cold shadow is what smoke reads as. The strength rides on `rim`, so a theme that
-    // asks for a material gets this layer and one that does not gets nothing.
-    // With the pill's fill now almost transparent, the smoke is a whisper rather than a layer: it gives
-    // the centre a little weight without turning the island back into a dark slab.
-    const float depthStrength = theme.rim * 0.15f;
-    const D2D1_GRADIENT_STOP depthStops[3] = {
-        {0.0f, D2D1::ColorF(0.005f, 0.012f, 0.030f, depthStrength)},
-        {0.62f, D2D1::ColorF(0.005f, 0.012f, 0.030f, depthStrength * 0.42f)},
-        {1.0f, D2D1::ColorF(0.005f, 0.012f, 0.030f, 0.0f)},
-    };
-    g_cache.depth = MakeRadial(context, depthStops, 3);
 
     // THE TOP SHEEN: one soft brush, drawn as a few blobs at different places. Irregular by construction;
     // a horizontal band across the whole top is the "light bar" the brief forbids.
@@ -432,22 +417,6 @@ void DrawSoftShadow(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape
             shape.radiusX + grow * 0.6f, shape.radiusY + grow * 0.6f};
         context->FillRoundedRectangle(&grown, g_cache.solid);
     }
-}
-
-void DrawSmokedDepth(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
-                     float opacity) {
-    if (!context || opacity <= 0.01f || theme.rim <= 0.001f) return;
-    // The lens theme is CLEAR glass: the refracted backdrop already gives it depth, and a smoke layer on
-    // top of it was the "雾蒙蒙" the user kept seeing.
-    if (theme.lens) return;
-    const float width = shape.rect.right - shape.rect.left;
-    const float height = shape.rect.bottom - shape.rect.top;
-    if (width < 6.0f || height < 6.0f) return;
-    if (!EnsureMaterial(context, theme) || !g_cache.depth) return;
-
-    PlaceRadial(g_cache.depth, (shape.rect.left + shape.rect.right) * 0.5f,
-                (shape.rect.top + shape.rect.bottom) * 0.5f, width * 0.5f, height * 0.5f, opacity);
-    context->FillRoundedRectangle(&shape, g_cache.depth);
 }
 
 void DrawSurfaceLighting(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape,
