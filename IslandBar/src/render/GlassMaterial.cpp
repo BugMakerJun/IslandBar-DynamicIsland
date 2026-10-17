@@ -447,7 +447,15 @@ void DrawSurfaceLighting(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& 
     const float topBand = min(height * 0.45f, 20.0f);
     const float bottomBand = min(height * 0.35f, 26.0f);
 
-    if (g_cache.topWash) {
+    // THE TOP LIGHT fades out BEFORE the caps. A full-width linear wash ran into the shape's vertical
+    // edge at the right cap and stopped there, which read as the highlight being cut with a knife.
+    // A wide, flat ellipse falls off in every direction, so the light never reaches the rim. Only the
+    // lens theme takes it: the other themes keep the linear wash their own pixel baselines were built on.
+    if (theme.lens && g_cache.sheen) {
+        PlaceRadial(g_cache.sheen, (shape.rect.left + shape.rect.right) * 0.5f, shape.rect.top + 2.0f,
+                    width * 0.46f, topBand * 0.95f, opacity);
+        context->FillRoundedRectangle(&shape, g_cache.sheen);
+    } else if (g_cache.topWash) {
         PlaceLinear(g_cache.topWash, shape.rect.left, shape.rect.top, shape.rect.top + topBand, opacity);
         context->FillRoundedRectangle(&shape, g_cache.topWash);
     }
@@ -480,14 +488,20 @@ void DrawTopSheen(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, 
         float radiusY;
         float alpha;
     };
+    // ONE soft core, offset by the pointer. The wide wash in DrawSurfaceLighting is the reflection;
+    // this is the brighter source inside it. It is narrow on purpose: it must die out well before the
+    // caps, or the cap's vertical edge cuts it.
     const Blob blobs[3] = {
-        // No tight glint at the left end: at 1x it read as a separate pale cap rather than as a
-        // reflection, which is what the user circled. Three soft washes only.
         {0.34f, 0.20f, 0.20f, 0.55f, 0.95f},
         {0.54f, 0.15f, 0.24f, 0.40f, 0.70f},
         {0.74f, 0.26f, 0.16f, 0.48f, 0.50f},
     };
-    for (const Blob& blob : blobs) {
+    // The lens theme gets ONE narrow core inside the wide wash: three overlapping blobs read as lumps
+    // along the top edge, and any of them reaching the cap is cut by the cap's vertical edge.
+    const Blob lensBlob = {0.33f, 0.16f, 0.15f, 0.42f, 0.85f};
+    const int blobCount = theme.lens ? 1 : 3;
+    for (int i = 0; i < blobCount; ++i) {
+        const Blob& blob = theme.lens ? lensBlob : blobs[i];
         PlaceRadial(g_cache.sheen, shape.rect.left + width * blob.x + shift,
                     shape.rect.top + band * blob.y, width * blob.radiusX, height * blob.radiusY,
                     opacity * blob.alpha);
