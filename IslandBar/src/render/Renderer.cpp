@@ -566,13 +566,20 @@ void Renderer::RenderFrame(const FrameState& frame) {
         // THE LIQUID-GLASS LAYERS (round 53, Theme.h): a specular highlight that follows the pointer along
         // the top edge, and the double edge -- a faint dark line outside, a bright one inside -- that reads
         // as the thickness of the glass. Both are drawn from the theme's own fields, so 默认 is unchanged.
-        island::DrawSpecularSweep(d2dContext_, rounded, theme, frame.pillPointerFraction, 1.0f);
+        // The pointer's own light. Only while the pointer is ON the island: at rest the bar must be still,
+        // and a highlight that stays wherever the pointer left it is a decoration, not a reflection.
+        if (frame.pointerOnIsland) {
+            island::DrawSpecularSweep(d2dContext_, rounded, theme, frame.pillPointerFraction, 1.0f);
+        }
 
         // The faint cool tints at the two ends: the colour a thick edge picks up from the room.
         island::DrawEdgeTints(d2dContext_, rounded, theme, 1.0f);
 
-        // The lit edge, its dark thickness, and the outside line that separates the glass from the desktop.
+        // THE EDGE OPTICS (round 56): a 2.2 DIP lit wall with two micro-offset dispersion hairlines,
+        // then the dark thickness, then the surface bending inside it.
+        island::DrawEdgeRefraction(d2dContext_, rounded, theme, 1.0f);
         island::DrawGlassRim(d2dContext_, rounded, theme, 1.0f);
+        island::DrawCurvature(d2dContext_, rounded, theme, 1.0f);
 
         // ... and the grain over the whole surface, which is what keeps a flat translucent colour from
         // reading as plastic. Same rule as the shadow: a theme that asks for none gets none.

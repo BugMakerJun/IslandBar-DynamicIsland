@@ -132,6 +132,11 @@ struct FrameState {
     // Clamped by SpecularCentreX, so a pointer outside the pill leaves the highlight on the glass.
     float pillPointerFraction = 0.5f;
 
+    // Whether the pointer is actually ON the island. The pointer-following specular is drawn only then:
+    // with the pointer elsewhere the bar must look exactly as it does at rest, which is the difference
+    // between "light on the glass" and "a decoration that never stops moving".
+    bool pointerOnIsland = false;
+
     // The RESTING pill's box, which is not the same thing as `pill.box`.
     //
     // `pill.box` is the ANIMATED shape: while the bar is opening or closing a card it is a card-sized

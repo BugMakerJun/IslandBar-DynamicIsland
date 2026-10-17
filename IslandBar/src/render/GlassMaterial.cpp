@@ -134,6 +134,30 @@ void PlaceLinear(ID2D1LinearGradientBrush* brush, float left, float top, float b
     brush->SetOpacity(opacity);
 }
 
+ID2D1LinearGradientBrush* MakeLinearHorizontal(ID2D1DeviceContext2* context,
+                                               const D2D1_GRADIENT_STOP* stops, UINT count) {
+    ID2D1GradientStopCollection* collection = nullptr;
+    if (FAILED(context->CreateGradientStopCollection(stops, count, D2D1_GAMMA_2_2,
+                                                     D2D1_EXTEND_MODE_CLAMP, &collection)) ||
+        !collection) {
+        return nullptr;
+    }
+    ID2D1LinearGradientBrush* brush = nullptr;
+    const D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES properties = {D2D1::Point2F(0.0f, 0.0f),
+                                                              D2D1::Point2F(1.0f, 0.0f)};
+    if (FAILED(context->CreateLinearGradientBrush(properties, collection, &brush))) brush = nullptr;
+    collection->Release();
+    return brush;
+}
+
+void PlaceLinearHorizontal(ID2D1LinearGradientBrush* brush, float left, float right, float top,
+                           float opacity) {
+    if (!brush) return;
+    brush->SetTransform(D2D1::Matrix3x2F::Scale(right - left, 1.0f) *
+                        D2D1::Matrix3x2F::Translation(left, top));
+    brush->SetOpacity(opacity);
+}
+
 // A unit circle mapped onto the ellipse (centre, radii).
 void PlaceRadial(ID2D1RadialGradientBrush* brush, float centreX, float centreY, float radiusX,
                  float radiusY, float opacity) {
@@ -156,6 +180,11 @@ struct MaterialCache {
     ID2D1RadialGradientBrush* sheen = nullptr;
     ID2D1RadialGradientBrush* tintLeft = nullptr;
     ID2D1RadialGradientBrush* tintRight = nullptr;
+    ID2D1LinearGradientBrush* edgeBand = nullptr;
+    ID2D1LinearGradientBrush* dispersionCool = nullptr;
+    ID2D1LinearGradientBrush* dispersionWarm = nullptr;
+    ID2D1LinearGradientBrush* curveShade = nullptr;
+    ID2D1LinearGradientBrush* caustic = nullptr;
     ID2D1BitmapBrush1* grain = nullptr;
 
     // The base fill depends on the theme AND on the wallpaper tint, so it is compared by colour.
@@ -182,6 +211,11 @@ void ReleaseCache() {
     if (g_cache.sheen) g_cache.sheen->Release();
     if (g_cache.tintLeft) g_cache.tintLeft->Release();
     if (g_cache.tintRight) g_cache.tintRight->Release();
+    if (g_cache.edgeBand) g_cache.edgeBand->Release();
+    if (g_cache.dispersionCool) g_cache.dispersionCool->Release();
+    if (g_cache.dispersionWarm) g_cache.dispersionWarm->Release();
+    if (g_cache.curveShade) g_cache.curveShade->Release();
+    if (g_cache.caustic) g_cache.caustic->Release();
     if (g_cache.grain) g_cache.grain->Release();
     if (g_cache.fill) g_cache.fill->Release();
     if (g_cache.device) g_cache.device->Release();
@@ -226,8 +260,8 @@ bool EnsureMaterial(ID2D1DeviceContext2* context, const Theme& theme) {
     g_cache.rimLine = MakeLinear(context, rimStops, 2);
 
     const D2D1_GRADIENT_STOP sweepStops[3] = {
-        {0.0f, ThemeInk(theme.sweep * 1.10f)},
-        {0.55f, ThemeInk(theme.sweep * 0.35f)},
+        {0.0f, ThemeInk(theme.sweep * 0.95f)},
+        {0.30f, ThemeInk(theme.sweep * 0.30f)},
         {1.0f, ThemeInk(0.0f)},
     };
     g_cache.sweep = MakeRadial(context, sweepStops, 3);
@@ -268,6 +302,44 @@ bool EnsureMaterial(ID2D1DeviceContext2* context, const Theme& theme) {
         {1.0f, D2D1::ColorF(0.62f, 0.46f, 1.00f, 0.0f)},
     };
     g_cache.tintRight = MakeRadial(context, rightStops, 2);
+
+    // THE EDGE BAND (round 56): 0.22 at the top, 0.10 at the sides, 0.015 at the bottom. A vertical
+    // gradient over a 2.2 DIP stroke is the whole trick -- it turns the rim from a line into a curved
+    // wall, without a second geometry or a layer.
+    const D2D1_GRADIENT_STOP bandStops[3] = {
+        {0.0f, ThemeInk(theme.rim * 0.23f)},
+        {0.50f, ThemeInk(theme.rim * 0.10f)},
+        {1.0f, ThemeInk(theme.rim * 0.02f)},
+    };
+    g_cache.edgeBand = MakeLinear(context, bandStops, 3);
+
+    // DISPERSION: a cool hairline that lives along the TOP half and a violet one along the bottom half, so
+    // neither becomes the blue ring both reviews warned about.
+    const D2D1_GRADIENT_STOP coolStops[2] = {
+        {0.0f, D2D1::ColorF(0.45f, 0.75f, 1.00f, theme.tint * 0.45f)},
+        {1.0f, D2D1::ColorF(0.45f, 0.75f, 1.00f, 0.0f)},
+    };
+    g_cache.dispersionCool = MakeLinear(context, coolStops, 2);
+    const D2D1_GRADIENT_STOP warmStops[2] = {
+        {0.0f, D2D1::ColorF(0.85f, 0.45f, 1.00f, 0.0f)},
+        {1.0f, D2D1::ColorF(0.85f, 0.45f, 1.00f, theme.tint * 0.28f)},
+    };
+    g_cache.dispersionWarm = MakeLinear(context, warmStops, 2);
+
+    // CURVATURE: a wide, soft shade that grows toward the bottom, and a hairline that fades at both ends
+    // (which is what keeps it from reading as a second frame).
+    const D2D1_GRADIENT_STOP shadeStops[3] = {
+        {0.0f, D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f)},
+        {0.55f, D2D1::ColorF(0.0f, 0.0f, 0.0f, theme.rim * 0.055f)},
+        {1.0f, D2D1::ColorF(0.0f, 0.0f, 0.0f, theme.rim * 0.11f)},
+    };
+    g_cache.curveShade = MakeLinear(context, shadeStops, 3);
+    const D2D1_GRADIENT_STOP causticStops[3] = {
+        {0.0f, ThemeInk(0.0f)},
+        {0.50f, ThemeInk(theme.rim * 0.075f)},
+        {1.0f, ThemeInk(0.0f)},
+    };
+    g_cache.caustic = MakeLinearHorizontal(context, causticStops, 3);
 
     if (ID2D1Bitmap1* noise = NoiseBitmap(context)) {
         const D2D1_BITMAP_BRUSH_PROPERTIES1 properties = D2D1::BitmapBrushProperties1(
@@ -464,7 +536,9 @@ void DrawSpecularSweep(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& sh
     const float band = min(height * 0.45f, 20.0f);
     const float centreX = SpecularCentreX(shape.rect.left, shape.rect.right, pointerFraction);
     const float centreY = shape.rect.top + band * 0.5f;
-    PlaceRadial(g_cache.sweep, centreX, centreY, width * 0.30f, band * 1.15f, opacity);
+    // A tighter, rounder pool than the old wide smear: 45 DIP is what reads as a drop of light on the
+    // surface rather than as a band sliding along it.
+    PlaceRadial(g_cache.sweep, centreX, centreY, std::min(width * 0.30f, 45.0f), band * 1.6f, opacity);
     context->FillRoundedRectangle(&shape, g_cache.sweep);
 }
 
@@ -480,20 +554,6 @@ void DrawGlassRim(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, 
     g_cache.solid->SetOpacity(1.0f);
     context->DrawRoundedRectangle(&shape, g_cache.solid, 1.0f);
 
-    // ... and the bright line just inside it. DIRECTIONAL, like light on a rim: brightest along the
-    // top, almost gone at the bottom, and a little heavier than a hairline so it reads as a lit edge
-    // rather than as a frame drawn around the pill.
-    const float inset = 1.75f;
-    const D2D1_ROUNDED_RECT inner = {
-        D2D1::RectF(shape.rect.left + inset, shape.rect.top + inset,
-                    shape.rect.right - inset, shape.rect.bottom - inset),
-        shape.radiusX > inset ? shape.radiusX - inset : 0.0f,
-        shape.radiusY > inset ? shape.radiusY - inset : 0.0f};
-    if (g_cache.rimLine) {
-        PlaceLinear(g_cache.rimLine, shape.rect.left, shape.rect.top, shape.rect.bottom, opacity);
-        context->DrawRoundedRectangle(&inner, g_cache.rimLine, 1.5f);
-    }
-
     // THE INNER DARK EDGE: a second, darker hairline further in. Without it the bright line is a frame
     // drawn on a surface; with it there is a lit edge, a dark thickness, and then the face of the glass.
     const float darkInset = 3.1f;
@@ -504,6 +564,81 @@ void DrawGlassRim(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, 
         shape.radiusY > darkInset ? shape.radiusY - darkInset : 0.0f};
     g_cache.solid->SetColor(D2D1::ColorF(0.0f, 0.0f, 0.0f, theme.rim * 0.30f * opacity));
     context->DrawRoundedRectangle(&thickness, g_cache.solid, 1.0f);
+}
+
+void DrawEdgeRefraction(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
+                        float opacity) {
+    if (!context || opacity <= 0.01f || theme.rim <= 0.001f) return;
+    if (shape.rect.right <= shape.rect.left || shape.rect.bottom <= shape.rect.top) return;
+    if (!EnsureMaterial(context, theme)) return;
+
+    // The lit wall: a 2.2 DIP stroke whose vertical gradient is the whole effect. It sits where the old
+    // single bright line was, so the rim does not become two lines.
+    const float inset = 1.75f;
+    const D2D1_ROUNDED_RECT band = {
+        D2D1::RectF(shape.rect.left + inset, shape.rect.top + inset,
+                    shape.rect.right - inset, shape.rect.bottom - inset),
+        shape.radiusX > inset ? shape.radiusX - inset : 0.0f,
+        shape.radiusY > inset ? shape.radiusY - inset : 0.0f};
+    if (g_cache.edgeBand) {
+        PlaceLinear(g_cache.edgeBand, shape.rect.left, shape.rect.top, shape.rect.bottom, opacity);
+        context->DrawRoundedRectangle(&band, g_cache.edgeBand, 2.2f);
+    }
+
+    // Dispersion: the same contour, nudged half a DIP up-left and half a DIP down-right. The gradients put
+    // the cool fringe on the top half and the violet one on the bottom half, so no full blue ring appears.
+    const auto shifted = [&band](float dx, float dy) {
+        D2D1_ROUNDED_RECT out = band;
+        out.rect.left += dx;
+        out.rect.right += dx;
+        out.rect.top += dy;
+        out.rect.bottom += dy;
+        return out;
+    };
+    if (g_cache.dispersionCool) {
+        const D2D1_ROUNDED_RECT cool = shifted(-0.5f, -0.5f);
+        PlaceLinear(g_cache.dispersionCool, shape.rect.left, shape.rect.top, shape.rect.bottom, opacity);
+        context->DrawRoundedRectangle(&cool, g_cache.dispersionCool, 0.75f);
+    }
+    if (g_cache.dispersionWarm) {
+        const D2D1_ROUNDED_RECT warm = shifted(0.5f, 0.5f);
+        PlaceLinear(g_cache.dispersionWarm, shape.rect.left, shape.rect.top, shape.rect.bottom, opacity);
+        context->DrawRoundedRectangle(&warm, g_cache.dispersionWarm, 0.75f);
+    }
+}
+
+void DrawCurvature(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
+                   float opacity) {
+    if (!context || opacity <= 0.01f || theme.rim <= 0.001f) return;
+    if (shape.rect.right <= shape.rect.left || shape.rect.bottom <= shape.rect.top) return;
+    if (!EnsureMaterial(context, theme)) return;
+
+    // A wide, soft shade inside the wall, growing toward the bottom: the surface turning away from the
+    // light. 5 DIP wide at inset 7, so it never touches the rim itself.
+    const float shadeInset = 7.0f;
+    const D2D1_ROUNDED_RECT shade = {
+        D2D1::RectF(shape.rect.left + shadeInset, shape.rect.top + shadeInset,
+                    shape.rect.right - shadeInset, shape.rect.bottom - shadeInset),
+        shape.radiusX > shadeInset ? shape.radiusX - shadeInset : 0.0f,
+        shape.radiusY > shadeInset ? shape.radiusY - shadeInset : 0.0f};
+    if (g_cache.curveShade) {
+        PlaceLinear(g_cache.curveShade, shape.rect.left, shape.rect.top, shape.rect.bottom, opacity);
+        context->DrawRoundedRectangle(&shade, g_cache.curveShade, 5.0f);
+    }
+
+    // The internal reflection: a 0.6 DIP line that fades out at both ends, so it reads as a vein in the
+    // glass rather than as a second outline.
+    const float lineInset = 4.2f;
+    const D2D1_ROUNDED_RECT line = {
+        D2D1::RectF(shape.rect.left + lineInset, shape.rect.top + lineInset,
+                    shape.rect.right - lineInset, shape.rect.bottom - lineInset),
+        shape.radiusX > lineInset ? shape.radiusX - lineInset : 0.0f,
+        shape.radiusY > lineInset ? shape.radiusY - lineInset : 0.0f};
+    if (g_cache.caustic) {
+        PlaceLinearHorizontal(g_cache.caustic, shape.rect.left, shape.rect.right, shape.rect.top,
+                              opacity);
+        context->DrawRoundedRectangle(&line, g_cache.caustic, 0.6f);
+    }
 }
 
 }  // namespace island

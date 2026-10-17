@@ -106,6 +106,17 @@ void DrawSpecularSweep(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& sh
 void DrawGlassRim(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
                   float opacity);
 
+// THE EDGE REFRACTION BAND (round 56). A 2.2 DIP ring just inside the rim, brightest along the top and
+// almost gone at the bottom -- the curved wall of a piece of glass rather than a line drawn round it --
+// plus two micro-offset hairlines (cool blue up-left, violet down-right) that read as dispersion.
+void DrawEdgeRefraction(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
+                        float opacity);
+
+// THE CURVATURE INSIDE: a soft, wider shade that falls toward the bottom (the surface bending away from
+// the light) and a broken, faint inner reflection line. Both stay well inside the rim.
+void DrawCurvature(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
+                   float opacity);
+
 // The grain itself: 256x256 BGRA pixels (opaque grey), generated once from a fixed seed. Four bytes per
 // pixel and not an alpha-only texture -- see the note in the .cpp about what an A8 bitmap did to the frame.
 //

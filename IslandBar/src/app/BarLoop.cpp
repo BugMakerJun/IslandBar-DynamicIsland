@@ -5602,6 +5602,7 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                     const float left = frame.restingPill.rect.left;
                     const float right = frame.restingPill.rect.right;
                     frame.pillPointerFraction = (right > left) ? (pointerX - left) / (right - left) : 0.5f;
+                    frame.pointerOnIsland = systems.window.IsPointerInside();
                 }
 
                 if (GetTickCount64() - bar.lastTaskRefresh >= 500) {
