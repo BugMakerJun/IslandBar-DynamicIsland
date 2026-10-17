@@ -448,7 +448,9 @@ void DrawSurfaceLighting(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& 
         PlaceLinear(g_cache.topWash, shape.rect.left, shape.rect.top, shape.rect.top + topBand, opacity);
         context->FillRoundedRectangle(&shape, g_cache.topWash);
     }
-    if (g_cache.bottomShade) {
+    // The clear lens takes no bottom shade: a black gradient over the lower half is exactly the grey
+    // layer the user sees on an otherwise transparent pane.
+    if (!theme.lens && g_cache.bottomShade) {
         PlaceLinear(g_cache.bottomShade, shape.rect.left, shape.rect.bottom - bottomBand,
                     shape.rect.bottom, opacity);
         context->FillRoundedRectangle(&shape, g_cache.bottomShade);
@@ -510,6 +512,8 @@ void DrawThinRim(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, c
 void DrawEdgeTints(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
                    float opacity) {
     if (!context || opacity <= 0.01f || theme.tint <= 0.001f) return;
+    // No tinted haze at the ends of a clear lens; it was the other half of the grey.
+    if (theme.lens) return;
     const float width = shape.rect.right - shape.rect.left;
     const float height = shape.rect.bottom - shape.rect.top;
     if (width < 40.0f || height < 8.0f) return;
