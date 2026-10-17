@@ -1254,18 +1254,18 @@ void TestRenderer(IslandWindow& window) {
                       L"the pill still shows its own line while a card is up", pillDetail);
             }
 
-            // --- AND WHILE A FULL-SCREEN APPLICATION IS IN FRONT, NOTHING IS PAINTED AT ALL --------
+            // --- AND WHILE A FULL-SCREEN APPLICATION IS IN FRONT, THE ISLAND STAYS -------------------
             //
-            // The state exists for that and for nothing else: the application has the screen. Painting
-            // the pill and its date-and-time line over a game is what was reported ("现在的灵动岛一行的在
-            // 玩游戏的时候也显示出来了"), and "the state is reached" says nothing about it -- the policy
-            // assertion above passes just as happily for a bar that fills the band. Only the pixels can
-            // tell the two apart.
+            // The policy was the opposite once: nothing was painted over a game. The request is now that
+            // the island remain visible (only the decks and the icon row stand down), so this measures
+            // that the pill's band still has ink. The sides are checked just below.
             {
                 FrameState standDown;
                 standDown.pill.box = BoxForState(IslandState::FullBar, window.CurrentAnchor());
                 standDown.pill.opacity = 1.0f;
                 standDown.state = IslandState::FullBar;
+                standDown.contentOpacity = 1.0f;
+                standDown.fullscreenApp = true;
                 renderer.Render(standDown);
                 renderer.Render(standDown);
 
@@ -1294,8 +1294,8 @@ void TestRenderer(IslandWindow& window) {
                 Check(measuredRest && bandAtRest > 2.0f,
                       L"the island's band is painted at rest, so the next reading means something",
                       pillDetail);
-                Check(measuredFull && bandInFullScreen < 1.0f,
-                      L"nothing of the bar is painted while a full-screen application is in front",
+                Check(measuredFull && bandInFullScreen > 2.0f,
+                      L"the island stays painted while a full-screen application is in front",
                       pillDetail);
             }
 

@@ -546,18 +546,11 @@ void Renderer::RenderFrame(const FrameState& frame) {
 
     d2dContext_->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
 
-    // A FULL-SCREEN APPLICATION GETS THE SCREEN: nothing of the bar is drawn at all.
-    //
-    // The state exists for exactly this -- "while an application is full-screen the bar stands down" --
-    // and it used to FILL the band with a full-width strip, on the argument that the band is space the
-    // shell reserves and no application can use, so filling it wastes nothing. That argument holds for a
-    // maximized window; it is wrong for a game, which covers the whole screen and simply has the island
-    // painted on top of it. Reported as "现在的灵动岛一行的在玩游戏的时候也显示出来了", with the pill and
-    // its date-and-time line sitting over the game.
-    //
-    // A call or a message is the exception, and it arrives as a DIFFERENT state (the notice strip, see
-    // NextShape), so it is drawn normally -- in the band, where the strip belongs.
-    if (pill.opacity > 0.001f && frame.state != IslandState::FullBar) {
+    // A FULL-SCREEN APPLICATION KEEPS THE ISLAND. It used to draw nothing at all in that state; the
+    // request is now the opposite: the pill stays, only the decks and the icon row stand down (see
+    // IslandSurfaceShowsDecks and the fullscreenApp tests further down). The pill is the whole point of
+    // the bar, and a full-screen game should not make it disappear.
+    if (pill.opacity > 0.001f) {
         // The PILL is drawn from the resting box, not from the animated one.
         //
         // The animated box belongs to the CARD: it grows from the pill to the card and back, and while
