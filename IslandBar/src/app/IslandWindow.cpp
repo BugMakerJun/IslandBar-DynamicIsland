@@ -175,6 +175,13 @@ bool IslandWindow::Create(const MonitorGeometry& monitor, bool show) {
     BOOL excluded = TRUE;
     DwmSetWindowAttribute(hwnd_, DWMWA_EXCLUDED_FROM_PEEK, &excluded, sizeof(excluded));
 
+    // NO NON-CLIENT RENDERING. The window is a borderless composition surface; the only thing DWM's
+    // non-client pass can add is a frame and a drop shadow -- and that shadow follows the window REGION,
+    // which is a rectangle around the island, so it shows up as a soft box under the pill. Disabling it
+    // removes that box without touching the client content (all of which is composed by the renderer).
+    const DWMNCRENDERINGPOLICY noNonClient = DWMNCRP_DISABLED;
+    DwmSetWindowAttribute(hwnd_, DWMWA_NCRENDERING_POLICY, &noNonClient, sizeof(noNonClient));
+
     Layout();
 
     // Start click-through: at rest the bar accepts no clicks until the pointer

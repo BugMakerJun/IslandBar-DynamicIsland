@@ -40,6 +40,8 @@ struct WindowCompositionAttributeData {
 constexpr int kAccentPolicyAttribute = 19;
 constexpr int kCornerPreferenceAttribute = 33;   // DWMWA_WINDOW_CORNER_PREFERENCE
 constexpr int kCornerRound = 2;                  // DWMWCP_ROUND
+constexpr int kBorderColorAttribute = 34;        // DWMWA_BORDER_COLOR
+constexpr unsigned int kNoBorder = 0xFFFFFFFEu;  // DWMWA_COLOR_NONE
 
 // 12.5% black. The theme's own scrim (glass: 0.66-0.82) is drawn by the BAR on top of this, so the
 // material's tint stays low: any more and the backdrop's colours are washed out before the scrim is even
@@ -128,6 +130,11 @@ bool GlassWindow::Create(HWND mainWindow) {
         LogAndPrint("  glass: DWMWA_WINDOW_CORNER_PREFERENCE refused (0x%08lX); the material will be square",
                     static_cast<unsigned long>(corner));
     }
+
+    // NO WINDOW BORDER. DWM draws a 1 px frame around a top-level popup, and behind the island it pokes
+    // out along the bottom edge as a straight line -- which reads as a box under the glass rather than as
+    // part of it. DWMWA_COLOR_NONE removes the frame without touching the acrylic.
+    DwmSetWindowAttribute(hwnd_, kBorderColorAttribute, &kNoBorder, sizeof(kNoBorder));
     return true;
 }
 
