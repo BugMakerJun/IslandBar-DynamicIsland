@@ -269,7 +269,11 @@ bool Renderer::Initialize(HWND hwnd, UINT widthPx, UINT heightPx, float scale) {
 }
 
 bool Renderer::TakeLensFrame() {
-    return lensActive_ && capture_.HasNewFrame();
+    if (!lensActive_ || !capture_.HasNewFrame()) return false;
+    const ULONGLONG now = GetTickCount64();
+    if (now < lensNextAt_) return false;
+    lensNextAt_ = now + 80;
+    return true;
 }
 
 void Renderer::UpdateLensCapture(POINT at) {

@@ -110,7 +110,11 @@ void Warp(const std::vector<unsigned char>& src, int srcW, int srcH, int pillW, 
 struct LensMaterial::Cache {
     Microsoft::WRL::ComPtr<ID2D1DeviceContext> context;
     Microsoft::WRL::ComPtr<ID3D11Texture2D> cropGpu;
-    Microsoft::WRL::ComPtr<ID3D11Texture2D> staging;
+    // Two readback targets, used one frame apart: mapping the copy made THIS frame would wait for the
+    // GPU, and on a live wallpaper that wait was most of the lens's cost.
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> staging[2];
+    int writeIndex = 0;
+    bool haveStaged = false;
     Microsoft::WRL::ComPtr<ID2D1Bitmap> warped;
     Microsoft::WRL::ComPtr<ID2D1BitmapBrush> brush;
     Microsoft::WRL::ComPtr<ID2D1DeviceContext> brushContext;
@@ -178,16 +182,19 @@ bool LensMaterial::Update(ID3D11Texture2D* texture, const RECT& source, const D2
             return false;
         }
         cache_->cropGpu.Reset();
-        cache_->staging.Reset();
+        cache_->staging[0].Reset();
+        cache_->staging[1].Reset();
         const HRESULT createdGpu = device->CreateTexture2D(&gpu, nullptr, &cache_->cropGpu);
-        const HRESULT createdRead = device->CreateTexture2D(&readback, nullptr, &cache_->staging);
+        const HRESULT createdRead = device->CreateTexture2D(&readback, nullptr, &cache_->staging[0]);
+        const HRESULT createdRead2 = device->CreateTexture2D(&readback, nullptr, &cache_->staging[1]);
         device->Release();
-        if (FAILED(createdGpu) || FAILED(createdRead)) {
+        if (FAILED(createdGpu) || FAILED(createdRead) || FAILED(createdRead2)) {
             LensFail(L"creating the readback textures failed");
             return false;
         }
         cache_->cropW = cropW;
         cache_->cropH = cropH;
+        cache_->haveStaged = false;
     }
     Microsoft::WRL::ComPtr<ID3D11DeviceContext> d3d;
     {
@@ -224,9 +231,16 @@ bool LensMaterial::Update(ID3D11Texture2D* texture, const RECT& source, const D2
     const D3D11_BOX box = {static_cast<UINT>(srcX), static_cast<UINT>(srcY), 0,
                            static_cast<UINT>(srcX + takeW), static_cast<UINT>(srcY + takeH), 1};
     d3d->CopySubresourceRegion(cache_->cropGpu.Get(), 0, 0, 0, 0, texture, 0, &box);
-    d3d->CopyResource(cache_->staging.Get(), cache_->cropGpu.Get());
+    const int write = cache_->writeIndex;
+    cache_->writeIndex ^= 1;
+    d3d->CopyResource(cache_->staging[write].Get(), cache_->cropGpu.Get());
+    if (!cache_->haveStaged) {
+        // The first captured frame is staged now; the next call reads it back without waiting.
+        cache_->haveStaged = true;
+        return false;
+    }
     D3D11_MAPPED_SUBRESOURCE mapped = {};
-    if (FAILED(d3d->Map(cache_->staging.Get(), 0, D3D11_MAP_READ, 0, &mapped))) {
+    if (FAILED(d3d->Map(cache_->staging[write ^ 1].Get(), 0, D3D11_MAP_READ, 0, &mapped))) {
         LensFail(L"mapping the readback failed");
         return false;
     }
@@ -236,7 +250,7 @@ bool LensMaterial::Update(ID3D11Texture2D* texture, const RECT& source, const D2
                     rows + static_cast<size_t>(y) * mapped.RowPitch,
                     static_cast<size_t>(takeW) * 4);
     }
-    d3d->Unmap(cache_->staging.Get(), 0);
+    d3d->Unmap(cache_->staging[write ^ 1].Get(), 0);
     const size_t imageBytes = static_cast<size_t>(pillW) * pillH * 4;
     const bool resized = cache_->image.size() != imageBytes || cache_->pillW != pillW ||
                          cache_->pillH != pillH;

@@ -686,6 +686,9 @@ private:
     // WGC is silent while the window behind is static.
     int                      lensPillW_   = 0;
     int                      lensPillH_   = 0;
+    // The captured frame is consumed at most ~12 times a second: the readback is the expensive part of
+    // the lens, and a live wallpaper would otherwise ask for it at 30 Hz for a subtle rim bend.
+    ULONGLONG                lensNextAt_  = 0;
     // The refracted backdrop, when the theme asks for it and the capture started.
     ID3D11DeviceContext*     d3dContext_  = nullptr;
     IDXGISwapChain1*         swapChain_   = nullptr;
