@@ -3124,10 +3124,6 @@ static bool DecideNeedDraw(BarRuntime& runtime, island::BarState& bar, island::B
            // list moved only on the next clock tick -- measured, that is ONE redraw
            // per second while idle, which is what "鼠标移上去卡卡的" was.
            startHoverChanged || bar.startWashAnimating ||
-           // The lens is the one thing on the bar whose source changes WITHOUT an event here: the
-           // capture delivers a frame when the desktop behind the island changes. Drawing only then is
-           // what keeps a static desktop idle while a scrolling one updates at the capture's rate.
-           systems.renderer.TakeLensFrame() ||
            !haveDrawn;
 }
 

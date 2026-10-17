@@ -14156,3 +14156,24 @@ region 的直边把阴影的圆角外圈切掉，四个角就留下**方形暗�
 2. 在 `Renderer::RenderFrame` 的 EndDraw 失败路径加一行日志（现在静默）。
 3. 重新打开 `lens`，用条纹/文字背景验收：边缘位移、30 Hz 捕获下的 CPU/GPU、静态桌面不重绘。
 
+---
+
+## 8.177 **折射层被用户否掉："雾蒙蒙的 去掉"**（2026-10-17 晚）
+
+把离屏位图版的折射接上、`lens` 打开后，用户的原话是"**现在看起来 雾蒙蒙的 去掉把**"。
+也就是说：真背景 + 模糊 + 位移在他眼里不是"液态玻璃"，而是一层雾。于是整组删除：
+
+* `platform/BackdropCapture.{h,cpp}`（WGC 捕获）——删除；
+* `render/LensMaterial.{h,cpp}`（位移 + 模糊）——删除；
+* `Renderer` 的镜头成员/初始化/绘制/EndDraw 之外的调用——移除；
+* `BarLoop` 的 `TakeLensFrame()` 重绘条件——移除（空闲回到"时钟每秒 4 帧"）；
+* `Theme.lens` 字段与 `themes\*.txt` 的 `lens` 键——移除；
+* `island_platform` 的 C++/WinRT 开关（只为捕获加的）——撤掉。
+
+附带确认了一件重要的事：`SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)` 会让栏**从所有
+屏幕截图里消失**（包括我们自己的验证脚本）。8.176 里"栏变透明"的判断有一部分就是这个造成的，
+不全是绘制失败——所以这段历史要按这个事实读。
+
+现在的状态：**五层自绘材质 + 无捕获 + 无镜头**。空闲帧率回到 1/s 级别的时钟重绘，VRAM 13.3MB，
+截图正常（`captures/final-no-lens-3x.png`）。
+

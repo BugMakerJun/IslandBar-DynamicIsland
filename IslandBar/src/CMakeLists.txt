@@ -59,12 +59,10 @@ add_library(island_platform STATIC
     platform/IconRaster.cpp
     platform/Monitor.cpp
     platform/NativeTaskbar.cpp
-    platform/BackdropCapture.cpp
     platform/ThumbnailPreview.cpp
     platform/WindowList.cpp
 )
 target_link_libraries(island_platform PUBLIC island_core)
-islandbar_enable_cppwinrt(island_platform)   # Windows.Graphics.Capture for the lens backdrop
 
 add_library(island_media STATIC
     media/AudioVolume.cpp
@@ -106,7 +104,6 @@ islandbar_enable_cppwinrt(island_shell)   # SystemToggles and Weather read the p
 
 add_library(island_render STATIC
     render/GlassMaterial.cpp
-    render/LensMaterial.cpp
     render/Renderer.cpp
     render/TextRenderer.cpp
     render/Theme.cpp

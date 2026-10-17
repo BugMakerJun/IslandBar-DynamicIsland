@@ -27,8 +27,6 @@
 #include "domain/Motion.h"
 #include "media/MusicSession.h"
 #include "services/Notification.h"
-#include "platform/BackdropCapture.h"
-#include "render/LensMaterial.h"
 #include "render/TextRenderer.h"
 
 namespace island {
@@ -502,10 +500,6 @@ public:
     // nothing is here.
     void Render(const FrameState& frame);
 
-    // True when the capture has a backdrop the lens has not drawn yet: the frame loop uses it to redraw
-    // exactly while something behind the island moves, and not once while the desktop is still.
-    bool TakeLensFrame();
-
     // Convenience for paths that only care about a shape with no content.
     void Render(const PillAppearance& pill) {
         FrameState frame;
@@ -670,10 +664,6 @@ private:
     // --- device chain ---
     ID3D11Device*            d3dDevice_   = nullptr;
     // The refracted backdrop, when the theme asks for it and the capture started.
-    BackdropCapture          capture_;
-    LensMaterial             lens_;
-    RECT                     monitorRect_ = {};
-    bool                     lensActive_  = false;
     ID3D11DeviceContext*     d3dContext_  = nullptr;
     IDXGISwapChain1*         swapChain_   = nullptr;
     // The same swap chain as IDXGISwapChain2, which is where the frame-latency limit and its waitable
