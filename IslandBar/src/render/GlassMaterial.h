@@ -64,6 +64,9 @@ void DrawTopSheen(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, 
 // Distinct from DrawGlassRim below, which is the old thick double edge.
 void DrawThinRim(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
                  float opacity);
+// The same contour, lit where the pointer is: a short specular run that slides along the top edge.
+void DrawRimGlint(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
+                  float pointerFraction, float opacity);
 
 // THE EDGE REFRACTION: a very weak cool-blue blob at the left end and a violet-blue one at the right, kept
 // away from the middle where the text lives. Driven by `theme.tint`.

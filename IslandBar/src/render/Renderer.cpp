@@ -692,6 +692,9 @@ void Renderer::RenderFrame(const FrameState& frame) {
         // The lit contour: thin enough to be an edge rather than a frame, and the one cue that still
         // reads as glass when the desktop behind is a smooth photograph.
         island::DrawThinRim(d2dContext_, rounded, theme, 1.0f);
+        if (frame.pointerOnIsland) {
+            island::DrawRimGlint(d2dContext_, rounded, theme, frame.pillPointerFraction, 1.0f);
+        }
 
         // THE LIQUID-GLASS LAYERS (round 53, Theme.h): a specular highlight that follows the pointer along
         // the top edge, and the double edge -- a faint dark line outside, a bright one inside -- that reads
