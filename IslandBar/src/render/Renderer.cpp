@@ -575,10 +575,8 @@ void Renderer::RenderFrame(const FrameState& frame) {
         // The faint cool tints at the two ends: the colour a thick edge picks up from the room.
         island::DrawEdgeTints(d2dContext_, rounded, theme, 1.0f);
 
-        // No wide lit band: the user pointed at it -- a ring inside the rim reads as a second surface.
-        // Only the thin outside line and the dark thickness remain (and the curvature inside them).
-        island::DrawGlassRim(d2dContext_, rounded, theme, 1.0f);
-        island::DrawCurvature(d2dContext_, rounded, theme, 1.0f);
+        // NO EDGE AT ALL, at the user's request: no outside line, no dark thickness, no inner curvature
+        // lines. The island is the light on the surface and its content, nothing drawn round it.
 
         // ... and the grain over the whole surface, which is what keeps a flat translucent colour from
         // reading as plastic. Same rule as the shadow: a theme that asks for none gets none.

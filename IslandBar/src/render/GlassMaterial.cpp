@@ -445,18 +445,6 @@ void DrawSurfaceLighting(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& 
         context->FillRoundedRectangle(&shape, g_cache.bottomShade);
     }
 
-    // The hairline just inside the edge -- the glass's own rim. INSET by the stroke width so it cannot spill
-    // outside the shape, and DIRECTIONAL (bright at the top, almost gone at the bottom).
-    const float inset = 1.0f;
-    if (g_cache.rimLine) {
-        PlaceLinear(g_cache.rimLine, shape.rect.left, shape.rect.top, shape.rect.bottom, opacity);
-        const D2D1_ROUNDED_RECT inner = {
-            D2D1::RectF(shape.rect.left + inset, shape.rect.top + inset,
-                        shape.rect.right - inset, shape.rect.bottom - inset),
-            shape.radiusX > inset ? shape.radiusX - inset : 0.0f,
-            shape.radiusY > inset ? shape.radiusY - inset : 0.0f};
-        context->DrawRoundedRectangle(&inner, g_cache.rimLine, 1.0f);
-    }
 }
 
 void DrawTopSheen(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
