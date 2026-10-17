@@ -235,7 +235,9 @@ bool EnsureMaterial(ID2D1DeviceContext2* context, const Theme& theme) {
     // THE SMOKED DEPTH: the centre of the glass is heavier than its rim. Blue-black rather than neutral
     // black, because a cold shadow is what smoke reads as. The strength rides on `rim`, so a theme that
     // asks for a material gets this layer and one that does not gets nothing.
-    const float depthStrength = theme.rim * 0.30f;
+    // With the pill's fill now almost transparent, the smoke is a whisper rather than a layer: it gives
+    // the centre a little weight without turning the island back into a dark slab.
+    const float depthStrength = theme.rim * 0.15f;
     const D2D1_GRADIENT_STOP depthStops[3] = {
         {0.0f, D2D1::ColorF(0.005f, 0.012f, 0.030f, depthStrength)},
         {0.62f, D2D1::ColorF(0.005f, 0.012f, 0.030f, depthStrength * 0.42f)},
