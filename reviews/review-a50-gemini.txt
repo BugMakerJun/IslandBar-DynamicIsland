@@ -1,0 +1,22 @@
+第 55 轮评审答复（Gemini）——要点整理
+
+会话：https://gemini.google.com/app/c48c897e6f2cde59
+（这是整理稿；逐字稿在会话里。问题稿：用户"你们几个研究研究 使用框架也行" + HANDOFF 8.170/8.171。）
+
+1. WUC 合成根不上屏：它认为缺的是 **HWND 创建时机（尚未完全初始化/可见）** 或 **DispatcherQueue 的
+   线程亲和性**；并明确 **Microsoft.UI.Composition 与 WUC 是同一套底层，换 WinAppSDK 不能解决**；
+   纯 Win32 顶层窗不需要 XAML island。（按这两条实测：窗口先活 200 ms、挂载放进消息循环，仍然 0 像素。）
+
+2. 真折射的最稳架构：**WinAppSDK + Win2D（HostBackdropBrush + DisplacementMapEffect）**；
+   它认为 WGC 抓屏开销巨大、会闪烁，不能满足 7% 空闲 CPU 的约束。
+
+3. HostBackdropBrush：它说能采样"窗口背后的桌面像素"，判定探针是一个覆盖全窗的 SpriteVisual +
+   HostBackdropBrush，看能否看到壁纸。
+
+4. 部署：必须 **自包含**（或随附 DLL），框架依赖不满足"复制到目录直接跑"。
+
+5. 探针顺序：先让纯色测试块上屏 → 换 HostBackdropBrush → 接 Win2D 模糊/位移；
+   指标：折射帧耗时 ≤ 1 ms；日志格式
+   `[LiquidGlass] Target: Connected | HostBackdrop: Active | EffectChain: Displacement+Blur | FrameTime: 0.74ms`。
+
+备注：第 1 条的"时机/亲和性"在两个变体里都被实测否定；第 3 条在本机无法验证，因为合成根不渲染。

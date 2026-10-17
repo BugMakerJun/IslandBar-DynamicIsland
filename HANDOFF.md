@@ -13948,3 +13948,61 @@ GPU 带宽换像素，且与仓库"不抓屏"的旧规矩冲突），要么就�
 * `captures/lens*-*.png` 与 `lens*.log`：每一次失败与成功的确切返回值和照片；
 * 固定场景基线因对比度变化更新（STRICT 行里带着 8.1 → 5.3），复跑 **0 差异**。
 
+---
+
+## 8.171 **第 55 轮："使用框架也行"——框架能不能解决？结论：不能**（2026-10-17 傍晚）
+
+用户的原话是「**你们几个研究研究 使用框架也行**」。于是把单 exe / 零 DLL 的约束解除，重新问两家，
+并把 Windows.UI.Composition（WUC）的合成根问题挖到底。
+
+### 8.171.1 实测：合成根在纯 Win32 顶层窗上**根本不上屏**
+
+`tools/lensprobe` 的控制实验是**一个不透明红色的 `SpriteVisual`**——它都不显示，所以后面所有
+"host backdrop 是不是空的"的结论都不成立。最终试过的组合（全部失败，屏幕前后对比 **0 / 7920 像素变化**）：
+
+* 窗口：`WS_EX_NOREDIRECTIONBITMAP` / 不带；`WS_EX_TOPMOST` 在 / 不在；
+* 视觉：`SpriteVisual` 直接做根 / `ContainerVisual` 做根；Size、Offset、RelativeSizeAdjustment 全设；
+* 目标：`CreateDesktopWindowTarget` 的 isTopmost = TRUE / FALSE；
+* 顺序：先窗口后 Compositor / 先 Compositor 后窗口 / **窗口显示后先泵 200 ms 再挂** /
+  **把挂载放进消息循环（WM_TIMER）里执行**；
+* 泵：`PeekMessage` / 阻塞 `GetMessage`；
+* 裁剪：有 / 无几何裁剪。
+
+`CreateDesktopWindowTarget` 始终返回 0x0；`CreateDispatcherQueueController` 是必需的（缺它直接
+`E_ACCESSDENIED` + "The caller must initialize DispatcherQueue on this thread"）。手写
+`IGraphicsEffect` 的高斯模糊在这条链里**已经能被 `CreateEffectFactory` 接受**（三个属性：
+StandardDeviation 浮点、Optimization / BorderMode 枚举 UInt32），所以瓶颈**只在合成根**。
+
+### 8.171.2 两家的回答（`reviews/review-a50-gemini.txt`）
+
+* **Gemini**：Microsoft.UI.Composition 与 WUC **是同一套底层**，换 WinAppSDK **不能**解决合成根的问题；
+  它认为缺的是 HWND 初始化时机/线程亲和性（这两条都按它说的试了，仍然 0 像素）。
+  它推荐 WinAppSDK + Win2D（HostBackdropBrush + DisplacementMap），部署必须自包含。
+* **ChatGPT**：这一轮服务端报错（Unknown error），没有给出回答；第 54 轮它对 C 的立场是"有依据但未验证"。
+
+### 8.171.3 研究结论（写清楚，免得下一次又绕回来）
+
+1. **框架解决不了"拿到背后像素"这件事**。WinAppSDK 的 Windows.UI.Composition 门面、Win2D 的效果图、
+   DWM 的 Mica/Acrylic 背板，三者的共同点都是：**它们能模糊、能裁剪，但不把桌面纹理交给应用**。
+   HostBackdropBrush 的设计前提是"应用自己的内容在背后"，不是"别的进程的窗口"。
+2. **真正能拿到像素的只有捕获**：Windows.Graphics.Capture（WGC，GPU、按窗口/显示器）或
+   DXGI Desktop Duplication。这是苹果"折射"在 Windows 上唯一可行的数据来源。
+3. 8.169/8.170 的磨砂玻璃已经是"不抓屏"能达到的上限：真模糊、真透明、真高光，差的只有位移。
+
+### 8.171.4 下一片的方案（待用户点头，未动产品代码）
+
+**WGC 折射探针**（`tools/captureprobe`，不进产品）：
+
+| 项 | 内容 |
+|---|---|
+| 做法 | `GraphicsCaptureItem` 捕获**岛背后的那个窗口**（`WindowFromPoint` 取，排除自己的两扇窗）；没有窗口时退回显示器捕获，并对自己所有窗口设 `WDA_EXCLUDEFROMCAPTURE` 防反馈。30 fps，纹理只在 GPU 上，不落 CPU |
+| 渲染 | 220x36（或当前岛面）D2D 表面：采样捕获纹理 → `CLSID_D2D1DisplacementMap`（边缘法线方向的径向位移图）→ `CLSID_D2D1GaussianBlur` → 预乘输出；主窗的 scrim/高光不变 |
+| 验收数字 | 空闲时新增 CPU **≤ 2%**；单帧捕获+折射 **≤ 4 ms GPU**；位移在边缘处 **≥ 6 px** 且中心为零（照片可见"压弯"） |
+| 一行日志 | `lens: capture=window fps=30 cpu=1.2% gpu=2.6ms displace=8px result=PASS` |
+| 回退 | 主题 `lens=1` 才启用；失败/受保护内容 → 自动退回 8.170 的磨砂玻璃（现有代码不动） |
+| 影响 | GPU 纹理带宽 ~420 MB/s（1440p@30，仅窗口捕获时更小）；内存 +2~3 张纹理；CPU 一个 30 Hz 回调 |
+| 风险 | WGC 对受保护内容/独占全屏会失败（回退）；窗口切换时有一帧延迟；GPU 占用需要实测 |
+
+**如果探针的 CPU/GPU 超线**：退回 8.170 的磨砂 + 加强高光/边缘，明确"Windows 上不抓屏就没有真折射"，
+不再尝试框架。
+

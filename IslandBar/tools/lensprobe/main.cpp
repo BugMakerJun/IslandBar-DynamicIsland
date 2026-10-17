@@ -42,6 +42,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cwchar>
+#include <functional>
 
 namespace {
 
@@ -58,6 +59,7 @@ using winrt::Windows::Graphics::Effects::IGraphicsEffect;
 using winrt::Windows::Graphics::Effects::IGraphicsEffectSource;
 
 int g_seconds = 20;
+std::function<void()> g_setup;
 
 // The effect CLSIDs in d2d1effects.h are DEFINE_GUID declarations whose definitions live in a GUID
 // library this probe does not otherwise need, so the one it uses is written out here.
@@ -68,7 +70,16 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
     if (message == WM_NCHITTEST) return HTTRANSPARENT;
     if (message == WM_ERASEBKGND) return 1;
     if (message == WM_TIMER) {
-        PostQuitMessage(0);
+        if (wparam == 2) {
+            KillTimer(hwnd, 2);
+            if (g_setup) {
+                auto setup = std::move(g_setup);
+                g_setup = nullptr;
+                setup();
+            }
+        } else {
+            PostQuitMessage(0);
+        }
         return 0;
     }
     return DefWindowProcW(hwnd, message, wparam, lparam);
@@ -262,7 +273,23 @@ int main(int argc, char** argv) {
     // Shown BEFORE the target exists: a composition root attached to a window that has never been shown
     // may never be composed (the control colour below was invisible until this order was tried).
     ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+    // ... and let the window LIVE for a moment before the target is attached: a HWND that has never
+    // processed a message is not the same thing as a HWND DWM knows about.
+    {
+        const DWORD warmupUntil = GetTickCount() + 200;
+        while (GetTickCount() < warmupUntil) {
+            MSG warm = {};
+            while (PeekMessageW(&warm, nullptr, 0, 0, PM_REMOVE)) {
+                TranslateMessage(&warm);
+                DispatchMessageW(&warm);
+            }
+            Sleep(10);
+        }
+    }
 
+    // THE ATTACHMENT RUNS INSIDE THE MESSAGE LOOP (timer id 2), not before it. A composition tree attached
+    // to a window that has never been pumped is the configuration that drew nothing.
+    g_setup = [&]() {
     try {
         // NOTE the namespace: the interop factory lives in ...Composition::Desktop, beside
         // IDesktopWindowTarget -- not directly under ...Composition (the SDK header's nesting).
@@ -276,7 +303,7 @@ int main(int argc, char** argv) {
             reinterpret_cast<ABI::Windows::UI::Composition::Desktop::IDesktopWindowTarget**>(
                 winrt::put_abi(targetInspectable)));
         Report("CreateDesktopWindowTarget", targetHr);
-        if (FAILED(targetHr)) return 3;
+        if (FAILED(targetHr)) return;
         auto target = targetInspectable.as<winrt::Windows::UI::Composition::Desktop::DesktopWindowTarget>();
 
         CompositionBrush brush{nullptr};
@@ -301,7 +328,7 @@ int main(int argc, char** argv) {
                 std::printf("lensprobe: CreateEffectFactory threw 0x%08lX (%ls)\n",
                             static_cast<unsigned long>(error.code().value),
                             error.message().c_str());
-                return 4;
+                return;
             }
             CompositionEffectBrush effectBrush = factory.CreateBrush();
             effectBrush.SetSourceParameter(L"backdrop", compositor.CreateHostBackdropBrush());
@@ -337,20 +364,20 @@ int main(int argc, char** argv) {
         std::printf("lensprobe: mode=%s sigma=%.1f, window %d,%d %dx%d\n",
                     colour ? "colour-control" : (blur ? "host-backdrop+blur" : "host-backdrop"),
                     sigma, x, y, width, height);
+        std::printf("lensprobe: visible=%d, on screen for %d s\n", IsWindowVisible(hwnd) ? 1 : 0,
+                    g_seconds);
+        std::fflush(stdout);
+        SetTimer(hwnd, 1, static_cast<UINT>(g_seconds) * 1000, nullptr);
     } catch (const winrt::hresult_error& error) {
         std::printf("lensprobe: WinRT threw 0x%08lX (%ls)\n",
                     static_cast<unsigned long>(error.code().value), error.message().c_str());
         DestroyWindow(hwnd);
-        return 3;
+        PostQuitMessage(0);
     }
+    };
+    SetTimer(hwnd, 2, 100, nullptr);
 
-    std::printf("lensprobe: visible=%d, on screen for %d s\n", IsWindowVisible(hwnd) ? 1 : 0,
-                g_seconds);
-    std::fflush(stdout);
-
-    // A BLOCKING GetMessage loop, and a timer to end the run: the compositor's commit work is delivered
-    // through this thread's queue, and a PeekMessage + Sleep loop is not the same pump.
-    SetTimer(hwnd, 1, static_cast<UINT>(g_seconds) * 1000, nullptr);
+    // A BLOCKING GetMessage loop: the compositor's commit work is delivered through this thread's queue.
     MSG message = {};
     while (GetMessageW(&message, nullptr, 0, 0) > 0) {
         TranslateMessage(&message);
