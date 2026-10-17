@@ -13754,3 +13754,91 @@ scrim 由主窗画在上面——这正好是苹果的做法（tinted scrim over
 输入怎么穿透（`WM_NCHITTEST` → `HTTRANSPARENT`）、两扇 topmost 窗的 z 序谁在谁下面、全屏退场与
 DPI 切换时怎么一起收放。这些写进了 `reviews/review-q49.txt`（第 54 轮）。
 
+---
+
+## 8.167 **第 54 轮评审 + 三个新实测：裸窗口、逐帧生长、真壁纸预览**（2026-10-17）
+
+### 8.167.1 两家结论（`reviews/review-a49-chatgpt.txt` / `review-a49-gemini.txt`）
+
+* **形状选 A**：保留 18 DIP 胶囊，接受 acrylic 的 ~8px 圆角；B（改轮廓）两家都否；C（Windows.UI.
+  Composition）两家都认为**现在不该做**——ChatGPT 说没验证、Gemini 说在零依赖约束下是高危陷阱。
+  两家都说**没有第四条**：DWM 没有自定义圆角 API，region 不裁 acrylic 已经实测。
+* 月牙：ChatGPT 说"不必然露馅，但必须用真实壁纸单独验收，不能靠加 scrim 蒙"；Gemini 说"会被
+  scrim/高光/阴影完全掩盖"。**这一条留给用户的眼睛**。
+* 两扇窗：两家都同意主窗在上、玻璃窗紧贴其下、`HTTRANSPARENT` 穿透、生命周期由主窗统一管理。
+
+### 8.167.2 补测一：**裸窗口**——玻璃窗不需要 swapchain，也不需要渲染器
+
+`glassprobe --dcomp --bare`：只有 `WS_EX_NOREDIRECTIONBITMAP` + acrylic + 圆角偏好，
+**没有 D3D11 / D2D / swapchain / visual / 任何内容**。结果：
+
+* 条纹边缘能量 **1.14**（`--plain` 同窗口 57.75）；
+* 圆角与有 swapchain 的版本逐行一致（y=10→26、y=12→24、y=16→20）。
+
+所以产品里的玻璃窗可以是一扇**没有渲染器**的窗口：`CreateWindowExW` + `SetWindowCompositionAttribute`
++ `DwmSetWindowAttribute`，几十行。两家第一版回答里"不要重建 swapchain"的顾虑随之消失。
+照片 `captures/dcomp-bare.png`。
+
+### 8.167.3 补测二：**逐帧跟随 220→720**（60 步，320ms）
+
+`--animate-to 720 --animate-ms 320`：60 次 `SetWindowPos`，**0 次失败**，平均 **0.977 ms**、
+最大 **1.451 ms**；动画过程中连拍 10 帧，胶囊内部条纹像素 **0 个**（没有空洞 / 黑带），
+最终宽度 739（= 20 + 720 - 1，裁切坐标里）。两家据此都改口：**逐帧跟随可行，固定 720 宽不成立**。
+照片 `captures/dcomp-growth-00..09.png` + `dcomp-growth-final.png`。
+
+### 8.167.4 真壁纸预览，以及一个必须先说清的坑
+
+把玻璃窗用 `SetWindowPos(glass, barHwnd, …)` 插到**正在运行的栏下面**（1170,6 220x36）拍照：
+`captures/bar-under-{before,acrylic}.png` **几乎看不出差别**。原因不是材质没作用，而是
+**当前主题是「默认」：pill 填充 0.92 / 0.98 alpha**，材质被盖掉了 92%~98%。
+也就是说：**真背景模糊只有配上「玻璃」主题那套 0.66~0.82 的填充才看得见**。
+
+用 70% 黑 scrim 直接盖在材质上模拟玻璃主题（`--scrim-dark --scrim 180`）：
+`captures/glass-look-{plain,acrylic}.png`。材质透出来了，四个角的月牙被 scrim 压得很淡；
+`glass-look-acrylic-corner.png` 是 4x 放大。**最终还是要用真主题在真壁纸上拍一张给用户看。**
+
+---
+
+## 8.168 **方案：两扇窗 · 玻璃材质窗（等用户拍板，未动产品代码）**
+
+### 8.168.1 要做什么
+
+给栏加一扇**只承载系统材质**的第二窗口（玻璃窗），位置/尺寸每帧跟随岛的实际绘制框；
+现有主窗不动，继续画所有内容。玻璃窗只在**主题选择真实背景**时出现（先把「玻璃」主题设为这种主题）。
+
+### 8.168.2 改哪些文件，为什么
+
+| 文件 | 改动 | 为什么 |
+|---|---|---|
+| `src/domain/Motion.h` | 新增纯函数 `GlassBackdropFor(box, state, themeHasBackdrop)` → `{rect, visible}` | 玻璃窗的几何/可见性是一条**纯规则**，可以断言；domain 里不出现 Win32 |
+| `src/app/GlassWindow.{h,cpp}`（新） | 裸 HWND：`WS_POPUP | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_NOREDIRECTIONBITMAP`；acrylic + 圆角；`WM_NCHITTEST`→`HTTRANSPARENT`；`SetGeometry`（只在几何变化时 `SetWindowPos`）；`Show/Hide`；插入到主窗下方 | 8.167.2 实测：不需要渲染器 / swapchain；所有平台调用集中在一个新类里 |
+| `src/app/BarLoop.cpp` | 启动时创建玻璃窗；每帧把实际岛框交给它；全屏/隐藏/切显示器时一起收；退出时销毁 | 玻璃窗的生命周期归主窗，避免独立残留 |
+| `src/render/Theme.{h,cpp}` | 主题多一个 `backdrop` 字段（默认 0）；「玻璃」= 1；`themes\*.txt` 可写 `backdrop 1` | 默认/冰蓝/石墨保持**像素不变**；只有玻璃主题换成真材质 |
+| `src/selftest/ChecksWindow.cpp`、`Diagnostics.cpp` | 断言：静止 = 220x36、通知条 = 420x36、卡片 = 520x280、FullBar/隐藏 = 不可见、150% DPI 的物理矩形取整、玻璃窗存在且带 `NOREDIRECTIONBITMAP`/`TOPMOST` | 纯规则要有断言；窗口样式要在自检里核对 |
+| `scripts/probe-glass-dcomp.ps1` | 已有（裸窗口 / 区域 / 圆角 / 逐帧生长） | 这一轮的证据工具，保留可复跑 |
+
+### 8.168.3 验收（一个数字 + 一行日志）
+
+* **数字**：`SetWindowPos` 失败 **0** 次，单次最大 **≤ 3 ms**（探针实测 1.451 ms），
+  60 帧动作里空洞/黑带 **0**；高对比条纹下胶囊内边缘能量 **1.14 ≤ 2.0**（无材质 57.75）。
+* **一行日志**（每次玻璃窗几何/可见性变化）：
+  `glass: backdrop=acrylic theme=玻璃 rect=1170,6 220x36`
+  退出时一行汇总：`glass: setpos=61 fail=0 max_ms=1.45 hidden_for_fullscreen=0`
+* 另外必须给用户看的：**玻璃主题 + 真实壁纸**下静息 / 通知条 / 卡片三张照片，四角放大一张。
+
+### 8.168.4 回退
+
+1. 把主题里的 `backdrop` 改回 0（或换回默认主题）→ 玻璃窗不创建/不显示，回到现在的画面；
+2. 代码层：删除 `GlassWindow` 与 `BarLoop` 里的三处调用即可，主窗渲染路径没有被改；
+3. 本地提交可 `git revert`（不推远程）。
+
+### 8.168.5 预计影响
+
+* **CPU**：空闲时没有新增逐帧工作（玻璃窗只在几何变化时 `SetWindowPos`；探针 60 次共 ~59 ms）。
+  动画期间每帧一次 ~1 ms 的窗口调用（只在通知条/卡片展开的那 ~320 ms 内）。
+* **内存**：+1 个 HWND，无 D3D 设备、无 swapchain、无位图 —— 几 KB 量级。
+* **GPU**：模糊由 DWM 做；220x36 的胶囊可忽略，520x280 的卡片打开时是唯一可测的点，实施后补一次对比。
+* **观感**：玻璃主题下，岛/卡片背后是**真的被模糊的桌面**（不再是画出来的假玻璃）；
+  四个角仍有 ~10px 的"月牙"是锐利的（DWM 圆角 8px vs 胶囊 18px），需要真实壁纸验收。
+* **风险**：玻璃窗是第二扇 topmost 窗；z 序、输入穿透、全屏退场都要靠自检 + 现场验证。
+

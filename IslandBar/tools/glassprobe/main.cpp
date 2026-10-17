@@ -6,6 +6,7 @@
 //      glassprobe --region            acrylic + a rounded window REGION instead of a corner preference
 //      glassprobe --dcomp             the same window as the BAR owns: per-pixel alpha + DirectComposition
 //      glassprobe --dcomp --scrim 0   the composition window with nothing drawn in it at all
+//      glassprobe --dcomp --bare      no D3D/DComp at all: only the window and the system material
 //      glassprobe --at 1180,120 --size 300x40 --seconds 30
 //
 //  WHY THIS QUESTION, ASKED AGAIN (2026-10-17). The bar's three blur attempts were all made on a
@@ -76,6 +77,11 @@ int main(int argc, char** argv) {
     bool useRegion = false;
     bool layered = false;
     bool dcomp = false;
+    bool bare = false;
+    bool underBar = false;
+    int animateTo = 0;
+    int animateMs = 320;
+    bool scrimDark = false;
     int scrimAlpha = 24;
     unsigned int tint = 0x40FFFFFF;   // ABGR: a faint white, which is the least a material can be asked for
     int x = 1180, y = 140, width = 300, height = 40;
@@ -85,6 +91,14 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--region") == 0) useRegion = true;
         else if (std::strcmp(argv[i], "--layered") == 0) layered = true;
         else if (std::strcmp(argv[i], "--dcomp") == 0) dcomp = true;
+        else if (std::strcmp(argv[i], "--bare") == 0) bare = true;
+        else if (std::strcmp(argv[i], "--under-bar") == 0) underBar = true;
+        else if (std::strcmp(argv[i], "--animate-to") == 0 && i + 1 < argc) {
+            animateTo = std::atoi(argv[++i]);
+        } else if (std::strcmp(argv[i], "--animate-ms") == 0 && i + 1 < argc) {
+            animateMs = std::atoi(argv[++i]);
+        }
+        else if (std::strcmp(argv[i], "--scrim-dark") == 0) scrimDark = true;
         else if (std::strcmp(argv[i], "--scrim") == 0 && i + 1 < argc) {
             scrimAlpha = std::atoi(argv[++i]);
             if (scrimAlpha < 0) scrimAlpha = 0;
@@ -111,6 +125,11 @@ int main(int argc, char** argv) {
         options.seconds = g_seconds;
         options.plain = plain;
         options.region = useRegion;
+        options.bare = bare;
+        options.underBar = underBar;
+        options.animateTo = animateTo;
+        options.animateMs = animateMs;
+        options.scrimDark = scrimDark;
         options.tint = tint;
         options.scrimAlpha = scrimAlpha;
         return RunDCompProbe(options);

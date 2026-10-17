@@ -1,0 +1,36 @@
+第 54 轮评审答复（ChatGPT）——要点整理
+
+会话：https://chatgpt.com/c/6ad30021-1bac-83ee-8258-b0ae0fbda2fc
+（这是整理稿；逐字稿在会话里。问题稿见 reviews/review-q49.txt。）
+
+一、形状：**选 A**
+
+* 保留 18 DIP 胶囊轮廓，接受 acrylic 的 r≈8 圆角；月牙靠主窗的 scrim / 边缘高光 / 阴影改善。
+* **B 不选**：为了迁就系统材质改产品轮廓，且不保证不同构建 / DPI 下一致。
+* **C 暂缓**：Windows.UI.Composition 的 host backdrop + 自定义几何裁剪在理论上可行，但没有在本项目
+  的窗口配置下验证过（背景采样 / 效果图合成 / 几何裁剪三件事要分开验）；手写 `IGraphicsEffect`
+  （+ `IGraphicsEffectD2D1Interop`）是有依据的方向，但不能因为接口存在就认定整条链可用。
+* **没有第四条**：DWM 的 `DWMWA_WINDOW_CORNER_PREFERENCE` 只有系统圆角，没有任意半径 API；
+  窗口 region 不裁 acrylic 已被实测证实。
+* **月牙会不会露馅**：不必然，但也不能保证 scrim 能盖住——scrim 降低对比度、不是模糊；
+  必须用**真实壁纸**单独验收月牙区域，不能靠提高 scrim alpha 蒙过去（会破坏 4.5:1 对比度下限）。
+  如果真实壁纸下不可接受，就停止调参，重新评估需要自定义几何的材质方案。
+
+二、两扇窗
+
+* Q3：先做**静态**双窗验证，再验动画。`SetWindowPos` 只在几何真的变化时调用；**不重建 SwapChain**；
+  不用"固定 720 宽的大玻璃窗"蒙混——acrylic 作用于整个窗口矩形，多余区域会糊桌面。
+* Q4：`WM_NCHITTEST` → `HTTRANSPARENT` 作为基础措施，但要实测鼠标 / 滚轮 / 触摸穿透；
+  z 序：主窗在上、玻璃窗在下，两者都置顶，玻璃窗以主窗 HWND 为插入位置；
+  生命周期（全屏退场、显示器切换、DPI、主窗销毁）由主窗统一管理，玻璃窗不允许单独残留。
+* Q5（第一版）：MVD-54 静态胶囊玻璃，验收是 blur 边缘能量 ≤ 2.0、两窗对齐 ≤ 1 px、
+  输入穿透 PASS、swapchain 重建 0 次、真实壁纸月牙单独检查。
+
+三、补充实测之后（裸窗口 + 逐帧跟随）的修正
+
+* Q3 收敛：**推荐玻璃窗随动画逐帧 `SetWindowPos`**；固定 720 宽仍不推荐。
+* 验收数字：`SetWindowPos` 失败 0；平均 ≤ 1.5 ms；最大 ≤ 3 ms；动画抽检 10 帧，0 空洞 / 0 黑带；
+  acrylic 条纹边缘能量 ≤ 2.0（同一探针条件）；swapchain 重建 0 次（玻璃窗不再需要 swapchain）；
+  真实壁纸的月牙仍然单独验收。
+* 单行日志（它给的格式）：
+  `[GlassMVD54] mode=bare_hwnd_follow setpos_fail=0 avg_ms=0.974 max_ms=1.694 sampled_frames=10 holes=0 black_bands=0 blur_edge_energy=1.14 swapchain_resize_count=0 result=PASS`

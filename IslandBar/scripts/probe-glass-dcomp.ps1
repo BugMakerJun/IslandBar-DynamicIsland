@@ -51,7 +51,7 @@ $Plane = New-Object System.Windows.Forms.Form
 $Plane.FormBorderStyle = 'None'
 $Plane.StartPosition = 'Manual'
 $Plane.Location = New-Object System.Drawing.Point 1130, 260
-$Plane.Size = New-Object System.Drawing.Size 320, 140
+$Plane.Size = New-Object System.Drawing.Size 800, 140
 $Plane.TopMost = $false
 $Plane.ShowInTaskbar = $false
 $Plane.add_Paint({
@@ -59,7 +59,7 @@ $Plane.add_Paint({
     $graphics = $eventArgs.Graphics
     $graphics.Clear([System.Drawing.Color]::Black)
     $white = [System.Drawing.Brushes]::White
-    for ($x = 0; $x -lt 320; $x += 8) { $graphics.FillRectangle($white, $x, 0, 4, 140) }
+    for ($x = 0; $x -lt 800; $x += 8) { $graphics.FillRectangle($white, $x, 0, 4, 140) }
 })
 $Plane.Show()
 $Plane.Refresh()
@@ -128,6 +128,51 @@ Invoke-Probe 'dcomp-stripes-acrylic' '--dcomp --at 1180,300 --size 220x36 --seco
 Invoke-Probe 'dcomp-region' '--dcomp --region --at 1180,300 --size 220x36 --seconds 10' 260 76
 "--- acrylic, 60 tall, to see whether the corner radius scales ---"
 Invoke-Probe 'dcomp-tall' '--dcomp --at 1180,300 --size 220x60 --seconds 10' 260 100
+"--- bare: NO D3D/DComp content at all, only the window and the material ---"
+Invoke-Probe 'dcomp-bare' '--dcomp --bare --at 1180,300 --size 220x36 --seconds 10' 260 76
+
+# The pill's width animates when a notice arrives (220 -> 420) and the card is 520 wide, so a material
+# window would have to follow that animation frame by frame. This asks whether doing so is safe: one
+# SetWindowPos per step, timed, with a burst of photographs across the growth and a hole count inside
+# the material afterwards.
+function Invoke-Growth {
+    $out = Join-Path $Captures 'dcomp-growth.log'
+    $process = Start-Process -FilePath $Exe `
+        -ArgumentList '--dcomp --bare --at 1180,300 --size 220x36 --animate-to 720 --animate-ms 320 --seconds 8' `
+        -PassThru -WindowStyle Hidden -RedirectStandardOutput $out `
+        -RedirectStandardError (Join-Path $Captures 'dcomp-growth.err')
+    Start-Sleep -Milliseconds 260
+    for ($i = 0; $i -lt 10; $i++) {
+        Save-Shot ('dcomp-growth-{0:D2}.png' -f $i) 1160 290 760 76 1
+        Start-Sleep -Milliseconds 45
+    }
+    Start-Sleep -Milliseconds 700
+    Save-Shot 'dcomp-growth-final.png' 1160 290 760 76 1
+    if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
+    Start-Sleep -Milliseconds 250
+    Get-Content $out | Select-String 'animate'
+    foreach ($frame in (Get-ChildItem (Join-Path $Captures 'dcomp-growth-*.png') | Sort-Object Name)) {
+        $bitmap = [System.Drawing.Bitmap]::FromFile($frame.FullName)
+        $right = -1
+        for ($x = 18; $x -lt 750; $x++) {
+            $pixel = $bitmap.GetPixel($x, 26)
+            $luma = ($pixel.R + $pixel.G + $pixel.B) / 3
+            if ($luma -gt 90 -and $luma -lt 210) { $right = $x }
+        }
+        $stripes = 0
+        if ($right -gt 24) {
+            for ($x = 22; $x -lt ($right - 3); $x++) {
+                $pixel = $bitmap.GetPixel($x, 26)
+                $luma = ($pixel.R + $pixel.G + $pixel.B) / 3
+                if ($luma -gt 245 -or $luma -lt 35) { $stripes++ }
+            }
+        }
+        $bitmap.Dispose()
+        "  $($frame.Name) : material right edge = $right, stripes inside = $stripes"
+    }
+}
+"--- per-frame growth 220 -> 720 in 60 SetWindowPos steps ---"
+Invoke-Growth
 
 $Plane.Close()
 

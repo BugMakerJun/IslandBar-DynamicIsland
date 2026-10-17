@@ -19,6 +19,11 @@ struct DCompOptions {
     int seconds = 20;
     bool plain = false;        // no material: the control
     bool region = false;       // rounded window REGION instead of the DWM corner preference
+    bool bare = false;         // no D3D/DComp at all: the window carries only the material
+    bool underBar = false;     // insert directly BELOW the running bar's window, the product's z-order
+    int animateTo = 0;         // grow the window to this width, one SetWindowPos per step
+    int animateMs = 320;       // how long that growth takes
+    bool scrimDark = false;    // draw the faint scrim BLACK (the glass theme's fill) instead of white
     unsigned int tint = 0x40FFFFFF;   // ABGR for the accent policy
     int scrimAlpha = 24;       // 0..255, the faint fill drawn ON TOP of the material
 };

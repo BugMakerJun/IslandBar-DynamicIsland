@@ -1,0 +1,29 @@
+第 54 轮评审答复（Gemini）——要点整理
+
+会话：https://gemini.google.com/app/c48c897e6f2cde59
+（这是整理稿；逐字稿在会话里。问题稿见 reviews/review-q49.txt。）
+
+一、形状：**明确选 A，放弃 B 和 C**
+
+* DWM 系统材质的圆角由系统强制（~8px），没有暴露自定义 18px 的 API；`SetWindowRgn` 对 DWM 组合材质
+  无效（已被实测证实）。
+* 真实壁纸上，四个角上 ~10px 的几何差集会被 0.66~0.82 alpha 的 scrim、1px 边缘高光和外阴影
+  完全掩盖（它的判断）；改成 r=8 的矩形（B）会破坏 Apple 风格的胶囊美学。
+* C 在"单 exe / 静态 CRT / 零第三方 DLL"约束下是**高危陷阱**：手写 `IGraphicsEffect` +
+  `IGraphicsEffectD2D1Interop` 极其繁琐，脱离投影直接驱动 Composition Effect Factory 容易崩溃
+  或被 DWM 拒绝渲染；不值得在没原型的情况下切过去。
+
+二、两扇窗（第一版回答，假设玻璃窗有 swapchain）
+
+* 绝对不要每帧重设 swapchain 尺寸；把 swapchain 初始化成最大宽度，动画时只每帧 `SetWindowPos`。
+* 输入穿透 `HTTRANSPARENT` 完全够用；两窗都 `HWND_TOPMOST`，用插入顺序显式固定主窗在玻璃窗上方；
+  在主窗的 `WM_DISPLAYCHANGE` / `WM_DPICHANGED` / 全屏状态回调里同步收放两扇窗。
+* 验收：动画全过程 swapchain 动态调整次数 0、闪烁帧 0。
+
+三、补充实测之后（裸窗口 + 逐帧跟随）的修正
+
+* "固定 720 宽"的建议**不再成立**：裸窗口没有 swapchain，逐帧 `SetWindowPos` 平均 ~0.97ms、
+  最大 1.69ms、零失败、零黑带，可以直接跟随弹簧动画。
+* 验收数字：单次 `SetWindowPos` ≤ 2 ms，动画全过程撕裂 / 空洞帧 0。
+* 单行日志（它给的格式）：
+  `[GlassWindow] Animating | Width: 220 -> 720 | SetWindowPosCost: 0.97ms (Max: 1.69ms) | GlitchFrames: 0`

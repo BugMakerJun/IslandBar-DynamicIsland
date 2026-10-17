@@ -51,6 +51,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
         PostQuitMessage(0);
         return 0;
     }
+    // A material window must never take a click: at rest the bar owns the pill's input, and this window
+    // sits underneath it. HTTRANSPARENT hands the hit test to the window below.
+    if (message == WM_NCHITTEST) return HTTRANSPARENT;
     // Nothing is painted with GDI: every pixel of this window comes from the composition swap chain.
     if (message == WM_ERASEBKGND) return 1;
     return DefWindowProcW(hwnd, message, wparam, lparam);
@@ -210,13 +213,17 @@ int RunDCompProbe(const DCompOptions& options) {
     }
 
     Comp comp;
-    if (!CreateDeviceStack(comp, options.width, options.height)) {
-        DestroyWindow(hwnd);
-        return 3;
-    }
-    if (!BindTarget(comp, hwnd)) {
-        DestroyWindow(hwnd);
-        return 3;
+    // `--bare` asks the cheapest possible question: does a window with NO composition content at all
+    // still show the material? If it does, the product's glass window needs no renderer.
+    if (!options.bare) {
+        if (!CreateDeviceStack(comp, options.width, options.height)) {
+            DestroyWindow(hwnd);
+            return 3;
+        }
+        if (!BindTarget(comp, hwnd)) {
+            DestroyWindow(hwnd);
+            return 3;
+        }
     }
 
     HRESULT acrylic = E_NOTIMPL;
@@ -238,9 +245,29 @@ int RunDCompProbe(const DCompOptions& options) {
 
     ShowWindow(hwnd, SW_SHOWNOACTIVATE);
 
+    // The product's z-order, measured rather than assumed: a topmost window inserted AFTER the bar's
+    // HWND sits directly below it. `--under-bar` does exactly that, so the bar's own scrim, rim and
+    // shadow are drawn over the real material -- the only way to see the final picture without changing
+    // product code.
+    if (options.underBar) {
+        HWND bar = FindWindowW(L"IslandBar.IslandWindow", nullptr);
+        if (bar) {
+            RECT barRect = {};
+            GetWindowRect(bar, &barRect);
+            const BOOL placed = SetWindowPos(hwnd, bar, options.x, options.y, options.width,
+                                             options.height, SWP_NOACTIVATE);
+            std::printf("glassprobe: under bar %p (bar rect %ld,%ld %ldx%ld) -> %d\n",
+                        reinterpret_cast<void*>(bar), barRect.left, barRect.top,
+                        barRect.right - barRect.left, barRect.bottom - barRect.top, placed ? 1 : 0);
+        } else {
+            std::printf("glassprobe: --under-bar found no IslandBar.IslandWindow\n");
+        }
+    }
+
     RECT rect = {};
     GetWindowRect(hwnd, &rect);
-    std::printf("glassprobe: window-kind=DirectComposition (WS_EX_NOREDIRECTIONBITMAP)\n");
+    std::printf("glassprobe: window-kind=%s (WS_EX_NOREDIRECTIONBITMAP)\n",
+                options.bare ? "bare, no D3D/DComp content" : "DirectComposition");
     std::printf("glassprobe: material=%s\n", material);
     std::printf("glassprobe: tint=0x%08lX scrim-alpha=%d\n",
                 static_cast<unsigned long>(options.tint), options.scrimAlpha);
@@ -252,6 +279,40 @@ int RunDCompProbe(const DCompOptions& options) {
                 IsWindowVisible(hwnd) ? 1 : 0, options.seconds);
     std::fflush(stdout);
 
+    // WHY THIS EXISTS: the product's pill grows 220 -> ~720 on hover, so a second material window
+    // would have to follow that animation frame by frame. Neither model could say whether a per-frame
+    // SetWindowPos flickers, so it is measured: one call per step, timed, with every failure counted.
+    if (options.animateTo > options.width) {
+        LARGE_INTEGER frequency = {};
+        QueryPerformanceFrequency(&frequency);
+        const int steps = 60;
+        double totalMs = 0.0;
+        double maxMs = 0.0;
+        int failures = 0;
+        for (int step = 1; step <= steps; ++step) {
+            const double t = static_cast<double>(step) / steps;
+            const int w = options.width +
+                          static_cast<int>((options.animateTo - options.width) * t);
+            LARGE_INTEGER before = {};
+            QueryPerformanceCounter(&before);
+            const BOOL ok = SetWindowPos(hwnd, nullptr, options.x, options.y, w, options.height,
+                                         SWP_NOACTIVATE | SWP_NOZORDER);
+            LARGE_INTEGER after = {};
+            QueryPerformanceCounter(&after);
+            const double ms =
+                1000.0 * static_cast<double>(after.QuadPart - before.QuadPart) / frequency.QuadPart;
+            totalMs += ms;
+            if (ms > maxMs) maxMs = ms;
+            if (!ok) ++failures;
+            Sleep(static_cast<DWORD>(options.animateMs / steps));
+        }
+        std::printf("glassprobe: animate %dx%d -> %dx%d over %d ms: steps=%d failures=%d "
+                    "avg=%.3f ms max=%.3f ms\n",
+                    options.width, options.height, options.animateTo, options.height,
+                    options.animateMs, steps, failures, totalMs / steps, maxMs);
+        std::fflush(stdout);
+    }
+
     const DWORD until = GetTickCount() + static_cast<DWORD>(options.seconds) * 1000;
     int frames = 0;
     HRESULT present = S_OK;
@@ -262,20 +323,28 @@ int RunDCompProbe(const DCompOptions& options) {
             DispatchMessageW(&message);
         }
 
-        if (!AcquireFrame(comp)) break;
+        if (!options.bare) {
+            if (!AcquireFrame(comp)) break;
 
-        const float alpha = static_cast<float>(options.scrimAlpha) / 255.0f;
-        comp.d2dContext->BeginDraw();
-        comp.d2dContext->Clear(D2D1::ColorF(1.0f, 1.0f, 1.0f, alpha));
-        const HRESULT draw = comp.d2dContext->EndDraw();
-        if (frames == 0) Report("first EndDraw", draw);
+            const float alpha = static_cast<float>(options.scrimAlpha) / 255.0f;
+            comp.d2dContext->BeginDraw();
+            // WHITE is the probing scrim; BLACK is what the product's glass theme actually draws
+            // (pillTop 0.20/0.24/0.32 at 0.66, pillBottom 0.06/0.08/0.14 at 0.82). `--scrim-dark`
+            // therefore photographs the shape question the way the pill will really be seen.
+            comp.d2dContext->Clear(options.scrimDark ? D2D1::ColorF(0.0f, 0.0f, 0.0f, alpha)
+                                                     : D2D1::ColorF(1.0f, 1.0f, 1.0f, alpha));
+            const HRESULT draw = comp.d2dContext->EndDraw();
+            if (frames == 0) Report("first EndDraw", draw);
 
-        comp.d2dContext->SetTarget(nullptr);
-        comp.frame.Reset();
+            comp.d2dContext->SetTarget(nullptr);
+            comp.frame.Reset();
 
-        present = comp.swapChain->Present(1, 0);
-        if (frames == 0) Report("first Present", present);
-        ++frames;
+            present = comp.swapChain->Present(1, 0);
+            if (frames == 0) Report("first Present", present);
+            ++frames;
+        } else {
+            Sleep(30);
+        }
     }
 
     std::printf("glassprobe: frames presented=%d, last present=0x%08lX\n", frames,
