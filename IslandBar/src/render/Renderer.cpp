@@ -13,6 +13,8 @@
 #include "media/WicImage.h"
 #include "platform/IconRaster.h"   // an HICON to top-down BGRA pixels, shared with media/
 
+#include <wrl/client.h>
+
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -208,7 +210,26 @@ bool Renderer::Initialize(HWND hwnd, UINT widthPx, UINT heightPx, float scale) {
         return false;
     }
 
+    // THE REFRACTED BACKDROP (theme.lens): a capture of this monitor, sampled behind the island. A failure
+    // is not fatal -- the painted material is the fallback, and the log says why.
+    if (CurrentTheme().lens) {
+        HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        MONITORINFO info = {};
+        info.cbSize = sizeof(info);
+        if (monitor && GetMonitorInfoW(monitor, &info)) {
+            monitorRect_ = info.rcMonitor;
+            lensActive_ = lens_.Initialize(d2dContext_) && capture_.Start(d3dDevice_, hwnd, monitor);
+        }
+        if (!lensActive_) {
+            LogLine(L"  lens: off -- the island keeps its painted material");
+        }
+    }
+
     return true;
+}
+
+bool Renderer::TakeLensFrame() {
+    return lensActive_ && capture_.HasNewFrame();
 }
 
 // widthPx and heightPx are not needed here: the swap chain is created once at a
@@ -533,6 +554,16 @@ void Renderer::RenderFrame(const FrameState& frame) {
         // The brushes are CACHED in GlassMaterial (2026-10-17): each gradient is built in a unit space and
         // moved with a transform, so an animated box costs a matrix rather than a new brush per frame.
         const island::Theme& theme = island::CurrentTheme();
+        // THE LENS, before the surface: the captured desktop, bent at the rim. It is drawn in physical
+        // pixels inside the island's own rounded rectangle, so nothing of it can reach the desktop.
+        bool lensDrawn = false;
+        if (lensActive_) {
+            Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
+            std::uint64_t revision = 0;
+            if (capture_.AcquireLatest(&texture, &revision)) {
+                lensDrawn = lens_.Draw(d2dContext_, texture.Get(), monitorRect_, rounded, scale_, 1.0f);
+            }
+        }
         // The shadow FIRST, so the surface sits on it rather than the shadow on the surface. A theme with
         // shadow 0 (默认) draws nothing here, which is why adding all of this cannot change that one's
         // pixels. 18 DIP of reach is the brief's "blur 20px, opacity 20%", rounded to what the pill's own
@@ -542,10 +573,16 @@ void Renderer::RenderFrame(const FrameState& frame) {
         // (see TintedFill). The bottom stop takes it a little less than the top: the surface is meant to
         // be lighter where the light is, and a wallpaper colour that lightens both ends equally flattens
         // the gradient that gives the pill its depth.
-        const D2D1_COLOR_F pillTopFill =
+        D2D1_COLOR_F pillTopFill =
             island::TintedFill(theme, theme.pillTop, island::WallpaperTint(), 1.0f);
-        const D2D1_COLOR_F pillBottomFill =
+        D2D1_COLOR_F pillBottomFill =
             island::TintedFill(theme, theme.pillBottom, island::WallpaperTint(), 0.85f);
+        // Over a lens the scrim is what the glass is SEEN THROUGH, not what hides it: a little over half of
+        // the normal alpha, so the bent backdrop reads while the text keeps its contrast floor.
+        if (lensDrawn) {
+            pillTopFill.a *= 0.55f;
+            pillBottomFill.a *= 0.55f;
+        }
         // The surface itself: the two-stop tinted fill and its fringe hairline, from the cached material.
         island::DrawSmokedBase(d2dContext_, rounded, theme, pillTopFill, pillBottomFill, 1.0f);
 
@@ -1703,6 +1740,9 @@ void Renderer::Shutdown() {
 
     SafeRelease(&compTarget_);
     SafeRelease(&compVisual_);
+    capture_.Stop();
+    lens_.Shutdown();
+    lensActive_ = false;
     SafeRelease(&effectGroup_);
     SafeRelease(&compDevice_);
     SafeRelease(&d2dContext_);

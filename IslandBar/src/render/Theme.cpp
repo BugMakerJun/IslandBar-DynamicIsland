@@ -67,7 +67,7 @@ const Theme kThemes[] = {
     // gloss and sweep carry the thickness that a photograph cannot (HANDOFF 8.170).
     {L"\u73BB\u7483", {0.14f, 0.18f, 0.26f, 0.46f}, {0.04f, 0.06f, 0.12f, 0.62f}, 0.30f,
      {0.08f, 0.10f, 0.16f, 0.60f}, 0.40f, {0.45f, 0.80f, 1.00f, 0.95f}, {1.00f, 1.00f, 1.00f, 1.0f},
-     0.0f, 0.03f, 0.45f, 0.65f, 0.30f},
+     0.0f, 0.03f, 0.45f, 0.65f, 0.30f, false},
 };
 constexpr int kThemeCount = static_cast<int>(sizeof(kThemes) / sizeof(kThemes[0]));
 
@@ -362,6 +362,15 @@ bool ThemeFromText(const char* utf8, Theme* out, std::string* why) {
             if (!scalarf(&theme.rim)) return false;
         } else if (key == "tint") {
             if (!scalarf(&theme.tint)) return false;
+        } else if (key == "lens") {
+            char* stop = nullptr;
+            const long flag = std::strtol(value.c_str(), &stop, 10);
+            if (stop == value.c_str() || *stop != '\0' || (flag != 0 && flag != 1)) {
+                if (why) *why = "lens must be 0 or 1: " + key + "=" + value;
+                return false;
+            }
+            theme.lens = flag == 1;
+            ++applied;
         } else {
             if (why) *why = "unknown key: " + key;
             return false;

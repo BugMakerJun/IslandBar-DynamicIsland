@@ -14125,3 +14125,34 @@ region 的直边把阴影的圆角外圈切掉，四个角就留下**方形暗�
 按阴影扩散量外扩**（`InputRegionFor` 的矩形 + `kSoftShadowSpreadDip`），让阴影的圆角外圈
 完整可见、自然淡出，而不是被 region 的直边切出方角。这一条留给下一片。
 
+---
+
+## 8.176 **实时折射：捕获接上了，折射层的绘制还没过**（2026-10-17 晚）
+
+用户：「直接做」。于是把静态探针的那条链子接进产品：
+
+| 文件 | 内容 |
+|---|---|
+| `platform/BackdropCapture.{h,cpp}`（新） | WGC 显示器捕获；`CreateFreeThreaded` 的帧在合成线程上存下来，渲染线程取用；`SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)` 把栏自己排除；30 Hz（`MinUpdateInterval`），pimpl 以免 WinRT 头泄漏到上层 |
+| `render/LensMaterial.{h,cpp}`（新） | D2D `DisplacementMap`（边缘向外取样、24px 边距、18 scale、16px band）+ 高斯模糊 0.8；按胶囊圆角裁切 |
+| `render/Renderer` | `theme.lens` 时启动捕获 + 镜头；渲染时先画镜头再画降低到 55% 的 scrim；`TakeLensFrame()` 驱动重绘 |
+| `app/BarLoop` | 绘制判定加 `TakeLensFrame()`：只有背景真的变了才重绘（静态桌面保持空闲） |
+| `render/Theme` | 新增 `lens` 开关（`themes\*.txt` 可写 `lens=1`） |
+
+### 8.176.1 实测到哪一步
+
+* 捕获**成功启动**：日志 `lens: capture started (2560x1440)`，VRAM 13.3 → 30.7MB。
+* **但折射层把整帧画没了**：栏的窗口变成完全透明（截图只剩壁纸），进程仍活着、帧率 107/s。
+  最可能是 D2D 那边的问题（几何 mask 的 layer + 整段 1/scale 变换 + 效果图绘制，EndDraw 失败后
+  本帧没有任何内容）。没有错误日志，因为 RenderFrame 在 EndDraw 失败时只是返回。
+* 为了不让用户面对一条消失的栏，**玻璃主题的 `lens` 先关掉**（`Theme.cpp` 里 false），
+  代码保留、`lens=1` 的用户主题可以打开（会复现该问题）。
+* 静态探针仍然是"目标长什么样"的证据：`captures/lens-b4.png`（文字在两端被压弯）。
+
+### 8.176.2 下一步（已定位）
+
+1. 把 `LensMaterial` 的绘制从 **layer + 变换** 换成**离屏位图 + 位图画刷**（与 8.92 的颗粒同一套路，
+   那条路已经证明不会毁帧）：效果画进胶囊大小的离屏目标 → `FillRoundedRectangle`。
+2. 在 `Renderer::RenderFrame` 的 EndDraw 失败路径加一行日志（现在静默）。
+3. 重新打开 `lens`，用条纹/文字背景验收：边缘位移、30 Hz 捕获下的 CPU/GPU、静态桌面不重绘。
+

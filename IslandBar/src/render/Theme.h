@@ -66,6 +66,10 @@ struct Theme {
     float sweep = 0.0f;             // 0..1
     float rim = 0.0f;               // 0..1
     float tint = 0.0f;              // 0..1
+    // Whether the island refracts the REAL desktop (render/LensMaterial + platform/BackdropCapture).
+    // Off by default; the glass theme turns it on. A capture that cannot start leaves the painted material
+    // in place, so this is an opt-in layer rather than a requirement.
+    bool lens = false;
 };
 
 // The theme in force.
