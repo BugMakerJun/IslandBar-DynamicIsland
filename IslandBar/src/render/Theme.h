@@ -69,6 +69,8 @@ struct Theme {
     // THE LIGHT ON THE MATERIAL, separate from the ink. They were the same colour while every theme had
     // white text; a light glass needs black text AND white highlights, and one field cannot be both.
     D2D1_COLOR_F highlight = {1.0f, 1.0f, 1.0f, 1.0f};
+    // The island refracts the REAL desktop (render/LensMaterial + platform/BackdropCapture).
+    bool lens = false;
 };
 
 // The theme in force.

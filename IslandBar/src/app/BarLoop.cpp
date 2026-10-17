@@ -3124,6 +3124,7 @@ static bool DecideNeedDraw(BarRuntime& runtime, island::BarState& bar, island::B
            // list moved only on the next clock tick -- measured, that is ONE redraw
            // per second while idle, which is what "鼠标移上去卡卡的" was.
            startHoverChanged || bar.startWashAnimating ||
+           systems.renderer.TakeLensFrame() ||
            !haveDrawn;
 }
 

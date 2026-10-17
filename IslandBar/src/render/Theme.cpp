@@ -32,15 +32,15 @@ const Theme kThemes[] = {
     //               shadow grain
     {L"\u9ED8\u8BA4",   {0.05f, 0.05f, 0.07f, 0.92f}, {0.04f, 0.05f, 0.08f, 0.98f}, 0.06f,
      {0.05f, 0.05f, 0.07f, 0.97f}, 0.13f, {0.0f, 0.47f, 0.83f, 0.95f}, {0.93f, 0.93f, 0.93f, 1.0f},
-     0.0f, 0.0f, 0.0f, 0.0f, 0.0f, {1.0f, 1.0f, 1.0f, 1.0f}},
+     0.0f, 0.0f, 0.0f, 0.0f, 0.0f, {1.0f, 1.0f, 1.0f, 1.0f}, false},
     // 冰蓝
     {L"\u51B0\u84DD", {0.06f, 0.09f, 0.16f, 0.93f}, {0.02f, 0.03f, 0.07f, 0.97f}, 0.10f,
      {0.04f, 0.06f, 0.12f, 0.97f}, 0.16f, {0.20f, 0.62f, 0.98f, 0.95f}, {0.90f, 0.94f, 1.00f, 1.0f},
-     0.05f, 0.02f, 0.10f, 0.18f, 0.12f, {1.0f, 1.0f, 1.0f, 1.0f}},
+     0.05f, 0.02f, 0.10f, 0.18f, 0.12f, {1.0f, 1.0f, 1.0f, 1.0f}, false},
     // 石墨
     {L"\u77F3\u58A8", {0.13f, 0.13f, 0.14f, 0.94f}, {0.08f, 0.08f, 0.09f, 0.98f}, 0.05f,
      {0.11f, 0.11f, 0.12f, 0.97f}, 0.18f, {0.24f, 0.56f, 0.90f, 0.95f}, {0.99f, 0.99f, 0.99f, 1.0f},
-     0.05f, 0.0f, 0.06f, 0.16f, 0.10f, {1.0f, 1.0f, 1.0f, 1.0f}},
+     0.05f, 0.0f, 0.06f, 0.16f, 0.10f, {1.0f, 1.0f, 1.0f, 1.0f}, false},
     // 玻璃 -- asked for in these words: "加一个玻璃效果的".
     //
     // IT IS PAINTED GLASS, and the difference from real glass is measured rather than assumed. Three
@@ -70,7 +70,7 @@ const Theme kThemes[] = {
     // the highlight are separate colours for exactly this theme.
     {L"\u73BB\u7483", {0.98f, 0.99f, 1.00f, 0.00f}, {0.85f, 0.92f, 1.00f, 0.00f}, 0.75f,
      {0.90f, 0.94f, 1.00f, 0.55f}, 0.30f, {0.15f, 0.45f, 0.85f, 0.95f}, {0.03f, 0.04f, 0.06f, 1.0f},
-     0.0f, 0.03f, 0.55f, 0.55f, 0.25f, {1.0f, 1.0f, 1.0f, 1.0f}},
+     0.0f, 0.03f, 0.55f, 0.55f, 0.25f, {1.0f, 1.0f, 1.0f, 1.0f}, true},
 };
 constexpr int kThemeCount = static_cast<int>(sizeof(kThemes) / sizeof(kThemes[0]));
 
@@ -370,6 +370,15 @@ bool ThemeFromText(const char* utf8, Theme* out, std::string* why) {
             if (!scalarf(&theme.rim)) return false;
         } else if (key == "tint") {
             if (!scalarf(&theme.tint)) return false;
+        } else if (key == "lens") {
+            char* stop = nullptr;
+            const long flag = std::strtol(value.c_str(), &stop, 10);
+            if (stop == value.c_str() || *stop != '\0' || (flag != 0 && flag != 1)) {
+                if (why) *why = "lens must be 0 or 1: " + key + "=" + value;
+                return false;
+            }
+            theme.lens = flag == 1;
+            ++applied;
         } else {
             if (why) *why = "unknown key: " + key;
             return false;

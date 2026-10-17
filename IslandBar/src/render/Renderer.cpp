@@ -210,7 +210,23 @@ bool Renderer::Initialize(HWND hwnd, UINT widthPx, UINT heightPx, float scale) {
         return false;
     }
 
+    // THE LENS (theme.lens): the desktop behind the island, displaced at the rim. A failure is not fatal.
+    if (CurrentTheme().lens) {
+        HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        MONITORINFO info = {};
+        info.cbSize = sizeof(info);
+        if (monitor && GetMonitorInfoW(monitor, &info)) {
+            monitorRect_ = info.rcMonitor;
+            lensActive_ = lens_.Initialize(d2dDevice_) && capture_.Start(d3dDevice_, hwnd, monitor);
+        }
+        if (!lensActive_) LogLine(L"  lens: off -- the island keeps its painted material");
+    }
+
     return true;
+}
+
+bool Renderer::TakeLensFrame() {
+    return lensActive_ && capture_.HasNewFrame();
 }
 
 // widthPx and heightPx are not needed here: the swap chain is created once at a
@@ -549,6 +565,16 @@ void Renderer::RenderFrame(const FrameState& frame) {
         D2D1_COLOR_F pillBottomFill =
             island::TintedFill(theme, theme.pillBottom, island::WallpaperTint(), 0.85f);
         // The surface itself: the two-stop tinted fill and its fringe hairline, from the cached material.
+        // THE LENS FIRST: with the glass theme's fill at zero, this IS the surface -- the desktop behind
+        // the island, bent at the rim. A light scrim and the washes sit on top of it.
+        if (lensActive_) {
+            Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
+            std::uint64_t revision = 0;
+            if (capture_.AcquireLatest(&texture, &revision) &&
+                lens_.Update(texture.Get(), monitorRect_, rounded, scale_)) {
+                lens_.Fill(d2dContext_, rounded, scale_, 1.0f);
+            }
+        }
         island::DrawSmokedBase(d2dContext_, rounded, theme, pillTopFill, pillBottomFill, 1.0f);
 
         // ... and the smoke inside it: centre heavier than rim, gone before the edge.
@@ -1723,6 +1749,9 @@ void Renderer::Shutdown() {
 
     SafeRelease(&compTarget_);
     SafeRelease(&compVisual_);
+    capture_.Stop();
+    lens_.Shutdown();
+    lensActive_ = false;
     SafeRelease(&effectGroup_);
     SafeRelease(&compDevice_);
     SafeRelease(&d2dContext_);

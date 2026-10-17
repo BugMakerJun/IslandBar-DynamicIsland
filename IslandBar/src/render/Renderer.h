@@ -26,7 +26,9 @@
 #include "domain/TaskStripLayout.h"   // the island plus the row of application icons
 #include "domain/Motion.h"
 #include "media/MusicSession.h"
+#include "platform/BackdropCapture.h"
 #include "services/Notification.h"
+#include "render/LensMaterial.h"
 #include "render/TextRenderer.h"
 
 namespace island {
@@ -505,6 +507,10 @@ public:
     // nothing is here.
     void Render(const FrameState& frame);
 
+    // True when the capture has a backdrop the lens has not drawn yet: the loop redraws then, and only
+    // then, so a still desktop keeps the bar idle.
+    bool TakeLensFrame();
+
     // Convenience for paths that only care about a shape with no content.
     void Render(const PillAppearance& pill) {
         FrameState frame;
@@ -668,6 +674,10 @@ private:
 
     // --- device chain ---
     ID3D11Device*            d3dDevice_   = nullptr;
+    BackdropCapture          capture_;
+    LensMaterial             lens_;
+    RECT                     monitorRect_ = {};
+    bool                     lensActive_  = false;
     // The refracted backdrop, when the theme asks for it and the capture started.
     ID3D11DeviceContext*     d3dContext_  = nullptr;
     IDXGISwapChain1*         swapChain_   = nullptr;
