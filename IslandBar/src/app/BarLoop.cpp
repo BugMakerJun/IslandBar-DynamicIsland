@@ -1189,9 +1189,19 @@ static void SyncGlassWindow(const island::FrameState& frame, island::BarSystems&
     const RECT screen = systems.window.Monitor().screen;
     const float scale = systems.window.Scale();
     RECT pixels = {};
-    pixels.left = screen.left + static_cast<LONG>(std::lround(surface.rect.left * scale));
+    // THE MATERIAL WINDOW IS INSET FROM THE ISLAND'S BOUNDING BOX, horizontally only.
+    //
+    // DWM clips the acrylic to a rounded rectangle of its own fixed radius (~8 px), and that rectangle is
+    // the window's -- so at the island's four corners its 8 px curve pokes OUTSIDE the island's 18 DIP
+    // stadium. On a light wallpaper those four patches read as small dark squares stuck to the ends of the
+    // pill (reported with a photograph). Pulling the window in by 12 DIP puts its 8 px corners inside the
+    // stadium's curve; the price is that the last 12 DIP at each end are covered by the scrim but not
+    // blurred, which is invisible at the tips where the pill is only a scrim over the desktop.
+    constexpr float kInsetXDip = 12.0f;
+    pixels.left = screen.left + static_cast<LONG>(std::lround((surface.rect.left + kInsetXDip) * scale));
     pixels.top = screen.top + static_cast<LONG>(std::lround(surface.rect.top * scale));
-    pixels.right = pixels.left + static_cast<LONG>(std::lround(widthDip * scale));
+    pixels.right = screen.left +
+                   static_cast<LONG>(std::lround((surface.rect.right - kInsetXDip) * scale));
     pixels.bottom = pixels.top + static_cast<LONG>(std::lround(heightDip * scale));
     systems.glass.ShowAt(pixels);
 

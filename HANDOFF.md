@@ -14053,3 +14053,24 @@ StandardDeviation 浮点、Optimization / BorderMode 枚举 UInt32），所以�
 材质改动不影响生命周期日志。跑固定场景时如果鼠标正好停在岛上，会多出 `pointer ENTERED` 一类行
 （这是真实交互，不是回归）；需要指针离开岛后再录制才能和基线逐行比对。
 
+---
+
+## 8.173 **玻璃窗四角露出的方角（用户截图）与 12 DIP 内缩**（2026-10-17 傍晚）
+
+用户截图红框指出：岛的左上角外侧有一小块深色方角。确认是 **8.169 加的玻璃窗**（`app/GlassWindow`），
+不是多余的窗口——枚举栏进程只有主窗和它。
+
+**原因**：acrylic 的圆角由 DWM 固定 ~8px，而玻璃窗矩形 = 胶囊的外接矩形；8px 角在 18px 胶囊的四个角上
+有几像素落在胶囊曲线**外**，在壁纸上就是四个小方角。
+
+**修法**：玻璃窗左右各内缩 **12 DIP**（`BarLoop.cpp` 的 `kInsetXDip`），让 8px 角退回胶囊内；高度不变。
+代价是两端各 12 DIP 只有 scrim、没有模糊（1x 下不可见）。
+
+**同时关掉的两处 DWM 装饰**（也可能沿 region 画线/阴影）：
+
+* 玻璃窗：`DWMWA_BORDER_COLOR = DWMWA_COLOR_NONE`；
+* 主窗：`DWMWA_NCRENDERING_POLICY = DWMNCRP_DISABLED`。
+
+照片：`captures/after-inset-6x.png`、`after-inset-island-3x.png`；日志 `glass: backdrop=acrylic …
+rect=1106,6 314x36`（内缩前 1094,6 338x36）。
+
