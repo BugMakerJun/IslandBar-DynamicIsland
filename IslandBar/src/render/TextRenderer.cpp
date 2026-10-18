@@ -2370,7 +2370,7 @@ void TextRenderer::DrawTaskIcons(ID2D1DeviceContext2* context, const RoundedBox&
     ID2D1SolidColorBrush* textBrush = nullptr;
     ID2D1SolidColorBrush* activeTextBrush = nullptr;
     const D2D1_COLOR_F hoverColour = PillInk(0.16f * opacity);
-    const D2D1_COLOR_F textColour = D2D1::ColorF(0.86f, 0.88f, 0.92f, 0.80f * opacity);
+    const D2D1_COLOR_F textColour = PillInk(0.84f * opacity);
     const D2D1_COLOR_F activeColour = PillInk(0.98f * opacity);
     context->CreateSolidColorBrush(hoverColour, &hoverBrush);
     context->CreateSolidColorBrush(textColour, &textBrush);
