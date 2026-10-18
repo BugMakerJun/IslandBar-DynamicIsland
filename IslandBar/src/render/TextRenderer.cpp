@@ -4205,35 +4205,16 @@ void TextRenderer::DrawStartPage(ID2D1DeviceContext2* context, const RoundedBox&
             // codepoint (E7E8) came out as an empty box on this machine, photographed, and a symbol that is
             // the whole meaning of a button cannot be a thing that might not be there. The bright ink, not
             // the dim one, for the same reason.
+            // A FULL ring with the stem crossing its top. The first version left the ring open where the
+            // stem went -- 49 degrees of gap -- and at this size that reads as a chipped icon ("这个图标
+            // 有缺角"), not as the power symbol.
             const float radius = 6.5f;
-            ID2D1Factory* factory = nullptr;
-            context->GetFactory(&factory);
-            if (factory && inkBrush) {
-                ID2D1PathGeometry* arc = nullptr;
-                ID2D1GeometrySink* sink = nullptr;
-                if (SUCCEEDED(factory->CreatePathGeometry(&arc)) && arc &&
-                    SUCCEEDED(arc->Open(&sink)) && sink) {
-                    const float start = -1.15f;   // radians, just right of the top
-                    const float end = start + 5.42f;   // all the way round, back to just left of it
-                    sink->BeginFigure(D2D1::Point2F(cx + radius * std::sin(start),
-                                                    cy - radius * std::cos(start)),
-                                      D2D1_FIGURE_BEGIN_HOLLOW);
-                    const int steps = 24;
-                    for (int i = 1; i <= steps; ++i) {
-                        const float t = start + (end - start) * static_cast<float>(i) / steps;
-                        sink->AddLine(D2D1::Point2F(cx + radius * std::sin(t),
-                                                    cy - radius * std::cos(t)));
-                    }
-                    sink->EndFigure(D2D1_FIGURE_END_OPEN);
-                    sink->Close();
-                    sink->Release();
-                    context->DrawGeometry(arc, inkBrush, 1.6f);
-                }
-                if (arc) arc->Release();
-                context->DrawLine(D2D1::Point2F(cx, cy - radius - 1.5f), D2D1::Point2F(cx, cy - 1.0f),
-                                  inkBrush, 1.8f);
+            if (inkBrush) {
+                const D2D1_ELLIPSE ring = D2D1::Ellipse(D2D1::Point2F(cx, cy), radius, radius);
+                context->DrawEllipse(&ring, inkBrush, 1.6f);
+                context->DrawLine(D2D1::Point2F(cx, cy - radius - 1.2f),
+                                  D2D1::Point2F(cx, cy - 0.5f), inkBrush, 1.8f);
             }
-            if (factory) factory->Release();
         }
     }
 
