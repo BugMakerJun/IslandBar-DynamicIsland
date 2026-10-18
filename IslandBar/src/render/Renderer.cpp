@@ -753,6 +753,47 @@ void Renderer::RenderFrame(const FrameState& frame) {
         // not go through statusStripOpacity, so the notice line and the call flag are part of the test.
         const bool stripOnScreen = frame.statusStripOpacity > 0.01f || frame.callUp ||
                                    (frame.noticeLine && frame.noticeLine[0] != '\0');
+        // THE BAR'S INK FROM THE SCREEN ITSELF, whether or not the LENS is on screen.
+        //
+        // This used to sit inside `if (lensActive_ && !stripOnScreen)`, and that is why the words never
+        // changed: while the bar shows its own status strip (the lyric line, which is on screen whenever
+        // music plays) the lens is suppressed -- and the ink sample was suppressed with it, so
+        // SetPillInkBackdrop was never called and the colour kept whatever the desktop had last said.
+        // The sample needs only the screen. Taken just BELOW the bar, where none of the bar is drawn, so
+        // its own ink cannot feed back into the choice.
+        float sampled = -1.0f;
+        {
+            POINT inkOrigin = {0, 0};
+            if (ClientToScreen(window_, &inkOrigin)) {
+                // 100 DIP below the bar: the four-corner sample needs the corners to be DISTINCT points,
+                // and at 48 DIP the top and bottom insets landed on the same row -- so one strip of the
+                // application (often its lighter title band) decided the ink for the whole bar.
+                const RECT below = {
+                    inkOrigin.x + static_cast<LONG>(std::lround(rounded.rect.left * scale_)),
+                    inkOrigin.y + static_cast<LONG>(std::lround(rounded.rect.bottom * scale_)) + 2,
+                    inkOrigin.x + static_cast<LONG>(std::lround(rounded.rect.right * scale_)),
+                    inkOrigin.y + static_cast<LONG>(std::lround(rounded.rect.bottom * scale_)) + 102};
+                sampled = SampleUnderCard(below, scale_);
+            }
+        }
+        // Fed every frame from the cached reading, so the crossover finishes even when the window behind
+        // has gone still and WGC is sending nothing.
+        island::SetPillInkBackdrop(sampled >= 0.0f ? sampled : lens_.BackdropLuminance());
+        // Reported on change, so "the words did not change colour" and "the screen never said anything
+        // dark" can be told apart from the log without a photograph.
+        {
+            static float lastInkLog = -2.0f;
+            static int lastInkFullscreen = -1;
+            if (sampled >= 0.0f &&
+                (std::fabs(sampled - lastInkLog) > 0.02f ||
+                 static_cast<int>(frame.fullscreenApp) != lastInkFullscreen)) {
+                lastInkLog = sampled;
+                lastInkFullscreen = static_cast<int>(frame.fullscreenApp);
+                LogLine(L"  ink: screen below the bar %.2f (full screen %d)", sampled,
+                        lastInkFullscreen);
+            }
+        }
+
         if (lensActive_ && !stripOnScreen) {
             // A size change re-warps the LAST captured frame: the window behind did not change, so WGC
             // sends nothing new, and re-opening the session would hand back a blank first frame.
@@ -779,46 +820,6 @@ void Renderer::RenderFrame(const FrameState& frame) {
             Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
             std::uint64_t revision = 0;
             const RECT source = capture_.SourceRect();
-
-            // THE BAR'S INK FROM THE SCREEN ITSELF, whether or not the capture is running. A full-screen
-            // application cannot be captured by WGC at all, and that is exactly the case the dark words
-            // were reported in ("右边是我全屏的时候 不对") -- with this inside the capture's guard, the
-            // ink fell back to the last desktop reading and never changed. The sample only needs the
-            // screen. Taken just BELOW the bar, where none of the bar is drawn, so its own ink cannot
-            // feed back into the choice.
-            float sampled = -1.0f;
-            {
-                POINT inkOrigin = {0, 0};
-                if (ClientToScreen(window_, &inkOrigin)) {
-                    // 100 DIP below the bar, not 48: the four-corner sample needs the corners to be
-                    // DISTINCT points, and at 48 DIP the top and bottom insets landed on the same row --
-                    // so one strip of the application (often its lighter title band) decided the ink for
-                    // the whole bar. Deeper samples reach the content the words actually sit over.
-                    const RECT below = {
-                        inkOrigin.x + static_cast<LONG>(std::lround(rounded.rect.left * scale_)),
-                        inkOrigin.y + static_cast<LONG>(std::lround(rounded.rect.bottom * scale_)) + 2,
-                        inkOrigin.x + static_cast<LONG>(std::lround(rounded.rect.right * scale_)),
-                        inkOrigin.y + static_cast<LONG>(std::lround(rounded.rect.bottom * scale_)) + 102};
-                    sampled = SampleUnderCard(below, scale_);
-                }
-            }
-            // Fed every frame from the cached reading, so the crossover finishes even when the window
-            // behind has gone still and WGC is sending nothing.
-            island::SetPillInkBackdrop(sampled >= 0.0f ? sampled : lens_.BackdropLuminance());
-            // Reported on change, so "the words did not change colour" and "the screen never said
-            // anything dark" can be told apart from the log without a photograph.
-            {
-                static float lastInkLog = -2.0f;
-                static int lastInkFullscreen = -1;
-                if (sampled >= 0.0f &&
-                    (std::fabs(sampled - lastInkLog) > 0.02f ||
-                     static_cast<int>(frame.fullscreenApp) != lastInkFullscreen)) {
-                    lastInkLog = sampled;
-                    lastInkFullscreen = static_cast<int>(frame.fullscreenApp);
-                    LogLine(L"  ink: screen below the bar %.2f (full screen %d)", sampled,
-                            lastInkFullscreen);
-                }
-            }
 
             if (capture_.Running() && ClientToScreen(window_, &origin)) {
                 // A new captured frame re-warps the lens; without one the last warp is still the right
@@ -1252,8 +1253,8 @@ void Renderer::RenderFrame(const FrameState& frame) {
                     origin.y + static_cast<LONG>(std::lround(panelCard.rect.top * scale_)),
                     origin.x + static_cast<LONG>(std::lround(panelCard.rect.right * scale_)),
                     origin.y + static_cast<LONG>(std::lround(panelCard.rect.bottom * scale_))};
-                const float sampled = SampleUnderCard(area, scale_);
-                if (sampled >= 0.0f) cardLuminance = sampled;
+                const float cardSampled = SampleUnderCard(area, scale_);
+                if (cardSampled >= 0.0f) cardLuminance = cardSampled;
                 island::SetCardInkBackdrop(cardLuminance);
 
                 // ... AND THE CARD'S OWN SKY. The cards are the same glass as the island, so they get
