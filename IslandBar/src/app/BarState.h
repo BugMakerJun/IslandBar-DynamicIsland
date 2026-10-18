@@ -376,6 +376,11 @@ int rowSlotCount = 0;
     // appeared on the first frame would flash for every icon it passed.
     HWND previewTarget = nullptr;
     unsigned long long previewSinceMs = 0;
+    // What the compositor has ACTUALLY been told, so the preview is re-registered once instead of every
+    // frame. Re-registering and re-placing a DWM thumbnail per frame measured 120-180 ms a frame here --
+    // "还是一顿一顿的" -- for a picture the compositor already draws live.
+    HWND previewPlacedTarget = nullptr;
+    bool previewShown = false;
     // Reported once each, because "the preview never appeared" and "the compositor refused this window"
     // are different answers and only the log can tell them apart.
     bool previewReported = false;

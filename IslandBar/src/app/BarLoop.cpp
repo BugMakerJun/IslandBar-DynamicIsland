@@ -4001,8 +4001,15 @@ static void FillHoverPreview(BarRuntime& runtime, island::FrameState& frame, isl
         // The preview path registers a DWM thumbnail on the window and can redraw the live
         // content every frame, so it is one of the things a slow frame may turn out to be.
         frameWork |= thumbnailBit;
+        // ALREADY PLACED: the compositor keeps drawing the live picture itself, so a frame in which
+        // neither the target nor the box changed has nothing to tell it. Doing the SetStyle/Begin/Place
+        // dance anyway was the 120-180 ms per frame that made every animation stutter.
+        const bool alreadyPlaced =
+            wanted != nullptr && wanted == bar.previewPlacedTarget && bar.previewShown;
         if ((rested || follow) && !frame.outerCardUp && IsWindow(wanted)) {
-            const RECT monitorPx = systems.window.Monitor().screen;
+            if (alreadyPlaced) {
+                shown = true;
+            } else {            const RECT monitorPx = systems.window.Monitor().screen;
             const float scale = systems.window.Scale();
             // THE ROW THE PREVIEW HANGS OFF IS THE ROW THAT IS DRAWN, tray button and all.
             //
@@ -4049,9 +4056,16 @@ static void FillHoverPreview(BarRuntime& runtime, island::FrameState& frame, isl
                     sourceSize.cy, shown ? 1 : 0, systems.preview.LastResult());
                 std::fflush(stdout);
             }
+            }
         }
-
-        if (!shown) systems.preview.Hide();
+        if (shown) {
+            bar.previewPlacedTarget = wanted;
+            bar.previewShown = true;
+        } else if (bar.previewShown) {
+            systems.preview.Hide();
+            bar.previewPlacedTarget = nullptr;
+            bar.previewShown = false;
+        }
 
         // A refusal is reported once per count rather than once per frame: a window the
         // compositor will not preview is a fact about that window, and repeating it 60 times
