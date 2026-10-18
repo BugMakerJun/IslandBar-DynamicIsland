@@ -103,9 +103,9 @@ void DrawSpecularSweep(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& sh
 void DrawLensBottomCaustic(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
                            float opacity);
 
-// THE LENS TOP EDGE (2026-10-18): the reference blob's top rim is a thick, soft band of light, not a 1px
-// contour. A 4 DIP gradient that lives only along the top -- it dies out at the sides and never closes
-// into the ring the user rejected.
+// THE LENS TOP EDGE (2026-10-18): the reference blob's top rim is a lit BEVEL, not a white film. A bright
+// 3 DIP edge sits over a soft dark underside, top only; it dies out at the sides and never closes into the
+// ring the user rejected. The 4 DIP white wash it replaces read as fog over the island.
 void DrawLensTopEdge(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
                      float opacity);
 

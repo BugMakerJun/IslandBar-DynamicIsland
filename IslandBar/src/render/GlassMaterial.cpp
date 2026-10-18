@@ -173,6 +173,7 @@ struct MaterialCache {
 
     ID2D1SolidColorBrush* solid = nullptr;
     ID2D1LinearGradientBrush* topWash = nullptr;
+    ID2D1LinearGradientBrush* lensTop = nullptr;
     ID2D1LinearGradientBrush* bottomShade = nullptr;
     ID2D1LinearGradientBrush* rimLine = nullptr;
     ID2D1LinearGradientBrush* specularRim = nullptr;
@@ -206,6 +207,7 @@ bool SameColour(const D2D1_COLOR_F& a, const D2D1_COLOR_F& b) {
 void ReleaseCache() {
     if (g_cache.solid) g_cache.solid->Release();
     if (g_cache.topWash) g_cache.topWash->Release();
+    if (g_cache.lensTop) g_cache.lensTop->Release();
     if (g_cache.bottomShade) g_cache.bottomShade->Release();
     if (g_cache.rimLine) g_cache.rimLine->Release();
     if (g_cache.specularRim) g_cache.specularRim->Release();
@@ -250,6 +252,16 @@ bool EnsureMaterial(ID2D1DeviceContext2* context, const Theme& theme) {
         {1.0f, ThemeHighlight(0.0f)},
     };
     g_cache.topWash = MakeLinear(context, topStops, 2);
+
+    // THE LENS TOP EDGE: a bright core that falls off within 3 DIP, so it reads as the lit rim of the glass
+    // rather than as the uniform white film the 4 DIP wash made. It is not tied to gloss: the glass theme's
+    // gloss is deliberately low.
+    const D2D1_GRADIENT_STOP lensTopStops[3] = {
+        {0.0f, ThemeHighlight(0.42f)},
+        {0.30f, ThemeHighlight(0.10f)},
+        {1.0f, ThemeHighlight(0.0f)},
+    };
+    g_cache.lensTop = MakeLinear(context, lensTopStops, 3);
 
     const D2D1_GRADIENT_STOP bottomStops[2] = {
         {0.0f, D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f)},
@@ -608,11 +620,16 @@ void DrawLensTopEdge(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shap
     const float width = shape.rect.right - shape.rect.left;
     const float height = shape.rect.bottom - shape.rect.top;
     if (width < 24.0f || height < 6.0f) return;
-    if (!EnsureMaterial(context, theme) || !g_cache.topWash) return;
-    // Four DIP, top only: a thick soft band along the lit edge, not a 1 DIP line and not a perimeter.
-    const float band = std::min(height * 0.12f, 4.0f);
-    PlaceLinear(g_cache.topWash, shape.rect.left, shape.rect.top, shape.rect.top + band, opacity * 0.80f);
-    context->FillRoundedRectangle(&shape, g_cache.topWash);
+    if (!EnsureMaterial(context, theme) || !g_cache.lensTop || !g_cache.bottomShade) return;
+    // A BEVEL, not a film. The 4 DIP white wash read as fog over the island; this is a soft dark underside
+    // (the thickness) under a bright 3 DIP edge (the reflection).
+    const float shadeBand = std::min(height * 0.15f, 5.5f);
+    PlaceLinear(g_cache.bottomShade, shape.rect.left, shape.rect.top, shape.rect.top + shadeBand,
+                opacity * 0.55f);
+    context->FillRoundedRectangle(&shape, g_cache.bottomShade);
+    const float edgeBand = std::min(height * 0.09f, 3.0f);
+    PlaceLinear(g_cache.lensTop, shape.rect.left, shape.rect.top, shape.rect.top + edgeBand, opacity);
+    context->FillRoundedRectangle(&shape, g_cache.lensTop);
 }
 
 void DrawGlassRim(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
