@@ -775,9 +775,27 @@ void Renderer::RenderFrame(const FrameState& frame) {
                                      static_cast<float>(origin.y) + rounded.rect.top * scale_);
                     }
                 }
+                // THE BAR'S INK FROM THE SCREEN ITSELF -- the same rule the cards follow (see
+                // SampleUnderCard). The window under the bar is not always what is on screen there: a
+                // wallpaper window can sit above a maximised application in the Z order, which is how a
+                // light desktop kept the words black over a dark full-screen application. Sampled just
+                // BELOW the bar, where none of the bar is drawn, so the bar's own ink cannot feed back
+                // into the choice.
+                float sampled = -1.0f;
+                {
+                    POINT inkOrigin = {0, 0};
+                    if (ClientToScreen(window_, &inkOrigin)) {
+                        const RECT below = {
+                            inkOrigin.x + static_cast<LONG>(std::lround(rounded.rect.left * scale_)),
+                            inkOrigin.y + static_cast<LONG>(std::lround(rounded.rect.bottom * scale_)) + 2,
+                            inkOrigin.x + static_cast<LONG>(std::lround(rounded.rect.right * scale_)),
+                            inkOrigin.y + static_cast<LONG>(std::lround(rounded.rect.bottom * scale_)) + 50};
+                        sampled = SampleUnderCard(below, scale_);
+                    }
+                }
                 // Fed every frame from the cached reading, so the crossover finishes even when the
                 // window behind has gone still and WGC is sending nothing.
-                island::SetPillInkBackdrop(lens_.BackdropLuminance());
+                island::SetPillInkBackdrop(sampled >= 0.0f ? sampled : lens_.BackdropLuminance());
                 lens_.Fill(d2dContext_, rounded, scale_, 1.0f);
             }
         }
