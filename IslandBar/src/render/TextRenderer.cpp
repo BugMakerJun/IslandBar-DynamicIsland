@@ -182,6 +182,21 @@ bool TextRenderer::Initialize() {
     // The label under a pinned tile is centred and one size smaller than a list row: it is read at a
     // glance under a 32 DIP picture, and it is the NAME of the thing above it rather than a line of text
     // to be read. `startRowFormat_` is left-aligned because every list in this bar is.
+    //
+    // BOTH CUT WITH AN ELLIPSIS. A 50 DIP tile cannot hold "Application Verifier (X64)" or "Documentation
+    // for..." -- with NO_WRAP and no trimming the words simply ran out of the tile and across its
+    // neighbour, reported as "全部里面的 图标文字重叠了". The all-applications grid made that visible
+    // because its names are the shell's own and often long.
+    const auto trimWithEllipsis = [this](IDWriteTextFormat* format) {
+        IDWriteInlineObject* ellipsis = nullptr;
+        if (format &&
+            SUCCEEDED(factory_->CreateEllipsisTrimmingSign(format, &ellipsis)) && ellipsis) {
+            DWRITE_TRIMMING trimming = {};
+            trimming.granularity = DWRITE_TRIMMING_GRANULARITY_CHARACTER;
+            format->SetTrimming(&trimming, ellipsis);
+            ellipsis->Release();
+        }
+    };
     hr = factory_->CreateTextFormat(
         L"Segoe UI Variable Text", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
         DWRITE_FONT_STRETCH_NORMAL, 10.5f, L"zh-CN", &startLabelFormat_);
@@ -189,6 +204,7 @@ bool TextRenderer::Initialize() {
         startLabelFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         startLabelFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
         startLabelFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        trimWithEllipsis(startLabelFormat_);
     }
     hr = factory_->CreateTextFormat(
         L"Segoe UI Variable Text", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
@@ -197,6 +213,7 @@ bool TextRenderer::Initialize() {
         startRowFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
         startRowFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         startRowFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        trimWithEllipsis(startRowFormat_);
     }
 
     // Notification text: a small sender line, a bold title, and a body that is
