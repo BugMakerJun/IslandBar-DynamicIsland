@@ -804,9 +804,12 @@ float TextRenderer::MeasureStatusLine(const wchar_t* weekday, const wchar_t* day
     StatusPiece pieces[12] = {};
     const int count = BuildStatusRun(factory_, formats, weekday, day, time, sky, temperature,
                                      weatherCode, pieces, 12);
-    // ONE ROW, THREE ZONES: the date on the left, the time in the CENTRE, the weather on the right, all
-    // vertically centred. The box has to hold all three and the 12 DIP gaps between them, plus the 4 DIP
-    // corner padding on each side.
+    // THE DATE AND THE WEATHER ARE ONE SMALL COLUMN ON THE LEFT; THE TIME IS THE CENTRE.
+    //
+    // One row of three zones made the middle of the island a contest between three different sizes:
+    // the long Chinese date on the left, a 20 DIP clock in the middle and a sun plus a temperature on
+    // the right, all on the same baseline. Stacking the two small facts in a column gives the eye one
+    // place for the metadata and leaves the clock alone in the middle, which is what the island is for.
     int timeIndex = -1;
     for (int i = 0; i < count; ++i) {
         if (pieces[i].format == formats.time) {
@@ -819,7 +822,8 @@ float TextRenderer::MeasureStatusLine(const wchar_t* weekday, const wchar_t* day
     for (int i = 0; i < timeIndex; ++i) dateWidth += pieces[i].widthDip + pieces[i].afterDip;
     float weatherWidth = 0.0f;
     for (int i = timeIndex + 1; i < count; ++i) weatherWidth += pieces[i].widthDip + pieces[i].afterDip;
-    return dateWidth + 12.0f + pieces[timeIndex].widthDip + 12.0f + weatherWidth + 8.0f;
+    const float leftWidth = dateWidth > weatherWidth ? dateWidth : weatherWidth;
+    return leftWidth + 12.0f + pieces[timeIndex].widthDip + 8.0f;
 }
 
 // The decoded bitmap for one tray icon, cached until the list's revision changes.
@@ -1161,24 +1165,21 @@ void TextRenderer::DrawStatusLine(ID2D1DeviceContext2* context, const RoundedBox
     };
 
     if (kStatusExtrasVisible) {
-        // The date and the reading sit on the SAME horizontal line as the time now -- small and quiet at
-        // the two ends, all vertically centred. They used to be in the top corners; "要上下居中".
-        const float sideY = centreY - 6.0f;
-        const float sideHeight = 12.0f;
-
-        float dateWidth = 0.0f;
-        for (int i = 0; i < timeIndex; ++i) dateWidth += pieces[i].widthDip + pieces[i].afterDip;
-        float weatherWidth = 0.0f;
-        for (int i = timeIndex + 1; i < count; ++i) weatherWidth += pieces[i].widthDip + pieces[i].afterDip;
+        // The metadata column on the left: the date on its top line, the reading on its bottom line,
+        // both small. Even their vertical centres are 12 DIP apart, so the column reads as one block
+        // rather than as two loose lines, and the time keeps the middle to itself.
+        const float dateY = centreY - 11.0f;
+        const float weatherY = centreY + 1.0f;
+        const float lineHeight = 10.0f;
 
         float x = box.rect.left + 4.0f;
         for (int i = 0; i < timeIndex; ++i) {
-            drawPiece(pieces[i], x, sideY, sideHeight);
+            drawPiece(pieces[i], x, dateY, lineHeight);
             x += pieces[i].widthDip + pieces[i].afterDip;
         }
-        x = box.rect.right - 4.0f - weatherWidth;
+        x = box.rect.left + 4.0f;
         for (int i = timeIndex + 1; i < count; ++i) {
-            drawPiece(pieces[i], x, sideY, sideHeight);
+            drawPiece(pieces[i], x, weatherY, lineHeight);
             x += pieces[i].widthDip + pieces[i].afterDip;
         }
     }
