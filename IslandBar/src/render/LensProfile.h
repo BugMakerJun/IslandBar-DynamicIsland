@@ -16,10 +16,12 @@
 //
 //  WHY THESE NUMBERS. The reference leaves the middle 57.5% of its 200 px height alone and moves the
 //  edge by 3-8% of its size. A 36 DIP pill cannot carry a 43 DIP band: a 12-18 DIP band keeps 12 DIP of
-//  flat centre and still bends 5 DIP at the top and 11 DIP at the ends -- enough to see the glass on a
-//  detailed desktop. The shift is kept below ~2/3 of the band, because the sample is `pixel + shift`: a
-//  shift that falls faster than the band would make the mapping fold, and the image would mirror at the
-//  rim. The self-test asserts the flat centre, the monotonic mapping and the DPI scaling.
+//  steady centre and bends 5 DIP at the top and 11 DIP at the ends -- enough to see the glass on a
+//  detailed desktop. The body magnifier adds 4% of the distance to the centre on top of that (about 0.7
+//  DIP at the top and 4.4 DIP at the ends), which is the reference blob's lens interior. The edge shift
+//  is kept below ~2/3 of the band, because the sample is `pixel + shift`: a shift that falls faster than
+//  the band would make the mapping fold, and the image would mirror at the rim. The self-test asserts
+//  the steady centre, the monotonic mapping and the DPI scaling.
 // =====================================================================
 #pragma once
 
@@ -43,9 +45,14 @@ inline constexpr float kLensBandEndDip = 18.0f;
 inline constexpr float kLensShiftTopDip = 5.0f;
 inline constexpr float kLensShiftEndDip = 11.0f;
 
+// THE BODY MAGNIFIER. The reference blob's interior is a lens, not a flat pane: it enlarges what is
+// behind it a little all over. 1.04 is 4% -- enough to see on a texture, small enough that the date and
+// the time still sit on a steady background. It is applied on top of the edge band.
+inline constexpr float kLensMagnify = 1.04f;
+
 // `px`/`py` are the pixel's centre inside the pill, in physical pixels (0..pillW, 0..pillH). The result
-// is how far the sample moves from that pixel, in physical pixels, along the INWARD normal: the top
-// edge samples down, the left end samples right. It is zero in the flat centre and never outward.
+// is how far the sample moves from that pixel: toward the centre for the body magnifier and along the
+// INWARD normal for the edge band. It is zero at the exact centre and never outward.
 inline LensOffset LensOffsetFor(float px, float py, float pillW, float pillH, float scale) {
     const float radius = pillH * 0.5f;
     const float cxL = radius;
@@ -89,7 +96,11 @@ inline LensOffset LensOffsetFor(float px, float py, float pillW, float pillH, fl
     // centre, and no fold at the edge (the peak slope is 1.5 * maxShift / band < 1).
     const float weight = w * w * (3.0f - 2.0f * w);
     const float shift = maxShift * weight;
-    return {nx * shift, ny * shift, inside};
+    // The body magnifier: 4% of the distance to the centre, on top of the edge band. The exact centre does
+    // not move, so the text band is not warped; the texture around it is enlarged a little.
+    const float cx = pillW * 0.5f;
+    return {nx * shift + (cx - px) * (kLensMagnify - 1.0f),
+            ny * shift + (cy - py) * (kLensMagnify - 1.0f), inside};
 }
 
 }  // namespace island

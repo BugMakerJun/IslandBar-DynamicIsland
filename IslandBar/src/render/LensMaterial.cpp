@@ -36,8 +36,8 @@ constexpr int kMarginPx = 2;
 constexpr float kLensContrast = 1.20f;
 constexpr float kLensBrightness = 1.05f;
 constexpr float kLensSaturation = 1.10f;
-constexpr float kLensInnerShade = 0.14f;
-constexpr float kLensInnerShadeBand = 0.30f;
+constexpr float kLensInnerShade = 0.16f;
+constexpr float kLensInnerShadeBand = 0.32f;
 
 // The lens's own edge fades into the wallpaper over this many DIP. A hard bitmap edge is the seam the
 // user photographed as "a line" along the top, even after the drawn strokes were gone.

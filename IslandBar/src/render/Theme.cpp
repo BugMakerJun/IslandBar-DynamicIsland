@@ -61,7 +61,8 @@ const Theme kThemes[] = {
     //
     // THE NUMBERS come from the reference the user chose (shuding/liquid-glass): a flat centre, a narrow
     // band at the edge, and the round ends bending more than the straight top and bottom. On a 36 DIP
-    // pill that is a 12-18 DIP band and 5-11 DIP of displacement (render/LensProfile.h). The ink is near
+    // pill that is a 12-18 DIP edge band, 5-11 DIP of edge displacement and a 4% body magnifier
+    // (render/LensProfile.h). The ink is near
     // black to match the reference; PillInk switches to the light ink when the refracted backdrop under
     // the pill is dark (a theme with a substantial body keeps the theme ink).
     //

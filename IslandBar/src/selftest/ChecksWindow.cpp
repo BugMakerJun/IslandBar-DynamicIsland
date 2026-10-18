@@ -2381,9 +2381,9 @@ void TestWorkerThread() {
 }
 
 // THE LENS PROFILE (2026-10-18). The displacement is a pure function (render/LensProfile.h), so it is
-// asserted here rather than by looking at a screenshot: the flat centre, the inward direction, the
-// absence of the 4.2 px seam the old profile had at the middle line, and the no-fold rule that keeps the
-// refracted image from mirroring at the rim.
+// asserted here rather than by looking at a screenshot: the centre does not move (the body magnifier is
+// zero there), the edge samples inward, and the no-fold rule keeps the refracted image from mirroring at
+// the rim. The body magnifier enlarges the texture by 4% all over, on top of the edge band.
 void TestLensProfile() {
     Section(L"lens profile (render)");
 
@@ -2391,31 +2391,35 @@ void TestLensProfile() {
     const float h = 36.0f;
     const auto at = [w, h](float x, float y) { return LensOffsetFor(x, y, w, h, 1.0f); };
 
-    // The date and the time sit here: the backdrop must not move at all.
+    // The date and the time sit here: the exact centre must not move.
     const LensOffset centre = at(w * 0.5f, h * 0.5f);
     Check(Nearly(centre.dx, 0.0f) && Nearly(centre.dy, 0.0f),
-          L"the centre of the lens does not move (the text band is flat)");
+          L"the centre of the lens does not move (the text band is steady)");
 
+    // Edge band 5 DIP + the 4% body magnifier over 17.5 DIP = about 5.7 DIP.
     const LensOffset top = at(w * 0.5f, 0.5f);
     const LensOffset bottom = at(w * 0.5f, h - 0.5f);
-    Check(top.dy > 4.5f && top.dy < 5.5f && Nearly(top.dx, 0.0f),
-          L"the top edge samples 5 DIP inward (down), not outward");
-    Check(bottom.dy < -4.5f && bottom.dy > -5.5f && Nearly(bottom.dx, 0.0f),
-          L"the bottom edge samples 5 DIP inward (up)");
+    Check(top.dy > 5.0f && top.dy < 6.5f && Nearly(top.dx, 0.0f),
+          L"the top edge samples about 6 DIP inward (down), not outward");
+    Check(bottom.dy < -5.0f && bottom.dy > -6.5f && Nearly(bottom.dx, 0.0f),
+          L"the bottom edge samples about 6 DIP inward (up)");
 
+    // Edge band 11 DIP + the body magnifier over 109.5 DIP = about 15.4 DIP.
     const LensOffset left = at(0.5f, h * 0.5f);
     const LensOffset right = at(w - 0.5f, h * 0.5f);
-    Check(left.dx > 10.0f && left.dx < 12.0f && Nearly(left.dy, 0.0f),
-          L"the left end samples 11 DIP inward (right)");
-    Check(right.dx < -10.0f && right.dx > -12.0f && Nearly(right.dy, 0.0f),
-          L"the right end samples 11 DIP inward (left)");
+    Check(left.dx > 14.0f && left.dx < 17.0f && Nearly(left.dy, 0.0f),
+          L"the left end samples about 15 DIP inward (right)");
+    Check(right.dx < -14.0f && right.dx > -17.0f && Nearly(right.dy, 0.0f),
+          L"the right end samples about 15 DIP inward (left)");
     Check(Nearly(left.dx, -right.dx, 0.02f) && Nearly(top.dy, -bottom.dy, 0.02f),
           L"the profile is symmetric left/right and top/bottom");
 
     // THE OLD SEAM: the normal flipped at the middle line while the shift was still 2.1 px, which moved
-    // the sampled row 4.2 px between py=17 and py=18. The shift is zero there now.
-    Check(Nearly(at(w * 0.5f, h * 0.5f - 1.0f).dy, 0.0f) &&
-              Nearly(at(w * 0.5f, h * 0.5f + 1.0f).dy, 0.0f),
+    // the sampled row 4.2 px between py=17 and py=18. The edge shift is zero there now; only the body
+    // magnifier's 0.04 px remains, and it is continuous.
+    const float above = at(w * 0.5f, h * 0.5f - 1.0f).dy;
+    const float below = at(w * 0.5f, h * 0.5f + 1.0f).dy;
+    Check(std::fabs(above - below) < 0.2f,
           L"no jump where the top and bottom normals meet at the middle line");
 
     // THE NO-FOLD RULE: sampleY = py + dy must increase from the edge to the centre. If it did not, the
