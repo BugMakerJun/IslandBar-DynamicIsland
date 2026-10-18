@@ -103,10 +103,11 @@ void DrawSpecularSweep(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& sh
 void DrawLensBottomCaustic(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
                            float opacity);
 
-// THE LENS TOP EDGE (2026-10-18): the reference blob's top rim is a lit BEVEL, not a white film. A bright
-// 3 DIP edge sits over a soft dark underside, top only; it dies out at the sides and never closes into the
-// ring the user rejected. The 4 DIP white wash it replaces read as fog over the island.
-void DrawLensTopEdge(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
+// THE LENS RIM BAND (2026-10-18): a 2.5 DIP band inside the shape -- bright at the top, almost nothing at
+// the sides, a soft dark at the bottom. It is a stroke of the rounded rect, so it follows the caps; the
+// horizontal top band ended at the flat top and made the left/right arcs look cut. Inset by half its width
+// so nothing paints outside the pill.
+void DrawLensRimBand(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
                      float opacity);
 
 // The double edge: a faint dark line on the outside of the shape and a bright one just inside it, which

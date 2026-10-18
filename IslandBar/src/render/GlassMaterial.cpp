@@ -173,7 +173,7 @@ struct MaterialCache {
 
     ID2D1SolidColorBrush* solid = nullptr;
     ID2D1LinearGradientBrush* topWash = nullptr;
-    ID2D1LinearGradientBrush* lensTop = nullptr;
+    ID2D1LinearGradientBrush* lensRim = nullptr;
     ID2D1LinearGradientBrush* bottomShade = nullptr;
     ID2D1LinearGradientBrush* rimLine = nullptr;
     ID2D1LinearGradientBrush* specularRim = nullptr;
@@ -207,7 +207,7 @@ bool SameColour(const D2D1_COLOR_F& a, const D2D1_COLOR_F& b) {
 void ReleaseCache() {
     if (g_cache.solid) g_cache.solid->Release();
     if (g_cache.topWash) g_cache.topWash->Release();
-    if (g_cache.lensTop) g_cache.lensTop->Release();
+    if (g_cache.lensRim) g_cache.lensRim->Release();
     if (g_cache.bottomShade) g_cache.bottomShade->Release();
     if (g_cache.rimLine) g_cache.rimLine->Release();
     if (g_cache.specularRim) g_cache.specularRim->Release();
@@ -253,15 +253,16 @@ bool EnsureMaterial(ID2D1DeviceContext2* context, const Theme& theme) {
     };
     g_cache.topWash = MakeLinear(context, topStops, 2);
 
-    // THE LENS TOP EDGE: a bright core that falls off within 3 DIP, so it reads as the lit rim of the glass
-    // rather than as the uniform white film the 4 DIP wash made. It is not tied to gloss: the glass theme's
-    // gloss is deliberately low.
-    const D2D1_GRADIENT_STOP lensTopStops[3] = {
-        {0.0f, ThemeHighlight(0.42f)},
-        {0.30f, ThemeHighlight(0.10f)},
-        {1.0f, ThemeHighlight(0.0f)},
+    // THE LENS RIM BAND: a 2.5 DIP band INSIDE the shape, whose gradient is bright at the top (0.30),
+    // almost nothing at the sides (0.02) and a soft dark at the bottom (0.08). It follows the round ends,
+    // which the horizontal top wash could not -- that is what looked unnatural on the caps. It is a band,
+    // not a line: the stroke is inset by half its width so nothing paints outside the pill.
+    const D2D1_GRADIENT_STOP lensRimStops[3] = {
+        {0.0f, ThemeHighlight(0.30f)},
+        {0.50f, ThemeHighlight(0.02f)},
+        {1.0f, D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.08f)},
     };
-    g_cache.lensTop = MakeLinear(context, lensTopStops, 3);
+    g_cache.lensRim = MakeLinear(context, lensRimStops, 3);
 
     const D2D1_GRADIENT_STOP bottomStops[2] = {
         {0.0f, D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f)},
@@ -494,7 +495,7 @@ void DrawTopSheen(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, 
 
     // Three blobs, not one band. Their places and sizes are fixed fractions of the shape -- deterministic,
     // so a screenshot is the same every run -- and the pointer only SHIFTS them a little (the brief's
-    // "悬停时只增强少量高光并进行轻微偏移").
+    // "鎮仠鏃跺彧澧炲己灏戦噺楂樺厜骞惰繘琛岃交寰亸绉?).
     const float band = min(height * 0.45f, 20.0f);
     const float t = pointerFraction < 0.0f ? 0.0f : (pointerFraction > 1.0f ? 1.0f : pointerFraction);
     const float shift = (t - 0.5f) * width * 0.035f;
@@ -508,7 +509,7 @@ void DrawTopSheen(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, 
     // Three soft cores, offset by the pointer. The wide wash in DrawSurfaceLighting is the reflection;
     // these are the brighter sources inside it. Narrow on purpose: they must die out well before the
     // caps, or the cap's vertical edge cuts them. The lens theme does not use them -- it has the thick
-    // top band (DrawLensTopEdge) instead, because a blob at a fixed x read as a patch of light.
+    // rim band (DrawLensRimBand) instead, because a blob at a fixed x read as a patch of light.
     const Blob blobs[3] = {
         {0.34f, 0.20f, 0.20f, 0.55f, 0.95f},
         {0.54f, 0.15f, 0.24f, 0.40f, 0.70f},
@@ -614,22 +615,24 @@ void DrawLensBottomCaustic(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT
     context->FillRoundedRectangle(&shape, g_cache.sheen);
 }
 
-void DrawLensTopEdge(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
+void DrawLensRimBand(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
                      float opacity) {
     if (!context || opacity <= 0.01f) return;
     const float width = shape.rect.right - shape.rect.left;
     const float height = shape.rect.bottom - shape.rect.top;
     if (width < 24.0f || height < 6.0f) return;
-    if (!EnsureMaterial(context, theme) || !g_cache.lensTop || !g_cache.bottomShade) return;
-    // A BEVEL, not a film. The 4 DIP white wash read as fog over the island; this is a soft dark underside
-    // (the thickness) under a bright 3 DIP edge (the reflection).
-    const float shadeBand = std::min(height * 0.15f, 5.5f);
-    PlaceLinear(g_cache.bottomShade, shape.rect.left, shape.rect.top, shape.rect.top + shadeBand,
-                opacity * 0.55f);
-    context->FillRoundedRectangle(&shape, g_cache.bottomShade);
-    const float edgeBand = std::min(height * 0.09f, 3.0f);
-    PlaceLinear(g_cache.lensTop, shape.rect.left, shape.rect.top, shape.rect.top + edgeBand, opacity);
-    context->FillRoundedRectangle(&shape, g_cache.lensTop);
+    if (!EnsureMaterial(context, theme) || !g_cache.lensRim) return;
+    // A 2.5 DIP band INSIDE the shape: inset the stroke by half its width, so its outer edge is exactly
+    // the pill and nothing paints outside. Following the rounded rect is what makes the caps natural; the
+    // horizontal top wash could not. Bright top, almost nothing at the sides, soft dark at the bottom.
+    constexpr float kBand = 2.5f;
+    const float inset = kBand * 0.5f;
+    const D2D1_ROUNDED_RECT inner = {
+        D2D1::RectF(shape.rect.left + inset, shape.rect.top + inset, shape.rect.right - inset,
+                    shape.rect.bottom - inset),
+        std::max(0.0f, shape.radiusX - inset), std::max(0.0f, shape.radiusY - inset)};
+    PlaceLinear(g_cache.lensRim, shape.rect.left, shape.rect.top, shape.rect.bottom, opacity);
+    context->DrawRoundedRectangle(&inner, g_cache.lensRim, kBand);
 }
 
 void DrawGlassRim(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
@@ -732,3 +735,4 @@ void DrawCurvature(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape,
 }
 
 }  // namespace island
+
