@@ -1742,6 +1742,23 @@ void TestMusicCardLayout() {
             // open again.
             Check(TaskIconToKeepOpen(wideIsland, shown, 1, wideIsland.rect.left, centreY) == -1,
                   L"a pointer back on the island keeps no icon open");
+
+            // ... AND THE HOVER ROW MUST BE THE ONE THAT IS DRAWN. With a notice strip up the bar's own
+            // capsule is 420 DIP, not 220, and the icon row is anchored to ITS right edge -- so a point
+            // that is the second icon on the pill's row is the first (or a gap) on the strip's row.
+            // The window used to hover-test the pill's row while the renderer drew the strip's, which
+            // is the "有时候鼠标放上去没有展开".
+            {
+                const RoundedBox stripIsland =
+                    IslandBoxFor(monitorWide, kNoticeStripWidthDip, kCollapsedHeightDip);
+                const int onPillRow = TaskIconToKeepOpen(wideIsland, shown, -1, onSecond, centreY);
+                const int onDrawnRow = TaskIconToKeepOpen(stripIsland, shown, -1, onSecond, centreY);
+                std::swprintf(detail, 160,
+                              L"one point: icon %d on the pill's row, %d on the strip's", onPillRow,
+                              onDrawnRow);
+                Check(onPillRow == 1 && onDrawnRow != 1,
+                      L"the hover row is the resting pill the row is drawn from", detail);
+            }
         }
 
         // The title only gets drawn once its box is wide enough to read.

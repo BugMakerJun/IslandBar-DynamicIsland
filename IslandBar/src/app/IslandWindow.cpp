@@ -1260,7 +1260,16 @@ void IslandWindow::UpdatePointerState() {
     // depend on the answer it is about to produce, which is what makes it stable.
     {
         const float widthDip = PixelsToDip(rect_.right - rect_.left, monitor_.dpi);
-        const RoundedBox island = IslandBoxFor(widthDip, kCollapsedWidthDip, kCollapsedHeightDip);
+        // THE SAME RESTING PILL THE HIT TEST AND THE RENDERER USE. While a call or a message is being
+        // announced the bar's own capsule is the NOTICE STRIP (420 DIP), and the icon row is laid out
+        // from ITS right edge. This hover test was still measuring from the 220 DIP pill, so with a
+        // notice up the drawn row sat under a different set of slots -- the pointer on the first drawn
+        // icon was answered as a gap or another icon, and the button did not open: "有时候鼠标放上去
+        // 没有展开". `noticeStripUp_` is the frame's own answer (SetNoticeStripUp), the same one the
+        // hit test above and the renderer's frame.restingPill read.
+        const RoundedBox island =
+            IslandBoxFor(widthDip, noticeStripUp_ ? island::kNoticeStripWidthDip : kCollapsedWidthDip,
+                         kCollapsedHeightDip);
 
         int hovered = -1;
         float localXReported_ = 0.0f;
