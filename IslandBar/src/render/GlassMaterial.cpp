@@ -605,19 +605,6 @@ void DrawLensBottomCaustic(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT
     context->FillRoundedRectangle(&shape, g_cache.sheen);
 }
 
-void DrawLensTopEdge(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
-                     float opacity) {
-    if (!context || opacity <= 0.01f) return;
-    const float width = shape.rect.right - shape.rect.left;
-    const float height = shape.rect.bottom - shape.rect.top;
-    if (width < 24.0f || height < 6.0f) return;
-    if (!EnsureMaterial(context, theme) || !g_cache.topWash) return;
-    // Four DIP, top only: a thick soft band along the lit edge, not a 1 DIP line and not a perimeter.
-    const float band = std::min(height * 0.12f, 4.0f);
-    PlaceLinear(g_cache.topWash, shape.rect.left, shape.rect.top, shape.rect.top + band, opacity * 0.80f);
-    context->FillRoundedRectangle(&shape, g_cache.topWash);
-}
-
 void DrawGlassRim(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
                   float opacity) {
     if (!context || opacity <= 0.01f || theme.rim <= 0.001f) return;

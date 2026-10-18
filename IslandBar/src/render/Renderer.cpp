@@ -716,8 +716,6 @@ void Renderer::RenderFrame(const FrameState& frame) {
             island::DrawSurfaceLighting(d2dContext_, rounded, theme, 1.0f);
             island::DrawTopSheen(d2dContext_, rounded, theme, frame.pillPointerFraction, 1.0f);
         } else {
-            // The reference blob's thick, soft top rim: 4 DIP, top only, dying out at the sides.
-            island::DrawLensTopEdge(d2dContext_, rounded, theme, 1.0f);
             // ... the single TALL core DrawTopSheen keeps for the lens (a thin ellipse read as a line) ...
             island::DrawTopSheen(d2dContext_, rounded, theme, frame.pillPointerFraction, 1.0f);
             // ... and the light the glass gathers just inside its bottom edge, which is the thickness.
