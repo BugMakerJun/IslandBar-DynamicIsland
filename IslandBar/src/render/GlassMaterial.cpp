@@ -569,11 +569,26 @@ void DrawSpecularSweep(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& sh
     const float width = shape.rect.right - shape.rect.left;
     const float height = shape.rect.bottom - shape.rect.top;
     if (width < 24.0f || height < 6.0f) return;
-    if (!EnsureMaterial(context, theme) || !g_cache.sweepBand) return;
+    if (!EnsureMaterial(context, theme)) return;
     const float centreX = SpecularCentreX(shape.rect.left, shape.rect.right, pointerFraction);
-    const float reach = std::min(width * 0.42f, 110.0f);
-    PlaceLinearHorizontal(g_cache.sweepBand, centreX - reach, centreX + reach, shape.rect.top, opacity);
-    context->FillRoundedRectangle(&shape, g_cache.sweepBand);
+
+    // THE POOL: the surface-tension light, centred on the pointer. It uses the same soft radial brush as
+    // the top light and the caustic -- the earlier "radial pool" that showed a hard rectangular edge was a
+    // different brush, not this one.
+    if (g_cache.sheen) {
+        PlaceRadial(g_cache.sheen, centreX, shape.rect.top + height * 0.45f,
+                    std::min(width * 0.30f, 45.0f), std::min(height * 0.72f, 26.0f), opacity * 0.95f);
+        context->FillRoundedRectangle(&shape, g_cache.sheen);
+    }
+
+    // ... and a faint horizontal band under it, so the pool has something to sit in. At full strength the
+    // band was a vertical bar following the pointer, which is not what light does on a surface.
+    if (g_cache.sweepBand) {
+        const float reach = std::min(width * 0.42f, 110.0f);
+        PlaceLinearHorizontal(g_cache.sweepBand, centreX - reach, centreX + reach, shape.rect.top,
+                              opacity * 0.35f);
+        context->FillRoundedRectangle(&shape, g_cache.sweepBand);
+    }
 }
 
 void DrawLensBottomCaustic(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
