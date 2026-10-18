@@ -493,20 +493,17 @@ void DrawTopSheen(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, 
         float radiusY;
         float alpha;
     };
-    // ONE soft core, offset by the pointer. The wide wash in DrawSurfaceLighting is the reflection;
-    // this is the brighter source inside it. It is narrow on purpose: it must die out well before the
-    // caps, or the cap's vertical edge cuts it.
+    // Three soft cores, offset by the pointer. The wide wash in DrawSurfaceLighting is the reflection;
+    // these are the brighter sources inside it. Narrow on purpose: they must die out well before the
+    // caps, or the cap's vertical edge cuts them. The lens theme does not use them -- it has the thick
+    // top band (DrawLensTopEdge) instead, because a blob at a fixed x read as a patch of light.
     const Blob blobs[3] = {
         {0.34f, 0.20f, 0.20f, 0.55f, 0.95f},
         {0.54f, 0.15f, 0.24f, 0.40f, 0.70f},
         {0.74f, 0.26f, 0.16f, 0.48f, 0.50f},
     };
-    // The lens theme gets ONE narrow core inside the wide wash: three overlapping blobs read as lumps
-    // along the top edge, and any of them reaching the cap is cut by the cap's vertical edge.
-    const Blob lensBlob = {0.33f, 0.16f, 0.15f, 0.42f, 0.85f};
-    const int blobCount = theme.lens ? 1 : 3;
-    for (int i = 0; i < blobCount; ++i) {
-        const Blob& blob = theme.lens ? lensBlob : blobs[i];
+    for (int i = 0; i < 3; ++i) {
+        const Blob& blob = blobs[i];
         PlaceRadial(g_cache.sheen, shape.rect.left + width * blob.x + shift,
                     shape.rect.top + band * blob.y, width * blob.radiusX, height * blob.radiusY,
                     opacity * blob.alpha);
@@ -603,6 +600,19 @@ void DrawLensBottomCaustic(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT
     PlaceRadial(g_cache.sheen, (shape.rect.left + shape.rect.right) * 0.5f, shape.rect.bottom - 2.0f,
                 width * 0.35f, 5.5f, opacity * 0.55f);
     context->FillRoundedRectangle(&shape, g_cache.sheen);
+}
+
+void DrawLensTopEdge(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
+                     float opacity) {
+    if (!context || opacity <= 0.01f) return;
+    const float width = shape.rect.right - shape.rect.left;
+    const float height = shape.rect.bottom - shape.rect.top;
+    if (width < 24.0f || height < 6.0f) return;
+    if (!EnsureMaterial(context, theme) || !g_cache.topWash) return;
+    // Four DIP, top only: a thick soft band along the lit edge, not a 1 DIP line and not a perimeter.
+    const float band = std::min(height * 0.12f, 4.0f);
+    PlaceLinear(g_cache.topWash, shape.rect.left, shape.rect.top, shape.rect.top + band, opacity * 0.80f);
+    context->FillRoundedRectangle(&shape, g_cache.topWash);
 }
 
 void DrawGlassRim(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,

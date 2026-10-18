@@ -711,13 +711,14 @@ void Renderer::RenderFrame(const FrameState& frame) {
         island::DrawSmokedBase(d2dContext_, rounded, theme, pillTopFill, pillBottomFill, hoverLift);
 
         // NO WASHES on the clear lens: the wide top ellipse, the blobs and the grain all left a veil over
-        // the background. What is left is the refracted image, one narrow top specular and its words.
+        // the background. What is left is the refracted image, the thick top rim and its words.
         if (!theme.lens) {
             island::DrawSurfaceLighting(d2dContext_, rounded, theme, 1.0f);
             island::DrawTopSheen(d2dContext_, rounded, theme, frame.pillPointerFraction, 1.0f);
         } else {
-            // ... the single TALL core DrawTopSheen keeps for the lens (a thin ellipse read as a line) ...
-            island::DrawTopSheen(d2dContext_, rounded, theme, frame.pillPointerFraction, 1.0f);
+            // The reference blob's thick, soft top rim: 4 DIP, top only, dying out at the sides. The always
+            // on "top core" blob is gone -- it sat at x=33% and the user saw it as a patch of light.
+            island::DrawLensTopEdge(d2dContext_, rounded, theme, 1.0f);
             // ... and the light the glass gathers just inside its bottom edge, which is the thickness.
             island::DrawLensBottomCaustic(d2dContext_, rounded, theme, 1.0f);
         }
