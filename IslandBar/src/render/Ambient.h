@@ -1,11 +1,11 @@
-// =====================================================================
+﻿// =====================================================================
 //  Ambient.h
 //  The island's sky: rain that falls across the glass, a sunset that
 //  glows from the bottom, stars at night, a slow sun in the afternoon.
 //
 //  WHY. The is land has a real weather code and the site's real sunrise and
 //  sunset, and a glass surface that shows nothing of either. The request was
-//  "能不能根据天气和时间去变化，例如下雨 灵动岛上也下小雨，晴天根据时间出晚霞之类".
+//  "鑳戒笉鑳芥牴鎹ぉ姘斿拰鏃堕棿鍘诲彉鍖栵紝渚嬪涓嬮洦 鐏靛姩宀涗笂涔熶笅灏忛洦锛屾櫞澶╂牴鎹椂闂村嚭鏅氶湠涔嬬被".
 //
 //  WHAT DECIDES THE LOOK, in one pure function so it can be asserted:
 //  the WMO code first (precipitation wins over the sky -- rain at night is
@@ -46,7 +46,8 @@ AmbientKind AmbientKindFor(int weatherCode, int nowMinutes, int sunriseMinutes, 
 
 // The ambient layer. `phaseSeconds` is a free-running clock for the particles; `opacity` is the
 // content strength (0 hides the layer). Drawn clipped to `shape`.
-void DrawAmbient(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, AmbientKind kind,
+void DrawAmbient(ID2D1DeviceContext* context, const D2D1_ROUNDED_RECT& shape, AmbientKind kind,
                  float phaseSeconds, float opacity, const Theme& theme);
 
 }  // namespace island
+

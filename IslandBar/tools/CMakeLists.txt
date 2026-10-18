@@ -69,3 +69,11 @@ option(ISLANDBAR_BUILD_LENSPROBE "Build the host-backdrop lens probe" ON)
 if(ISLANDBAR_BUILD_LENSPROBE)
     add_subdirectory(lensprobe)
 endif()
+
+# Renders every island::AmbientKind to a PNG over a glass pill, so the weather effects can be judged
+# without waiting for the weather.
+option(ISLANDBAR_BUILD_AMBIENTPREVIEW "Build the ambient preview probe" ON)
+if(ISLANDBAR_BUILD_AMBIENTPREVIEW)
+    add_subdirectory(ambientpreview)
+endif()
+

@@ -1,4 +1,4 @@
-// =====================================================================
+﻿// =====================================================================
 //  Ambient.cpp
 //  The island's sky. See Ambient.h for why it exists and what decides it.
 // =====================================================================
@@ -21,7 +21,7 @@ D2D1_COLOR_F WithAlpha(const D2D1_COLOR_F& colour, float alpha) {
 
 // A soft radial pool, clipped to the pill. Used for the sun, the afterglow's horizon, the moon and the
 // cloud shadows: one brush, one fill, no particles.
-void DrawGlow(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, float cx, float cy,
+void DrawGlow(ID2D1DeviceContext* context, const D2D1_ROUNDED_RECT& shape, float cx, float cy,
               float radiusFraction, const D2D1_COLOR_F& colour) {
     if (colour.a <= 0.001f) return;
     const float width = shape.rect.right - shape.rect.left;
@@ -77,7 +77,7 @@ AmbientKind AmbientKindFor(int weatherCode, int nowMinutes, int sunriseMinutes, 
     return AmbientKind::ClearDay;
 }
 
-void DrawAmbient(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, AmbientKind kind,
+void DrawAmbient(ID2D1DeviceContext* context, const D2D1_ROUNDED_RECT& shape, AmbientKind kind,
                  float phaseSeconds, float opacity, const Theme& theme) {
     if (!context || opacity <= 0.01f) return;
     const float width = shape.rect.right - shape.rect.left;
@@ -263,3 +263,4 @@ void DrawAmbient(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, A
 }
 
 }  // namespace island
+
