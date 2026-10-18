@@ -67,11 +67,11 @@ const Theme kThemes[] = {
     // the pill is dark (a theme with a substantial body keeps the theme ink).
     //
     // `tint` is 0: the reference has no coloured fringe, and the old cool/violet end tints were a
-    // painted-material cue. `sweep` is 0: the user tried the pointer-following light and did not like it.
-    // The field stays for a theme that wants one; the glass itself is static.
+    // painted-material cue. `sweep` is the pointer's light: a small glint on the top rim plus a faint
+    // pool, not the old full-height band (that read as a torch/bar following the pointer).
     {L"\u73BB\u7483", {0.88f, 0.94f, 1.00f, 0.08f}, {0.78f, 0.89f, 1.00f, 0.05f}, 0.20f,
      {0.90f, 0.94f, 1.00f, 0.55f}, 0.30f, {0.15f, 0.45f, 0.85f, 0.95f}, {0.03f, 0.04f, 0.06f, 1.0f},
-     0.0f, 0.03f, 0.00f, 0.00f, 0.00f, {1.0f, 1.0f, 1.0f, 1.0f}, true},
+     0.0f, 0.03f, 0.55f, 0.00f, 0.00f, {1.0f, 1.0f, 1.0f, 1.0f}, true},
 };
 constexpr int kThemeCount = static_cast<int>(sizeof(kThemes) / sizeof(kThemes[0]));
 

@@ -178,8 +178,6 @@ struct MaterialCache {
     ID2D1LinearGradientBrush* rimLine = nullptr;
     ID2D1LinearGradientBrush* specularRim = nullptr;
     ID2D1LinearGradientBrush* causticRim = nullptr;
-    ID2D1LinearGradientBrush* sweepBand = nullptr;
-    ID2D1RadialGradientBrush* sweep = nullptr;
     ID2D1RadialGradientBrush* sheen = nullptr;
     ID2D1RadialGradientBrush* tintLeft = nullptr;
     ID2D1RadialGradientBrush* tintRight = nullptr;
@@ -212,8 +210,6 @@ void ReleaseCache() {
     if (g_cache.rimLine) g_cache.rimLine->Release();
     if (g_cache.specularRim) g_cache.specularRim->Release();
     if (g_cache.causticRim) g_cache.causticRim->Release();
-    if (g_cache.sweepBand) g_cache.sweepBand->Release();
-    if (g_cache.sweep) g_cache.sweep->Release();
     if (g_cache.sheen) g_cache.sheen->Release();
     if (g_cache.tintLeft) g_cache.tintLeft->Release();
     if (g_cache.tintRight) g_cache.tintRight->Release();
@@ -295,22 +291,6 @@ bool EnsureMaterial(ID2D1DeviceContext2* context, const Theme& theme) {
         {1.0f, ThemeHighlight(theme.rim * 1.10f)},
     };
     g_cache.causticRim = MakeLinear(context, causticRimStops, 3);
-
-    const D2D1_GRADIENT_STOP sweepStops[3] = {
-        {0.0f, ThemeHighlight(theme.sweep * 0.95f)},
-        {0.30f, ThemeHighlight(theme.sweep * 0.30f)},
-        {1.0f, ThemeHighlight(0.0f)},
-    };
-    g_cache.sweep = MakeRadial(context, sweepStops, 3);
-
-    // The pointer's light as a HORIZONTAL band: brightest at the pointer's x and zero at both ends.
-    // The radial pool it replaces rendered as a rectangle with hard vertical edges on this surface.
-    const D2D1_GRADIENT_STOP sweepBandStops[3] = {
-        {0.0f, ThemeHighlight(0.0f)},
-        {0.5f, ThemeHighlight(theme.sweep * 0.85f)},
-        {1.0f, ThemeHighlight(0.0f)},
-    };
-    g_cache.sweepBand = MakeLinearHorizontal(context, sweepBandStops, 3);
 
     // THE TOP SHEEN: one soft brush, drawn as a few blobs at different places. Irregular by construction;
     // a horizontal band across the whole top is the "light bar" the brief forbids.
@@ -579,26 +559,20 @@ void DrawSpecularSweep(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& sh
     const float width = shape.rect.right - shape.rect.left;
     const float height = shape.rect.bottom - shape.rect.top;
     if (width < 24.0f || height < 6.0f) return;
-    if (!EnsureMaterial(context, theme)) return;
+    if (!EnsureMaterial(context, theme) || !g_cache.sheen) return;
     const float centreX = SpecularCentreX(shape.rect.left, shape.rect.right, pointerFraction);
 
-    // THE POOL: the surface-tension light, centred on the pointer. It uses the same soft radial brush as
-    // the top light and the caustic -- the earlier "radial pool" that showed a hard rectangular edge was a
-    // different brush, not this one.
-    if (g_cache.sheen) {
-        PlaceRadial(g_cache.sheen, centreX, shape.rect.top + height * 0.45f,
-                    std::min(width * 0.30f, 45.0f), std::min(height * 0.72f, 26.0f), opacity * 0.95f);
-        context->FillRoundedRectangle(&shape, g_cache.sheen);
-    }
+    // A faint pool in the body: the surface tension. The old 45x26 pool at 0.95 read as a torch, so this
+    // is half the height and a third of the strength.
+    PlaceRadial(g_cache.sheen, centreX, shape.rect.top + height * 0.55f,
+                std::min(width * 0.22f, 38.0f), std::min(height * 0.40f, 14.0f), opacity * 0.40f);
+    context->FillRoundedRectangle(&shape, g_cache.sheen);
 
-    // ... and a faint horizontal band under it, so the pool has something to sit in. At full strength the
-    // band was a vertical bar following the pointer, which is not what light does on a surface.
-    if (g_cache.sweepBand) {
-        const float reach = std::min(width * 0.42f, 110.0f);
-        PlaceLinearHorizontal(g_cache.sweepBand, centreX - reach, centreX + reach, shape.rect.top,
-                              opacity * 0.35f);
-        context->FillRoundedRectangle(&shape, g_cache.sweepBand);
-    }
+    // THE VISIBLE PART: a small glint on the top rim at the pointer's x -- the glass edge catching the
+    // light as the pointer moves. No vertical bar, no body-wide blob.
+    PlaceRadial(g_cache.sheen, centreX, shape.rect.top + 1.0f, std::min(width * 0.12f, 26.0f),
+                std::min(height * 0.12f, 4.5f), opacity * 0.90f);
+    context->FillRoundedRectangle(&shape, g_cache.sheen);
 }
 
 void DrawLensBottomCaustic(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
