@@ -947,19 +947,15 @@ void Renderer::RenderFrame(const FrameState& frame) {
                     const float phase = static_cast<float>(GetTickCount64() % 3600000ull) / 1000.0f;
                     const island::AmbientKind ambient = island::AmbientKindFor(
                         frame.statusCode, nowMinutes, frame.sunriseMinutes, frame.sunsetMinutes);
-                    // THE WHOLE ISLAND SURFACE: the system button, the Start button, the status pill and
-                    // the tray button sit on ONE glass surface (see the deck comments below), and that
-                    // surface is RowAnchorBox, not the 220 DIP status pill. Drawing the ambient into the
-                    // pill left the system/Start/tray ends outside it -- "左侧系统按钮 开始按钮和右侧的
-                    // 托盘按钮也属于灵动岛".
-                    const RoundedBox ambientSurface =
-                        (frame.restingPill.rect.right > frame.restingPill.rect.left)
-                            ? island::RowAnchorBox(box, frame.restingPill)
-                            : box;
+                    // THE WHOLE ISLAND SURFACE, from the same IslandSurfaceFromPillBox the glass and
+                    // the rim are built from: the system button and the Start button on the left, the
+                    // status pill in the middle and the tray button on the right are ONE shape. Drawing
+                    // into RowAnchorBox stopped at the status pill and left the two button ends bare --
+                    // "左侧系统按钮 开始按钮和右侧的托盘按钮没有覆盖上".
                     const D2D1_ROUNDED_RECT ambientShape = {
-                        D2D1::RectF(ambientSurface.rect.left, ambientSurface.rect.top,
-                                    ambientSurface.rect.right, ambientSurface.rect.bottom),
-                        ambientSurface.radiusX, ambientSurface.radiusY};
+                        D2D1::RectF(shape.rect.left, shape.rect.top, shape.rect.right,
+                                    shape.rect.bottom),
+                        shape.radiusX, shape.radiusY};
                     island::DrawAmbient(d2dContext_, ambientShape, ambient, phase,
                                         frame.contentOpacity, island::CurrentTheme());
                 }
