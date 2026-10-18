@@ -3041,12 +3041,13 @@ void FillCardSurface(ID2D1DeviceContext2* context, const RoundedBox& box, float 
         fill->Release();
     }
 
-    // THE GLASS CARD IS THE ISLAND AT CARD SIZE (2026-10-18): the same 2.5 DIP rim band and the same bottom
-    // caustic, over the 0.10 body. No 1px edge (the band is the edge), no surface lighting's narrow
-    // specular, no grain: those are what made a card look like frosted plastic beside the lens.
+    // THE CRYSTAL CARD (2026-10-18, from the reference the user supplied): the 2% body is already under
+    // this. A crisp 1px 40% outline, a facet highlight inside the top edge, a thickness shadow inside the
+    // bottom and one diagonal sheen -- the reference's material, drawn at card size. The island's 2.5 DIP
+    // rim band and caustic are NOT used here any more: they are the pill's material, and at 320x320 they
+    // read as a coloured strip rather than as glass.
     if (theme.lens) {
-        island::DrawLensRimBand(context, rounded, theme, opacity);
-        island::DrawLensBottomCaustic(context, rounded, theme, opacity * 0.80f);
+        island::DrawCardCrystal(context, rounded, opacity);
         return;
     }
 

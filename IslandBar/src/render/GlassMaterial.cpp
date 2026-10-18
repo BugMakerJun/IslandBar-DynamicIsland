@@ -708,5 +708,96 @@ void DrawCurvature(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape,
     }
 }
 
+void DrawCardCrystal(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, float opacity) {
+    if (!context || opacity <= 0.01f) return;
+    const float width = shape.rect.right - shape.rect.left;
+    const float height = shape.rect.bottom - shape.rect.top;
+    if (width < 16.0f || height < 16.0f) return;
+
+    ID2D1Factory* factory = nullptr;
+    context->GetFactory(&factory);
+    ID2D1RoundedRectangleGeometry* clip = nullptr;
+    if (factory) {
+        factory->CreateRoundedRectangleGeometry(shape, &clip);
+        factory->Release();
+    }
+    if (clip) {
+        context->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), clip,
+                                                  D2D1_ANTIALIAS_MODE_PER_PRIMITIVE),
+                           nullptr);
+    }
+
+    const auto fillGradient = [&](const D2D1_GRADIENT_STOP* stops, UINT32 count,
+                                  D2D1_POINT_2F from, D2D1_POINT_2F to) {
+        ID2D1GradientStopCollection* collection = nullptr;
+        if (FAILED(context->CreateGradientStopCollection(stops, count, &collection)) || !collection) {
+            return;
+        }
+        ID2D1LinearGradientBrush* brush = nullptr;
+        context->CreateLinearGradientBrush(D2D1::LinearGradientBrushProperties(from, to), collection,
+                                           &brush);
+        collection->Release();
+        if (brush) {
+            context->FillRoundedRectangle(&shape, brush);
+            brush->Release();
+        }
+    };
+
+    // 1. THE TOP FACET -- the reference's `inset 0 4px 8px -2px rgba(255,255,255,0.8)`: a bright band
+    //    just inside the top edge, gone by 6 DIP. On a 2% body this is the highlight that makes the
+    //    surface read as a sheet of crystal rather than as a tinted rectangle.
+    {
+        const D2D1_GRADIENT_STOP stops[2] = {
+            {0.0f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.80f * opacity)},
+            {1.0f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.0f)},
+        };
+        fillGradient(stops, 2, D2D1::Point2F(shape.rect.left, shape.rect.top),
+                     D2D1::Point2F(shape.rect.left, shape.rect.top + 6.0f));
+    }
+
+    // 2. THE BOTTOM THICKNESS -- `inset 0 -4px 8px -2px rgba(0,0,0,0.1)`: the shadow a thick sheet
+    //    gathers inside its bottom edge, which is what stops the body from looking like a flat tint.
+    {
+        const D2D1_GRADIENT_STOP stops[2] = {
+            {0.0f, D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.10f * opacity)},
+            {1.0f, D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f)},
+        };
+        fillGradient(stops, 2, D2D1::Point2F(shape.rect.left, shape.rect.bottom),
+                     D2D1::Point2F(shape.rect.left, shape.rect.bottom - 6.0f));
+    }
+
+    // 3. THE DIAGONAL SHEEN -- the reference's one sharp band: transparent until 40%, a 22% shoulder,
+    //    a 60% core at the middle, the shoulder again, transparent by 60%. Corner to corner, so the
+    //    band lies on the diagonal without a transform.
+    {
+        const D2D1_GRADIENT_STOP stops[6] = {
+            {0.00f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.0f)},
+            {0.40f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.0f)},
+            {0.48f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.22f * opacity)},
+            {0.50f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.60f * opacity)},
+            {0.52f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.22f * opacity)},
+            {0.60f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.0f)},
+        };
+        fillGradient(stops, 6, D2D1::Point2F(shape.rect.left, shape.rect.top),
+                     D2D1::Point2F(shape.rect.right, shape.rect.bottom));
+    }
+
+    if (clip) {
+        context->PopLayer();
+        clip->Release();
+    }
+
+    // 4. THE EDGE -- `border: 1px solid rgba(255,255,255,0.4)`. After the layer, so its own antialiased
+    //    fringe is not clipped away; this is the crisp outline the reference has, and the island's
+    //    2.5 DIP band deliberately is not (it is right at 36 DIP and a coloured strip at card size).
+    ID2D1SolidColorBrush* edge = nullptr;
+    if (SUCCEEDED(context->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.40f * opacity),
+                                                 &edge)) &&
+        edge) {
+        context->DrawRoundedRectangle(&shape, edge, 1.0f);
+        edge->Release();
+    }
+}
+
 }  // namespace island
 

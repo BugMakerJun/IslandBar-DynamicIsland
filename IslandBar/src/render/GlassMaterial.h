@@ -110,6 +110,12 @@ void DrawLensBottomCaustic(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT
 void DrawLensRimBand(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
                      float opacity);
 
+// THE CRYSTAL CARD (2026-10-18, from the reference the user supplied): the cards' surface, not the
+// island's. A crisp 1px 40% white outline, a 4-6 DIP facet highlight inside the top edge, a 4-6 DIP
+// thickness shadow inside the bottom, and one sharp diagonal sheen across the card. The caller has
+// already filled the 2% body; this is everything that makes that body read as a sheet of crystal.
+void DrawCardCrystal(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, float opacity);
+
 // The double edge: a faint dark line on the outside of the shape and a bright one just inside it, which
 // together are what read as the THICKNESS of a piece of glass. It complements DrawSurfaceLighting's own
 // directional hairline (inset 1 DIP) rather than replacing it: that one is the light on the face, this is
