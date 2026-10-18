@@ -1639,7 +1639,7 @@ inline MusicCardLayout MusicCardFor(const RoundedBox& box) {
     // the pill's ribbon: the card has no room for the wave, and the number it would show is this one.
     // The text stops short of it, so no word ever runs under it.
     layout.levelBar.right = box.rect.right - pad;
-    layout.levelBar.left = layout.levelBar.right - 4.0f;
+    layout.levelBar.left = layout.levelBar.right - 6.0f;
     layout.levelBar.top = layout.artwork.top;
     layout.levelBar.bottom = layout.artwork.bottom;
     layout.title.right = layout.levelBar.left - 10.0f;

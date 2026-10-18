@@ -1970,32 +1970,38 @@ void TextRenderer::DrawMusicCard(ID2D1DeviceContext2* context, const RoundedBox&
 
     // --- 5c. the thin level bar, at the card's right edge ----------------
     //
-    // One thin bar filled from the bottom in the cover's accent, on a 10% track. The reading is the same
-    // peak the pill's ribbon moves with, so the card and the bar agree; the card has no room for the
-    // ribbon itself.
+    // A SEGMENTED meter, not a continuous fill: twelve rounded steps up the cover's height. The lit ones
+    // take the cover's accent -- the top lit step is drawn at full strength and the ones below it at 0.55,
+    // so the bar reads as a level rather than as one bar of paint -- and the unlit ones a faint ink. The
+    // reading is the same peak the pill's ribbon moves with, so the card and the bar agree.
     if (text.levelKnown && layout.levelBar.right > layout.levelBar.left) {
-        const D2D1_ROUNDED_RECT track = {
-            D2D1::RectF(layout.levelBar.left, layout.levelBar.top, layout.levelBar.right,
-                        layout.levelBar.bottom),
-            2.0f, 2.0f};
-        ID2D1SolidColorBrush* levelTrack = nullptr;
-        if (SUCCEEDED(context->CreateSolidColorBrush(
-                D2D1::ColorF(primary.r, primary.g, primary.b, 0.10f * opacity), &levelTrack)) &&
-            levelTrack) {
-            context->FillRoundedRectangle(&track, levelTrack);
-            levelTrack->Release();
-        }
+        constexpr int kSegments = 12;
+        constexpr float kGap = 2.0f;
+        const float height = layout.levelBar.bottom - layout.levelBar.top;
+        const float segment = (height - kGap * (kSegments - 1)) / kSegments;
         float level = text.level;
         if (level < 0.0f) level = 0.0f;
         if (level > 1.0f) level = 1.0f;
-        if (level > 0.01f && accentBrush) {
-            const float height = (layout.levelBar.bottom - layout.levelBar.top) * level;
-            const D2D1_ROUNDED_RECT filled = {
-                D2D1::RectF(layout.levelBar.left, layout.levelBar.bottom - height,
-                            layout.levelBar.right, layout.levelBar.bottom),
+        const int lit = static_cast<int>(level * kSegments + 0.5f);
+        ID2D1SolidColorBrush* dark = nullptr;
+        ID2D1SolidColorBrush* dim = nullptr;
+        ID2D1SolidColorBrush* bright = nullptr;
+        context->CreateSolidColorBrush(
+            D2D1::ColorF(primary.r, primary.g, primary.b, 0.08f * opacity), &dark);
+        context->CreateSolidColorBrush(
+            D2D1::ColorF(accent.r * 0.7f, accent.g * 0.7f, accent.b * 0.7f, 0.80f * opacity), &dim);
+        context->CreateSolidColorBrush(accent, &bright);
+        for (int i = 0; i < kSegments; ++i) {
+            const float bottom = layout.levelBar.bottom - static_cast<float>(i) * (segment + kGap);
+            const D2D1_ROUNDED_RECT step = {
+                D2D1::RectF(layout.levelBar.left, bottom - segment, layout.levelBar.right, bottom),
                 2.0f, 2.0f};
-            context->FillRoundedRectangle(&filled, accentBrush);
+            ID2D1SolidColorBrush* brush = (i < lit) ? (i == lit - 1 ? bright : dim) : dark;
+            if (brush) context->FillRoundedRectangle(&step, brush);
         }
+        if (dark) dark->Release();
+        if (dim) dim->Release();
+        if (bright) bright->Release();
     }
 
     // --- 6. times and progress ------------------------------------------
