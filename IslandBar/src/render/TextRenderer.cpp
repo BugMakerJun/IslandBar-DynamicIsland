@@ -661,6 +661,25 @@ struct StatusRunFormats {
 float TextWidthIn(IDWriteFactory3* factory, IDWriteTextFormat* format, const wchar_t* text) {
     if (!factory || !format || !text || text[0] == L'\0') return 0.0f;
 
+    // THE STATUS RUN IS MEASURED EVERY FRAME, and the answer changes once a minute for the time and once
+    // a day for the date. A small cache of the measured widths saves a CreateTextLayout per piece per
+    // frame -- the weekday, the date, the time, the weather mark and its words.
+    struct Measured {
+        IDWriteTextFormat* format = nullptr;
+        std::wstring text;
+        float width = 0.0f;
+        unsigned long long used = 0;
+    };
+    static Measured measured[32];
+    static unsigned long long tick = 0;
+    ++tick;
+    for (auto& entry : measured) {
+        if (entry.format == format && !entry.text.empty() && entry.text == text) {
+            entry.used = tick;
+            return entry.width;
+        }
+    }
+
     // The same wide, tall area TextWidth uses: the width of a piece is a property of the text and
     // the face, not of the box it will end up in.
     IDWriteTextLayout* layout = nullptr;
@@ -672,7 +691,22 @@ float TextWidthIn(IDWriteFactory3* factory, IDWriteTextFormat* format, const wch
     DWRITE_TEXT_METRICS metrics = {};
     const HRESULT hr = layout->GetMetrics(&metrics);
     layout->Release();
-    return SUCCEEDED(hr) ? metrics.width : 0.0f;
+    const float width = SUCCEEDED(hr) ? metrics.width : 0.0f;
+    if (width > 0.0f) {
+        Measured* victim = &measured[0];
+        for (auto& entry : measured) {
+            if (entry.text.empty()) {
+                victim = &entry;
+                break;
+            }
+            if (entry.used < victim->used) victim = &entry;
+        }
+        victim->format = format;
+        victim->text = text;
+        victim->width = width;
+        victim->used = tick;
+    }
+    return width;
 }
 
 // The run, built in one place so the measuring and the drawing walk the SAME list.
