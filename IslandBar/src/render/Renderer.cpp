@@ -947,13 +947,19 @@ void Renderer::RenderFrame(const FrameState& frame) {
                     const float phase = static_cast<float>(GetTickCount64() % 3600000ull) / 1000.0f;
                     const island::AmbientKind ambient = island::AmbientKindFor(
                         frame.statusCode, nowMinutes, frame.sunriseMinutes, frame.sunsetMinutes);
-                    // THE WHOLE GLASS, not the status line's inner box: `lineBox` is the narrower
-                    // RowAnchorBox the words are laid out in, and the weather drawn into it stopped
-                    // short of the pill's own left and right ends ("没有撑满整个灵动岛"). `box` is
-                    // the pill's own shape, which is what the glass and the rim are drawn from.
+                    // THE WHOLE ISLAND SURFACE: the system button, the Start button, the status pill and
+                    // the tray button sit on ONE glass surface (see the deck comments below), and that
+                    // surface is RowAnchorBox, not the 220 DIP status pill. Drawing the ambient into the
+                    // pill left the system/Start/tray ends outside it -- "左侧系统按钮 开始按钮和右侧的
+                    // 托盘按钮也属于灵动岛".
+                    const RoundedBox ambientSurface =
+                        (frame.restingPill.rect.right > frame.restingPill.rect.left)
+                            ? island::RowAnchorBox(box, frame.restingPill)
+                            : box;
                     const D2D1_ROUNDED_RECT ambientShape = {
-                        D2D1::RectF(box.rect.left, box.rect.top, box.rect.right, box.rect.bottom),
-                        box.radiusX, box.radiusY};
+                        D2D1::RectF(ambientSurface.rect.left, ambientSurface.rect.top,
+                                    ambientSurface.rect.right, ambientSurface.rect.bottom),
+                        ambientSurface.radiusX, ambientSurface.radiusY};
                     island::DrawAmbient(d2dContext_, ambientShape, ambient, phase,
                                         frame.contentOpacity, island::CurrentTheme());
                 }
