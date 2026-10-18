@@ -452,6 +452,16 @@ void TestRenderer(IslandWindow& window) {
     }
     Check(true, L"three frames rendered and committed");
 
+    // THE GLASS THEME'S SURFACE IS THE LENS. Its fill is transparent (the reference has no pane), so the
+    // pill only becomes opaque once WGC has delivered one frame; the three renders above can all predate
+    // it. One short wait and one more render make the readback below see the material instead of the
+    // window's empty background. Without this, the opacity assertion fails on 玻璃 purely because the
+    // capture is asynchronous, not because the renderer is broken.
+    if (CurrentTheme().lens) {
+        ::Sleep(1000);
+        renderer.Render(pill);
+    }
+
     // Read the frame back off the GPU. Present returning S_OK says the compositor
     // accepted a frame; it does not say the frame contains anything. These two
     // assertions are what actually distinguish "drawing works" from "the surface
