@@ -1363,7 +1363,7 @@ void TextRenderer::DrawCallStrip(ID2D1DeviceContext2* context, const RoundedBox&
     // so it breathes with a voice instead of flickering. An unknown or silent level still draws the short
     // bars, because a row of disappearances looks like a fault and a row of dots looks like a quiet room.
     const int bars = 12;
-    const float barWidth = 3.0f;
+    const float barWidth = 4.0f;
     const float barGap = 2.0f;
     const float meterWidth = static_cast<float>(bars) * barWidth + static_cast<float>(bars - 1) * barGap;
     const float meterRight = box.rect.right - pad;
@@ -1375,10 +1375,11 @@ void TextRenderer::DrawCallStrip(ID2D1DeviceContext2* context, const RoundedBox&
         const float barHeight = 4.0f + fraction * (maxBarHeight - 4.0f);
         const float x = meterLeft + static_cast<float>(i) * (barWidth + barGap);
         ID2D1SolidColorBrush* bar = nullptr;
-        // Warm, like the reference: the meter is a level, and the warm end of the palette is where a level
-        // lives. The alpha follows the bar's own height so the tall ones read as the loud ones.
-        const D2D1_COLOR_F colour = D2D1::ColorF(0.98f, 0.72f, 0.20f,
-                                                 (0.35f + 0.60f * fraction) * opacity);
+        // THE CALL'S OWN GREEN, at a floor of 0.55, because the warm meter that used to be here was
+        // unreadable on the light glass the strip is drawn on ("通话时 音波图看不清"). Green matches the timer
+        // beside it, so the meter reads as part of the call rather than as a second, unrelated reading.
+        const D2D1_COLOR_F colour = D2D1::ColorF(0.188f, 0.820f, 0.345f,
+                                                 (0.55f + 0.45f * fraction) * opacity);
         if (SUCCEEDED(context->CreateSolidColorBrush(colour, &bar)) && bar) {
             const float radius = barWidth * 0.5f;
             context->FillRoundedRectangle(
