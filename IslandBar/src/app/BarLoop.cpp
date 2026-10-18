@@ -3816,6 +3816,9 @@ static void FillPanelFrame(BarRuntime& runtime, island::FrameState& frame, islan
 // input instead of spinning, because the clock only needs a wake-up once a second. It needs the window
 // services, whether the compositor clock answered, and the wait counter BarRuntime carries.
 static void PaceTheLoop(island::BarSystems& systems, bool clockDriven, BarRuntime& runtime) {
+    // Kept in the signature because it still records what the compositor clock answered, but the pacing
+    // is now the vsync present: see below.
+    (void)clockDriven;
     // --- pace ---
     //
     // While animating, wait for the next compositor tick (or a short
@@ -3823,21 +3826,11 @@ static void PaceTheLoop(island::BarSystems& systems, bool clockDriven, BarRuntim
     // spinning: the clock only needs a wake-up once a second, so a 100 ms
     // cap is plenty and costs nothing on an idle desktop.
     if (systems.window.IsAnimating()) {
-        // Preferred order, and the reason for it: the swap chain's frame-latency waitable
-        // object is the compositor's own "the next frame may go now" signal, so a wait on it
-        // ends when there is a frame to draw instead of after a guess. The compositor clock
-        // comes second (it is the same idea through a different door), and a short message wait
-        // last. The 8 ms cap is a safety net for a signalled-but-unused object, not the pacing.
-        const HANDLE frameWait = systems.renderer.FrameLatencyWaitable();
-        if (frameWait) {
-            ::MsgWaitForMultipleObjectsEx(1, &frameWait, 8, QS_ALLINPUT,
-                                          MWMO_INPUTAVAILABLE);
-        } else if (clockDriven) {
-            systems.renderer.WaitForCompositorClock(8);
-        } else {
-            ::MsgWaitForMultipleObjectsEx(0, nullptr, 4, QS_ALLINPUT,
-                                          MWMO_INPUTAVAILABLE);
-        }
+        // THE PRESENT IS THE PACING NOW. It waits for vsync (Renderer::RenderFrame), so blocking here
+        // again on the swap chain's frame-latency waitable waits TWICE for one frame -- which is the
+        // "感觉有点不跟鼠标" report, and it also spaces the animation frames unevenly. Only drain input
+        // without blocking; the present blocks for the next refresh.
+        ::MsgWaitForMultipleObjectsEx(0, nullptr, 0, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
         runtime.frameWaits += 1;
     } else {
         ::MsgWaitForMultipleObjectsEx(0, nullptr, 100, QS_ALLINPUT,
