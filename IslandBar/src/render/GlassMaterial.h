@@ -98,6 +98,13 @@ inline float SpecularCentreX(float left, float right, float fraction) {
 void DrawSpecularSweep(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
                        float pointerFraction, float opacity);
 
+// THE LENS TOP SPECULAR (2026-10-18): one narrow, soft highlight just under the top edge of the clear glass.
+// It is NOT a rim: it is a centred ellipse that fades to nothing before the round ends, so it cannot draw a
+// ring around the pill. The reference's pane catches the room light there; the rim that used to carry the
+// same job was removed because the user saw it as a ring.
+void DrawLensTopSpecular(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
+                         float opacity);
+
 // The double edge: a faint dark line on the outside of the shape and a bright one just inside it, which
 // together are what read as the THICKNESS of a piece of glass. It complements DrawSurfaceLighting's own
 // directional hairline (inset 1 DIP) rather than replacing it: that one is the light on the face, this is

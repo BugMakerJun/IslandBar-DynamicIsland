@@ -36,8 +36,8 @@ constexpr int kMarginPx = 2;
 constexpr float kLensContrast = 1.20f;
 constexpr float kLensBrightness = 1.05f;
 constexpr float kLensSaturation = 1.10f;
-constexpr float kLensInnerShade = 0.10f;
-constexpr float kLensInnerShadeBand = 0.28f;
+constexpr float kLensInnerShade = 0.14f;
+constexpr float kLensInnerShadeBand = 0.30f;
 
 ULONGLONG g_lastLensLog = 0;
 void LensFail(const wchar_t* why) {

@@ -710,11 +710,17 @@ void Renderer::RenderFrame(const FrameState& frame) {
         const float hoverLift = (frame.pointerOnIsland && CurrentTheme().lens) ? 1.12f : 1.0f;
         island::DrawSmokedBase(d2dContext_, rounded, theme, pillTopFill, pillBottomFill, hoverLift);
 
-        // NO WASHES AT ALL on the clear lens: the top ellipse, the blobs and the grain all left a veil
-        // over the background. What is left is the refracted image and its words.
+        // NO WASHES on the clear lens: the wide top ellipse, the blobs and the grain all left a veil over
+        // the background. What is left is the refracted image, one narrow top specular and its words.
         if (!theme.lens) {
             island::DrawSurfaceLighting(d2dContext_, rounded, theme, 1.0f);
             island::DrawTopSheen(d2dContext_, rounded, theme, frame.pillPointerFraction, 1.0f);
+        }
+
+        // THE LENS'S TOP LIGHT: one narrow centred specular, not a rim. The clear pane catches the room
+        // light here; the drawn 1 DIP rim that used to do the same job read as a ring and is gone.
+        if (theme.lens) {
+            island::DrawLensTopSpecular(d2dContext_, rounded, theme, 1.0f);
         }
 
         // The rim: 0 in 玻璃 -- the drawn 1 DIP line read as a ring around the pill. The painted themes
