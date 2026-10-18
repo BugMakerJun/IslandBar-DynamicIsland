@@ -704,6 +704,11 @@ private:
     // music card's words choose black or white on it.
     unsigned long long       musicBackgroundRevision_ = 0;
     float                    musicBackgroundLuma_ = 0.0f;
+    // The level meters are smoothed here rather than in the readers: a peak arrives about thirty times a
+    // second, and a twelve-step meter driven from it steps visibly between samples. One-pole filters at
+    // frame rate, which is what makes the card's meter and the call's breathe instead of tick.
+    float                    musicLevelShown_ = 0.0f;
+    float                    callLevelShown_ = 0.0f;
     // The pill's size the lens was last shaped for. A change re-warps the last captured frame, because
     // WGC is silent while the window behind is static.
     int                      lensPillW_   = 0;

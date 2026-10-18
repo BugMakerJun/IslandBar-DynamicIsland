@@ -1923,6 +1923,31 @@ void TextRenderer::DrawMusicCard(ID2D1DeviceContext2* context, const RoundedBox&
     // The user's "这个区域显示歌词": the current line, with the accent sweeping across it as the line is
     // sung, and the next line dimmed under it. Both come from the same sheet as the pill's line, so the
     // card and the bar cannot show different words.
+    //
+    // AND THE CHANGE IS A CROSS-FADE, not a substitution: the line that just left fades out under the one
+    // arriving, which fades in over it, both for the length of the pill's own roll. Without it the words
+    // changed between two frames, which is the "没有过渡" this bar has been reported for before.
+    const float lyricRoll =
+        text.lyricRoll < 0.0f ? 0.0f : (text.lyricRoll > 1.0f ? 1.0f : text.lyricRoll);
+    if (text.lyricPrev && text.lyricPrev[0] != '\0' && lyricRoll < 0.999f && musicLyricFormat_ &&
+        factory_ && secondaryBrush) {
+        wchar_t widePrev[512] = {};
+        if (MultiByteToWideChar(CP_UTF8, 0, text.lyricPrev, -1, widePrev, 512) > 0) {
+            IDWriteTextLayout* layoutPrev = nullptr;
+            if (SUCCEEDED(factory_->CreateTextLayout(
+                    widePrev, static_cast<UINT32>(std::wcslen(widePrev)), musicLyricFormat_,
+                    layout.lyricCurrent.right - layout.lyricCurrent.left,
+                    layout.lyricCurrent.bottom - layout.lyricCurrent.top, &layoutPrev)) &&
+                layoutPrev) {
+                secondaryBrush->SetOpacity(1.0f - lyricRoll);
+                context->DrawTextLayout(
+                    D2D1::Point2F(layout.lyricCurrent.left, layout.lyricCurrent.top), layoutPrev,
+                    secondaryBrush);
+                secondaryBrush->SetOpacity(1.0f);
+                layoutPrev->Release();
+            }
+        }
+    }
     if (text.lyricLine && text.lyricLine[0] != '\0' && musicLyricFormat_ && factory_) {
         wchar_t wideLine[512] = {};
         if (MultiByteToWideChar(CP_UTF8, 0, text.lyricLine, -1, wideLine, 512) > 0) {
@@ -1939,7 +1964,11 @@ void TextRenderer::DrawMusicCard(ID2D1DeviceContext2* context, const RoundedBox&
                 // THE UNSUNG WORDS ARE THE DIM ONES and the sung ones the bright ink. The first version
                 // painted the sung part in the ACCENT, which on a blue cover is almost the background --
                 // "歌词唱完的部分 看不清". The accent is the underline instead, where it can be seen.
-                if (secondaryBrush) context->DrawTextLayout(origin, layoutLine, secondaryBrush);
+                if (secondaryBrush) {
+                    secondaryBrush->SetOpacity(lyricRoll);
+                    context->DrawTextLayout(origin, layoutLine, secondaryBrush);
+                    secondaryBrush->SetOpacity(1.0f);
+                }
                 const float fraction = text.lyricProgress > 1.0f ? 1.0f : text.lyricProgress;
                 const float filled = metrics.widthIncludingTrailingWhitespace * fraction;
                 // The line is left-aligned, so the karaoke starts at the rect's left edge.
@@ -1949,7 +1978,9 @@ void TextRenderer::DrawMusicCard(ID2D1DeviceContext2* context, const RoundedBox&
                         D2D1::RectF(textLeft, layout.lyricCurrent.top, textLeft + filled,
                                     layout.lyricCurrent.bottom),
                         D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+                    primaryBrush->SetOpacity(lyricRoll);
                     context->DrawTextLayout(origin, layoutLine, primaryBrush);
+                    primaryBrush->SetOpacity(1.0f);
                     context->PopAxisAlignedClip();
                 }
                 if (accentBrush && fraction > 0.0f) {
@@ -1958,7 +1989,9 @@ void TextRenderer::DrawMusicCard(ID2D1DeviceContext2* context, const RoundedBox&
                         D2D1::RectF(textLeft, layout.lyricCurrent.bottom - 2.0f, textLeft + filled,
                                     layout.lyricCurrent.bottom),
                         1.0f, 1.0f};
+                    accentBrush->SetOpacity(lyricRoll);
                     context->FillRoundedRectangle(&sung, accentBrush);
+                    accentBrush->SetOpacity(1.0f);
                 }
                 layoutLine->Release();
             }

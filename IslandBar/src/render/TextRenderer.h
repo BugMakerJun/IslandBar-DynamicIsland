@@ -277,6 +277,10 @@ public:
         const char* lyricLine = nullptr;
         const char* lyricNext = nullptr;
         float lyricProgress = 0.0f;
+        // The line the current one replaced, and how far its arrival has rolled (0..1). The card draws the
+        // two as a cross-fade, the way the pill's line rolls -- without it the words switch in one frame.
+        const char* lyricPrev = nullptr;
+        float lyricRoll = 1.0f;
         // The output level for the card's thin level bar, 0..1. `levelKnown` false means the reader has
         // no peak yet, and the card draws only the bar's track.
         float level = 0.0f;

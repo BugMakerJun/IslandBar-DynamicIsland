@@ -956,7 +956,13 @@ void Renderer::RenderFrame(const FrameState& frame) {
                     // A CALL first: same strip, different thing to say -- and it says it with a timer and a
                     // level meter rather than with words, because that is what the reference does. The
                     // timer is the point of the strip, so it is drawn in every state, full screen included.
-                    text_->DrawCallStrip(d2dContext_, noticeBox, frame.callStrip, frame.contentOpacity);
+                    // The level is smoothed here for the same reason the card's is: a peak arrives ~30
+                    // times a second and the meter would tick between samples.
+                    TextRenderer::CallStripText call = frame.callStrip;
+                    const float callTarget = call.levelKnown ? call.level : 0.0f;
+                    callLevelShown_ += (callTarget - callLevelShown_) * 0.22f;
+                    call.level = callLevelShown_;
+                    text_->DrawCallStrip(d2dContext_, noticeBox, call, frame.contentOpacity);
                 } else {
                     // The message, in place of the clock -- the same trade the lyric strip makes, and for the
                     // same reason: while the strip is up, the time is the less useful of the two things the
@@ -1354,8 +1360,18 @@ void Renderer::RenderFrame(const FrameState& frame) {
                     text.lyricLine = frame.lyricLine;
                     text.lyricNext = frame.lyricLineNext;
                     text.lyricProgress = frame.lyricProgress;
+                    text.lyricPrev = frame.lyricLinePrev;
+                    text.lyricRoll = frame.lyricLineRoll;
                     // The thin level bar at the card's right edge, from the same peak the pill's wave uses.
                     text.level = frame.musicLevel;
+                    // ... smoothed here: the peak arrives ~30 times a second and the meter's twelve steps
+                    // would jump between samples.
+                    {
+                        const float targetLevel =
+                            frame.musicLevelKnown ? frame.musicLevel : 0.0f;
+                        musicLevelShown_ += (targetLevel - musicLevelShown_) * 0.25f;
+                        text.level = musicLevelShown_;
+                    }
                     text.levelKnown = frame.musicLevelKnown;
                     // The reading position in the sheet, for the vertical lyric progress beside the meter.
                     text.lyricIndex = frame.lyricIndex;
