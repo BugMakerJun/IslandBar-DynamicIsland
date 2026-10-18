@@ -765,15 +765,36 @@ void Renderer::RenderFrame(const FrameState& frame) {
         {
             POINT inkOrigin = {0, 0};
             if (ClientToScreen(window_, &inkOrigin)) {
-                // 100 DIP below the bar: the four-corner sample needs the corners to be DISTINCT points,
-                // and at 48 DIP the top and bottom insets landed on the same row -- so one strip of the
-                // application (often its lighter title band) decided the ink for the whole bar.
-                const RECT below = {
-                    inkOrigin.x + static_cast<LONG>(std::lround(rounded.rect.left * scale_)),
-                    inkOrigin.y + static_cast<LONG>(std::lround(rounded.rect.bottom * scale_)) + 2,
-                    inkOrigin.x + static_cast<LONG>(std::lround(rounded.rect.right * scale_)),
-                    inkOrigin.y + static_cast<LONG>(std::lround(rounded.rect.bottom * scale_)) + 102};
-                sampled = SampleUnderCard(below, scale_);
+                // THE SCREEN BESIDE THE BAR, AT THE BAR'S OWN ROW.
+                //
+                // Not below it: a maximised window's top band is at the bar's row, while 20-120 DIP
+                // further down can be a different thing entirely -- the measured four-corner median of
+                // that mix was 0.30 on a light desktop, which is the grey words reported as "在桌面上的
+                // 文字 不是黑的了". Two patches to the left and right of the island are the same backdrop
+                // the glass refracts, and being beside the island they stay clear of its own shadow.
+                const LONG barTop = std::max<LONG>(
+                    0, static_cast<LONG>(std::lround(rounded.rect.top * scale_)) - 10);
+                const LONG barBottom =
+                    static_cast<LONG>(std::lround(rounded.rect.bottom * scale_)) + 10;
+                const RECT leftPatch = {
+                    inkOrigin.x + static_cast<LONG>(std::lround(rounded.rect.left * scale_)) - 72,
+                    inkOrigin.y + barTop,
+                    inkOrigin.x + static_cast<LONG>(std::lround(rounded.rect.left * scale_)) - 8,
+                    inkOrigin.y + barBottom};
+                const RECT rightPatch = {
+                    inkOrigin.x + static_cast<LONG>(std::lround(rounded.rect.right * scale_)) + 8,
+                    inkOrigin.y + barTop,
+                    inkOrigin.x + static_cast<LONG>(std::lround(rounded.rect.right * scale_)) + 72,
+                    inkOrigin.y + barBottom};
+                const float leftLuma = SampleUnderCard(leftPatch, scale_);
+                const float rightLuma = SampleUnderCard(rightPatch, scale_);
+                if (leftLuma >= 0.0f && rightLuma >= 0.0f) {
+                    sampled = (leftLuma + rightLuma) * 0.5f;
+                } else if (leftLuma >= 0.0f) {
+                    sampled = leftLuma;
+                } else if (rightLuma >= 0.0f) {
+                    sampled = rightLuma;
+                }
             }
         }
         // Fed every frame from the cached reading, so the crossover finishes even when the window behind
