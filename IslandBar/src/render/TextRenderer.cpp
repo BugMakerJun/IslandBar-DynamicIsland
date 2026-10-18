@@ -148,7 +148,7 @@ bool TextRenderer::Initialize() {
     // sentence rather than the thing the island is read for.
     makeStatusFormat(9.5f, DWRITE_FONT_WEIGHT_NORMAL, &statusWeekdayFormat_);
     makeStatusFormat(9.5f, DWRITE_FONT_WEIGHT_NORMAL, &statusDayFormat_);
-    makeStatusFormat(18.0f, DWRITE_FONT_WEIGHT_BOLD, &statusTimeFormat_);
+    makeStatusFormat(20.0f, DWRITE_FONT_WEIGHT_EXTRA_BOLD, &statusTimeFormat_);
     makeStatusFormat(9.5f, DWRITE_FONT_WEIGHT_NORMAL, &statusWeatherFormat_);
 
     // The music card's top row: the source name and the volume readout.
@@ -1184,7 +1184,7 @@ void TextRenderer::DrawStatusLine(ID2D1DeviceContext2* context, const RoundedBox
     }
 
     const StatusPiece& timePiece = pieces[timeIndex];
-    drawPiece(timePiece, centreX - timePiece.widthDip * 0.5f, centreY - 11.0f, 22.0f);
+    drawPiece(timePiece, centreX - timePiece.widthDip * 0.5f, centreY - 13.0f, 26.0f);
 }
 
 void TextRenderer::CurrentDateParts(wchar_t* weekday, size_t weekdayCapacity, wchar_t* day,
