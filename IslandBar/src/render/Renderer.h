@@ -700,6 +700,7 @@ private:
     HWND                     lensWindow_  = nullptr;
     HWND                     window_      = nullptr;
     ULONGLONG                lensRetryAt_ = 0;
+    ULONGLONG                lensProbeAt_ = 0;   // when the Z-order walk under the bar may run again
     // The blurred album background's average luminance, recomputed when the art's revision changes; the
     // music card's words choose black or white on it.
     unsigned long long       musicBackgroundRevision_ = 0;

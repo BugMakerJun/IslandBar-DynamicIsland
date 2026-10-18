@@ -78,34 +78,40 @@ float SampleUnderCard(const RECT& area, float scale) {
         }
         return -1.0f;
     }
-    HDC screen = GetDC(nullptr);
-    if (!screen) {
-        LogLine(L"  ink sample: no screen DC");
-        return -1.0f;
+    // THE GDI SURFACE IS MADE ONCE AND REUSED.
+    //
+    // This runs four times per frame (the bar's two edge bands and the two patches beside it). Creating
+    // a screen DC, a compatible DC and a DIB section 240 times a second was pure allocation churn in the
+    // frame; one 16x16 surface, a blit and a scan is all the reading needs.
+    constexpr int kSampleSide = 16;
+    static HDC screenDc = nullptr;
+    static HDC memoryDc = nullptr;
+    static void* dibPixels = nullptr;
+    if (!screenDc) {
+        screenDc = GetDC(nullptr);
+        if (screenDc) memoryDc = CreateCompatibleDC(screenDc);
+        if (screenDc && memoryDc) {
+            BITMAPINFO info = {};
+            info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+            info.bmiHeader.biWidth = kSampleSide;
+            info.bmiHeader.biHeight = -kSampleSide;   // top-down: row n of the DIB is screen y + n
+            info.bmiHeader.biPlanes = 1;
+            info.bmiHeader.biBitCount = 32;
+            info.bmiHeader.biCompression = BI_RGB;
+            HBITMAP dib = CreateDIBSection(screenDc, &info, DIB_RGB_COLORS, &dibPixels, nullptr, 0);
+            if (dib) {
+                SelectObject(memoryDc, dib);
+            } else {
+                dibPixels = nullptr;
+            }
+        }
+        if (!screenDc || !memoryDc || !dibPixels) {
+            LogLine(L"  ink sample: no reusable GDI surface");
+            return -1.0f;
+        }
     }
-    HDC memory = CreateCompatibleDC(screen);
-    if (!memory) {
-        LogLine(L"  ink sample: no compatible DC");
-        ReleaseDC(nullptr, screen);
-        return -1.0f;
-    }
-    BITMAPINFO info = {};
-    info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    info.bmiHeader.biWidth = side;
-    info.bmiHeader.biHeight = -side;   // top-down: row n of the DIB is screen y + n
-    info.bmiHeader.biPlanes = 1;
-    info.bmiHeader.biBitCount = 32;
-    info.bmiHeader.biCompression = BI_RGB;
-    void* pixels = nullptr;
-    HBITMAP bitmap = CreateDIBSection(screen, &info, DIB_RGB_COLORS, &pixels, nullptr, 0);
-    if (!bitmap || !pixels) {
-        LogLine(L"  ink sample: no DIB section");
-        if (bitmap) DeleteObject(bitmap);
-        DeleteDC(memory);
-        ReleaseDC(nullptr, screen);
-        return -1.0f;
-    }
-    HGDIOBJ previous = SelectObject(memory, bitmap);
+    HDC screen = screenDc;
+    HDC memory = memoryDc;
     const int xs[2] = {area.left + inset, area.right - inset - side};
     const int ys[2] = {area.top + inset, area.bottom - inset - side};
     float samples[4] = {};
@@ -120,19 +126,18 @@ float SampleUnderCard(const RECT& area, float scale) {
                 lastError = GetLastError();
                 continue;
             }
-            const auto* bytes = static_cast<const unsigned char*>(pixels);
+            const auto* bytes = static_cast<const unsigned char*>(dibPixels);
             double sum = 0.0;
-            for (int i = 0; i < side * side; ++i) {
-                const unsigned char* p = bytes + static_cast<size_t>(i) * 4;
-                sum += 0.0722 * p[0] + 0.7152 * p[1] + 0.2126 * p[2];
+            for (int y = 0; y < side; ++y) {
+                for (int x = 0; x < side; ++x) {
+                    const unsigned char* p = bytes + (y * kSampleSide + x) * 4;
+                    sum += 0.0722 * p[0] + 0.7152 * p[1] + 0.2126 * p[2];
+                }
             }
             samples[count++] = static_cast<float>(sum / (side * side) / 255.0);
         }
     }
-    SelectObject(memory, previous);
-    DeleteObject(bitmap);
-    DeleteDC(memory);
-    ReleaseDC(nullptr, screen);
+    // The surface is process-lifetime and deliberately not released here: see the creation above.
     if (count == 0) {
         LogLine(L"  ink sample: every corner's BitBlt failed (error %lu)", lastError);
         return -1.0f;
@@ -386,14 +391,19 @@ bool Renderer::TakeLensFrame() {
 
 void Renderer::UpdateLensCapture(POINT at, POINT probe) {
     if (!lensActive_ || !window_) return;
-    const HWND behind = FindWindowBehind(window_, at, probe);
+    const ULONGLONG now = GetTickCount64();
     const bool lost = lensWindow_ && (!IsWindow(lensWindow_) || capture_.SizeChanged());
+    // WALKING THE Z ORDER EVERY FRAME IS WASTED: which window is under the bar changes on a human
+    // timescale (it is a Z-order walk of up to 64 windows plus a WindowFromPoint). 150 ms is below
+    // noticing, and the capture is restarted on the first probe that sees a different window.
+    if (lensWindow_ && !lost && now < lensProbeAt_) return;
+    lensProbeAt_ = now + 150;
+    const HWND behind = FindWindowBehind(window_, at, probe);
     if (behind == lensWindow_ && !lost) return;
 
     capture_.Stop();
     lensWindow_ = nullptr;
     if (!behind) return;
-    const ULONGLONG now = GetTickCount64();
     if (now < lensRetryAt_) return;
     if (capture_.StartForWindow(d3dDevice_, behind)) {
         lensWindow_ = behind;
