@@ -715,12 +715,10 @@ void Renderer::RenderFrame(const FrameState& frame) {
         if (!theme.lens) {
             island::DrawSurfaceLighting(d2dContext_, rounded, theme, 1.0f);
             island::DrawTopSheen(d2dContext_, rounded, theme, frame.pillPointerFraction, 1.0f);
-        }
-
-        // THE LENS'S TOP LIGHT: one narrow centred specular, not a rim. The clear pane catches the room
-        // light here; the drawn 1 DIP rim that used to do the same job read as a ring and is gone.
-        if (theme.lens) {
-            island::DrawLensTopSpecular(d2dContext_, rounded, theme, 1.0f);
+        } else {
+            // The lens theme's top light is the single TALL core DrawTopSheen keeps for it, not a thin
+            // ellipse: a 4.5 DIP-high highlight read as a line across the top. The pointer still shifts it.
+            island::DrawTopSheen(d2dContext_, rounded, theme, frame.pillPointerFraction, 1.0f);
         }
 
         // The rim: 0 in 玻璃 -- the drawn 1 DIP line read as a ring around the pill. The painted themes

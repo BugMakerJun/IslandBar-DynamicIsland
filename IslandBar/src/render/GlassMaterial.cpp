@@ -574,20 +574,6 @@ void DrawSpecularSweep(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& sh
     context->FillRoundedRectangle(&shape, g_cache.sweepBand);
 }
 
-void DrawLensTopSpecular(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
-                         float opacity) {
-    if (!context || opacity <= 0.01f) return;
-    const float width = shape.rect.right - shape.rect.left;
-    const float height = shape.rect.bottom - shape.rect.top;
-    if (width < 24.0f || height < 6.0f) return;
-    if (!EnsureMaterial(context, theme) || !g_cache.sheen) return;
-    // A narrow ellipse under the top edge, centred; the ends fall to nothing well before the caps, so this
-    // is a light on the glass and cannot become the ring the 1 DIP rim did.
-    PlaceRadial(g_cache.sheen, (shape.rect.left + shape.rect.right) * 0.5f, shape.rect.top + 1.5f,
-                width * 0.40f, 4.5f, opacity * 0.85f);
-    context->FillRoundedRectangle(&shape, g_cache.sheen);
-}
-
 void DrawGlassRim(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
                   float opacity) {
     if (!context || opacity <= 0.01f || theme.rim <= 0.001f) return;
