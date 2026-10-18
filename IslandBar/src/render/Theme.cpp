@@ -55,22 +55,22 @@ const Theme kThemes[] = {
     //     S_OK and does nothing on Windows 11: the classic Aero glass it drove was removed.
     //
     // THE LENS (2026-10-18): the real desktop behind the island, captured by platform/BackdropCapture and
-    // bent by render/LensMaterial. The lens is the surface; a light 0.36/0.28 body makes it a pale pane of
-    // glass instead of the grey film a nearly-clear body became on a dark wallpaper -- the reference blob is
-    // LIGHT, not dark. The only edge is the 2.5 DIP rim band (bright top, almost nothing at the sides, soft
-    // dark bottom), which follows the caps.
+    // bent by render/LensMaterial. The lens is the surface; a whisper of a 0.08/0.05 body keeps the pane
+    // from reading as a hole. There is NO drawn rim: the user saw the 1 DIP 0.45 line as a ring around the
+    // pill, and the body's own boundary plus the refraction are the edge the glass gets for free.
     //
-    // THE NUMBERS come from the reference the user chose (shuding/liquid-glass): a steady centre, a narrow
-    // band at the edge, and the round ends bending more than the straight top and bottom. On a 36 DIP pill
-    // that is a 12-18 DIP edge band, 5-11 DIP of edge displacement and a 4% body magnifier
-    // (render/LensProfile.h). The ink is near black because the body is light; PillInk only switches to the
-    // light ink for a theme whose body is nearly clear.
+    // THE NUMBERS come from the reference the user chose (shuding/liquid-glass): a flat centre, a narrow
+    // band at the edge, and the round ends bending more than the straight top and bottom. On a 36 DIP
+    // pill that is a 12-18 DIP edge band, 5-11 DIP of edge displacement and a 4% body magnifier
+    // (render/LensProfile.h). The ink is near
+    // black to match the reference; PillInk switches to the light ink when the refracted backdrop under
+    // the pill is dark (a theme with a substantial body keeps the theme ink).
     //
     // `tint` is 0: the reference has no coloured fringe, and the old cool/violet end tints were a
     // painted-material cue. `sweep` is the pointer's light, which is not part of the reference's static
     // material; it is kept because the bar is interactive and it is only drawn while the pointer is on
     // the island.
-    {L"\u73BB\u7483", {0.88f, 0.94f, 1.00f, 0.36f}, {0.78f, 0.89f, 1.00f, 0.28f}, 0.20f,
+    {L"\u73BB\u7483", {0.88f, 0.94f, 1.00f, 0.08f}, {0.78f, 0.89f, 1.00f, 0.05f}, 0.20f,
      {0.90f, 0.94f, 1.00f, 0.55f}, 0.30f, {0.15f, 0.45f, 0.85f, 0.95f}, {0.03f, 0.04f, 0.06f, 1.0f},
      0.0f, 0.03f, 0.55f, 0.00f, 0.00f, {1.0f, 1.0f, 1.0f, 1.0f}, true},
 };

@@ -651,9 +651,9 @@ void Renderer::RenderFrame(const FrameState& frame) {
         D2D1_COLOR_F pillBottomFill =
             island::TintedFill(theme, theme.pillBottom, island::WallpaperTint(), 0.85f);
         // The surface itself: the two-stop tinted fill and its fringe hairline, from the cached material.
-        // THE LENS FIRST: the glass theme's surface is the lens under a light 0.36/0.28 body -- a pale pane,
-        // not the grey film a nearly-clear body made on a dark wallpaper. There is no drawn hairline; the
-        // 2.5 DIP rim band is the edge. Nothing painted sits on top except the pointer's light.
+        // THE LENS FIRST: the glass theme's surface is the lens, with a 0.08 body just enough to keep the
+        // pane from reading as a hole. There is no drawn rim: the body's boundary and the refraction are
+        // the edge. Nothing painted sits on top of it except the pointer's light, when there is one.
         // THE NOTICE/CALL STRIP: the strip is wider than the pill, and a lens sized to the pill cut a
         // visible seam where its refraction ended ("the right side looks cut with a knife"). A call does
         // not go through statusStripOpacity, so the notice line and the call flag are part of the test.
