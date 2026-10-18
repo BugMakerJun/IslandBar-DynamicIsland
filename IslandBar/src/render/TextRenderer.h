@@ -659,7 +659,7 @@ public:
         unsigned long long iconRevision = 0;
     };
     void DrawCallStrip(ID2D1DeviceContext2* context, const RoundedBox& box,
-                       const CallStripText& text, float opacity);
+                       const CallStripText& text, float opacity, bool showTimer = true);
 
     // Height, in DIPs, that a taskbar button's title needs at the current face size. Reported so
     // the layout can be checked against the strip it has to fit in.

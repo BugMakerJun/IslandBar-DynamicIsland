@@ -955,7 +955,8 @@ void Renderer::RenderFrame(const FrameState& frame) {
                 if (frame.callUp) {
                     // A CALL first: same strip, different thing to say -- and it says it with a timer and a
                     // level meter rather than with words, because that is what the reference does.
-                    text_->DrawCallStrip(d2dContext_, noticeBox, frame.callStrip, frame.contentOpacity);
+                    text_->DrawCallStrip(d2dContext_, noticeBox, frame.callStrip, frame.contentOpacity,
+                                     !frame.fullscreenApp);
                 } else {
                     // The message, in place of the clock -- the same trade the lyric strip makes, and for the
                     // same reason: while the strip is up, the time is the less useful of the two things the

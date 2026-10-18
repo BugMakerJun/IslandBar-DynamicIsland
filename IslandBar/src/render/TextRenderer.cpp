@@ -1282,7 +1282,7 @@ ID2D1Bitmap1* TextRenderer::CallIconBitmap(ID2D1DeviceContext2* context, const u
 }
 
 void TextRenderer::DrawCallStrip(ID2D1DeviceContext2* context, const RoundedBox& box,
-                                 const CallStripText& text, float opacity) {
+                                 const CallStripText& text, float opacity, bool showTimer) {
     if (!context) return;
 
     const float height = box.rect.bottom - box.rect.top;
@@ -1336,9 +1336,13 @@ void TextRenderer::DrawCallStrip(ID2D1DeviceContext2* context, const RoundedBox&
     cursorX += avatarSide + 10.0f;
 
     // --- the timer, in the green a call is ------------------------------------------
+    //
+    // NOT WHILE A GAME HAS THE SCREEN: the strip is then a small call indicator over a full-screen
+    // picture, and a clock counting at it is the one thing on it that is not about the call ("玩游戏
+    // 全屏 通话 不用显示左边的时间"). The icon and the level meter stay.
     wchar_t timer[32] = {};
     CallTimerText(text.seconds, timer, 32);
-    if (timer[0] != L'\0' && bodyFormat_) {
+    if (showTimer && timer[0] != L'\0' && bodyFormat_) {
         ID2D1SolidColorBrush* green = nullptr;
         // The green iOS uses for a call in progress (0x30D158), as fractions of 255.
         const D2D1_COLOR_F callGreen = D2D1::ColorF(0.188f, 0.820f, 0.345f, 0.98f * opacity);
