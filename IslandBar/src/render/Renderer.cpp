@@ -799,6 +799,22 @@ void Renderer::RenderFrame(const FrameState& frame) {
             island::DrawLensBottomCaustic(d2dContext_, rounded, theme, 1.0f);
         }
 
+        // THE ISLAND'S OWN SKY: rain that falls, a sunset that glows, stars at night and the slow sun,
+        // inside the island's WHOLE surface and under everything the pill draws. It used to sit inside
+        // the STATUS LINE's branch, so it vanished the moment music took that line -- "放音乐的时候 根据
+        // 天气和时间变化的效果没有了". Here it is behind the music row, a call and a message too. A card's
+        // own copy is drawn by FillCardSurface (see SetCardAmbient).
+        {
+            SYSTEMTIME localNow = {};
+            GetLocalTime(&localNow);
+            const int nowMinutes = static_cast<int>(localNow.wHour) * 60 +
+                                   static_cast<int>(localNow.wMinute);
+            const float phase = static_cast<float>(GetTickCount64() % 3600000ull) / 1000.0f;
+            const island::AmbientKind ambient = island::AmbientKindFor(
+                frame.statusCode, nowMinutes, frame.sunriseMinutes, frame.sunsetMinutes);
+            island::DrawAmbient(d2dContext_, rounded, ambient, phase, frame.contentOpacity, theme);
+        }
+
         // The rim: 0 in 玻璃 -- the drawn 1 DIP line read as a ring around the pill. The painted themes
         // still opt in.
         island::DrawThinRim(d2dContext_, rounded, theme, frame.pointerOnIsland ? 1.10f : 1.0f);
@@ -1008,30 +1024,6 @@ void Renderer::RenderFrame(const FrameState& frame) {
                 //
                 // NO SURFACE: the pill has already been filled with exactly the colour the strip paints
                 // for itself.
-                // THE ISLAND'S OWN SKY. Under the words, inside the resting pill, fading with the
-                // content: rain that falls, a sunset that glows from the bottom, stars at night, a
-                // slow sun in the afternoon. The kind comes from the real weather code and the
-                // site's own sunrise and sunset (render/Ambient.h).
-                {
-                    SYSTEMTIME localNow = {};
-                    GetLocalTime(&localNow);
-                    const int nowMinutes = static_cast<int>(localNow.wHour) * 60 +
-                                           static_cast<int>(localNow.wMinute);
-                    const float phase = static_cast<float>(GetTickCount64() % 3600000ull) / 1000.0f;
-                    const island::AmbientKind ambient = island::AmbientKindFor(
-                        frame.statusCode, nowMinutes, frame.sunriseMinutes, frame.sunsetMinutes);
-                    // THE WHOLE ISLAND SURFACE, from the same IslandSurfaceFromPillBox the glass and
-                    // the rim are built from: the system button and the Start button on the left, the
-                    // status pill in the middle and the tray button on the right are ONE shape. Drawing
-                    // into RowAnchorBox stopped at the status pill and left the two button ends bare --
-                    // "左侧系统按钮 开始按钮和右侧的托盘按钮没有覆盖上".
-                    const D2D1_ROUNDED_RECT ambientShape = {
-                        D2D1::RectF(shape.rect.left, shape.rect.top, shape.rect.right,
-                                    shape.rect.bottom),
-                        shape.radiusX, shape.radiusY};
-                    island::DrawAmbient(d2dContext_, ambientShape, ambient, phase,
-                                        frame.contentOpacity, island::CurrentTheme());
-                }
                 text_->DrawStatusLine(d2dContext_, lineBox, frame.contentOpacity, frame.statusSky,
                                       frame.statusTemperature, frame.statusCode,
                                       D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
