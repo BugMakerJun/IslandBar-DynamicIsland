@@ -146,10 +146,10 @@ bool TextRenderer::Initialize() {
     // THE TIME IS THE ISLAND. The date and the reading are small in the TOP CORNERS; the time is 18 DIP
     // semibold in the CENTRE. They used to be one 11.5/13 run on one line, which made the time a word in a
     // sentence rather than the thing the island is read for.
-    makeStatusFormat(9.5f, DWRITE_FONT_WEIGHT_NORMAL, &statusWeekdayFormat_);
-    makeStatusFormat(9.5f, DWRITE_FONT_WEIGHT_NORMAL, &statusDayFormat_);
+    makeStatusFormat(9.5f, DWRITE_FONT_WEIGHT_SEMI_BOLD, &statusWeekdayFormat_);
+    makeStatusFormat(9.5f, DWRITE_FONT_WEIGHT_SEMI_BOLD, &statusDayFormat_);
     makeStatusFormat(20.0f, DWRITE_FONT_WEIGHT_EXTRA_BOLD, &statusTimeFormat_);
-    makeStatusFormat(9.5f, DWRITE_FONT_WEIGHT_NORMAL, &statusWeatherFormat_);
+    makeStatusFormat(9.5f, DWRITE_FONT_WEIGHT_SEMI_BOLD, &statusWeatherFormat_);
 
     // The music card's top row: the source name and the volume readout.
     //
