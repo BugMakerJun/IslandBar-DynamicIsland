@@ -499,6 +499,10 @@ public:
     // Initialize and after every DpiChanged.
     bool BindToWindow(HWND hwnd, float scale);
 
+    // The average colour of the refracted backdrop under the pill, for the hover preview's card. It is
+    // the island's own glass colour, one frame behind -- invisible for a card that appears on a dwell.
+    D2D1_COLOR_F GlassColour() const { return lens_.BackdropColour(); }
+
     // Clears to fully transparent and draws the frame: the pill, then whatever
     // the frame says belongs inside it.
     //

@@ -82,13 +82,11 @@ ThumbnailPlacement ThumbnailBoxFor(int sourceWidthPx, int sourceHeightPx, const 
                                    const RECT& monitorPx, float scale);
 
 // The card's own furniture: its body, its ink and its rim. Supplied by the app layer from the active
-// theme, because platform/ must not know about render/Theme. `acrylic` asks for a real blurred backdrop
-// behind the card's bands (the glass theme); if the compositor refuses it, the bands fall back to `fill`.
+// theme, because platform/ must not know about render/Theme.
 struct PreviewStyle {
     COLORREF fill = RGB(18, 18, 22);
     COLORREF ink = RGB(214, 219, 228);
     COLORREF rim = RGB(56, 56, 66);
-    bool acrylic = false;
 };
 
 // The preview window itself.
@@ -109,8 +107,8 @@ public:
     // every other answer (window exists, right rectangle, visible, thumbnail registered S_OK) said
     // otherwise (HANDOFF 8.51).
     bool Create(HWND owner);
-    // The card's colours, from the active theme. Safe to call every frame: it only re-applies the
-    // acrylic when its on/off state changes, and repaints.
+    // The card's colours, from the active theme. Safe to call every frame: it stores the style and
+    // repaints.
     void SetStyle(const PreviewStyle& style);
     void Destroy();
     bool Ready() const { return hwnd_ != nullptr; }
@@ -151,9 +149,6 @@ private:
     static LRESULT CALLBACK WndProcThunk(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
     // Paints the card: everything EXCEPT the picture, which belongs to the compositor.
     void PaintCard(HDC dc);
-    // Turns the window's background into the acrylic backdrop, tinted by style_.fill. False when the
-    // compositor refuses; the caller then paints the bands with style_.fill instead.
-    bool ApplyAcrylic();
 
     HWND hwnd_ = nullptr;
     HWND source_ = nullptr;
@@ -162,7 +157,6 @@ private:
     RECT card_ = {};
     RECT picture_ = {};
     PreviewStyle style_ = {};
-    bool acrylicOn_ = false;
     // The window's title and icon for the card's header. The icon is the window's own (borrowed, never
     // destroyed): the same one the icon row shows, so the card and the row agree about what the window is.
     wchar_t title_[256] = {};

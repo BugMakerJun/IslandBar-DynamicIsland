@@ -18,39 +18,6 @@ namespace {
 
 constexpr wchar_t kThumbnailClassName[] = L"IslandBarThumbnail";
 
-// The undocumented acrylic call (user32!SetWindowCompositionAttribute). It is the only way to get a
-// blurred backdrop behind a plain WS_POPUP: the DWM Mica is a frame material and does not show behind a
-// region-clipped popup. When it is unavailable the card falls back to a solid fill, not to black.
-struct AccentPolicy {
-    int state;
-    int flags;
-    int gradientColour;   // AABBGGRR
-    int animationId;
-};
-
-struct WindowCompositionAttributeData {
-    int attribute;
-    void* data;
-    size_t size;
-};
-
-constexpr int kWcaAccentPolicy = 19;
-constexpr int kAccentEnableAcrylicBlurBehind = 4;
-constexpr int kAccentFlagDrawAll = 2;
-
-using SetWindowCompositionAttributeFn =
-    BOOL(WINAPI*)(HWND, WindowCompositionAttributeData*);
-
-SetWindowCompositionAttributeFn CompositionSetter() {
-    static const SetWindowCompositionAttributeFn setter = [] {
-        HMODULE user32 = GetModuleHandleW(L"user32.dll");
-        return user32 ? reinterpret_cast<SetWindowCompositionAttributeFn>(
-                            GetProcAddress(user32, "SetWindowCompositionAttribute"))
-                      : nullptr;
-    }();
-    return setter;
-}
-
 } // namespace
 
 ThumbnailPlacement ThumbnailBoxFor(int sourceWidthPx, int sourceHeightPx, const RECT& iconBoxPx,
@@ -171,52 +138,12 @@ bool ThumbnailPreview::Create(HWND owner) {
     hwnd_ = CreateWindowExW(exStyle, kThumbnailClassName, L"IslandBar preview", WS_POPUP, 0, 0, 1, 1,
                             owner, nullptr, GetModuleHandleW(nullptr), this);
     if (!hwnd_) return false;
-
-    if (style_.acrylic) {
-        acrylicOn_ = ApplyAcrylic();
-        if (!acrylicOn_) style_.acrylic = false;
-    }
     return true;
 }
 
 void ThumbnailPreview::SetStyle(const PreviewStyle& style) {
-    const bool wantAcrylic = style.acrylic;
     style_ = style;
-    if (!hwnd_) return;
-    if (wantAcrylic && !acrylicOn_) {
-        acrylicOn_ = ApplyAcrylic();
-        if (!acrylicOn_) style_.acrylic = false;
-    } else if (!wantAcrylic) {
-        // The accent cannot be removed through the same call; the paint covers the bands with style_.fill,
-        // which is the whole of what a non-glass theme needs.
-        acrylicOn_ = false;
-    }
-    InvalidateRect(hwnd_, nullptr, FALSE);
-}
-
-bool ThumbnailPreview::ApplyAcrylic() {
-    if (!hwnd_) return false;
-    // The whole client has to be the frame for the acrylic to show behind it; the picture is still drawn
-    // by the compositor into the same client, over the backdrop.
-    MARGINS margins = {-1, -1, -1, -1};
-    if (FAILED(DwmExtendFrameIntoClientArea(hwnd_, &margins))) return false;
-
-    const SetWindowCompositionAttributeFn setter = CompositionSetter();
-    if (!setter) return false;
-
-    const int r = static_cast<int>(GetRValue(style_.fill));
-    const int g = static_cast<int>(GetGValue(style_.fill));
-    const int b = static_cast<int>(GetBValue(style_.fill));
-
-    AccentPolicy accent = {};
-    accent.state = kAccentEnableAcrylicBlurBehind;
-    accent.flags = kAccentFlagDrawAll;
-    accent.gradientColour = (0xCC << 24) | (b << 16) | (g << 8) | r;
-    WindowCompositionAttributeData data = {};
-    data.attribute = kWcaAccentPolicy;
-    data.data = &accent;
-    data.size = sizeof(accent);
-    return setter(hwnd_, &data) != FALSE;
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
 void ThumbnailPreview::Destroy() {
@@ -230,7 +157,6 @@ void ThumbnailPreview::Destroy() {
     }
     source_ = nullptr;
     visible_ = false;
-    acrylicOn_ = false;
 }
 
 SIZE ThumbnailPreview::Begin(HWND source) {
@@ -356,10 +282,10 @@ void ThumbnailPreview::PaintCard(HDC dc) {
     const int pictureLeft = static_cast<int>(picture_.left - card_.left);
     const int pictureRight = static_cast<int>(picture_.right - card_.left);
 
-    // On the acrylic path the bands are left UNPAINTED: the window's backdrop is the blurred desktop, and
-    // painting them would cover exactly the glass the card is for. The solid fill is the fallback for a
-    // compositor that refused the accent, and for the painted themes.
-    if (!acrylicOn_) {
+    // The card's body, painted from the style the app layer supplied. It used to be a hard-coded
+    // RGB(18,18,22) for every theme; the glass theme now hands it the island's own refracted average, so
+    // the card is the island's glass colour rather than a black or white plate.
+    {
         HBRUSH card = CreateSolidBrush(style_.fill);
         const RECT bands[4] = {
             {client.left, client.top, client.right, pictureTop},                  // the header, as wide as the card

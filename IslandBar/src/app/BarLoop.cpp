@@ -74,9 +74,9 @@
 namespace {
 
 // The hover preview's card, from the active theme. platform/ cannot see render/Theme, so the app layer
-// hands it three colours and the acrylic flag: the glass theme gets the blurred backdrop and the theme's
-// ink; a painted theme gets its card fill and its ink, which is what those themes are.
-island::PreviewStyle PreviewStyleFor(const island::Theme& theme) {
+// hands it three colours: the glass theme gets the island's own refracted average as its body and the
+// same PillInk as its title; a painted theme gets its card fill and its ink, which is what those themes are.
+island::PreviewStyle PreviewStyleFor(const island::Theme& theme, const D2D1_COLOR_F& glass) {
     const auto rgb = [](const D2D1_COLOR_F& colour) {
         const auto channel = [](float value) {
             const float clamped = value < 0.0f ? 0.0f : (value > 1.0f ? 1.0f : value);
@@ -85,10 +85,9 @@ island::PreviewStyle PreviewStyleFor(const island::Theme& theme) {
         return RGB(channel(colour.r), channel(colour.g), channel(colour.b));
     };
     island::PreviewStyle style;
-    style.fill = rgb(theme.cardFill);
-    style.ink = rgb(theme.ink);
+    style.fill = rgb(theme.lens ? glass : theme.cardFill);
+    style.ink = rgb(theme.lens ? island::PillInk(1.0f) : theme.ink);
     style.rim = rgb(theme.lens ? theme.highlight : theme.ink);
-    style.acrylic = theme.lens;
     return style;
 }
 
@@ -962,7 +961,7 @@ static void StartWeatherAndPreview(bool& previewReady, island::BarSystems& syste
     // bitmap -- see ThumbnailPreview.h.
     // Owned by the bar's window, so it can never be covered by it (see Create).
     previewReady = systems.preview.Create(systems.window.Handle());
-    if (previewReady) systems.preview.SetStyle(PreviewStyleFor(island::CurrentTheme()));
+    if (previewReady) systems.preview.SetStyle(PreviewStyleFor(island::CurrentTheme(), systems.renderer.GlassColour()));
     island::LogAndPrint(previewReady
                             ? "  preview: resting on a task icon shows a live thumbnail"
                             : "  preview: DISABLED (the preview window could not be created)");
@@ -3929,7 +3928,7 @@ static void FillHoverPreview(BarRuntime& runtime, island::FrameState& frame, isl
             // into a flat strip (see ThumbnailPreview.h).
             // The card takes the active theme's colours each time it comes up; the acrylic is applied
             // once (SetStyle only re-applies it when it was off).
-            systems.preview.SetStyle(PreviewStyleFor(island::CurrentTheme()));
+            systems.preview.SetStyle(PreviewStyleFor(island::CurrentTheme(), systems.renderer.GlassColour()));
             const SIZE sourceSize = systems.preview.Begin(wanted);
             const island::ThumbnailPlacement placement = island::ThumbnailBoxFor(
                 sourceSize.cx, sourceSize.cy, iconPx, monitorPx, scale);

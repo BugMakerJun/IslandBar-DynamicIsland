@@ -29,12 +29,16 @@ public:
     // Average luminance (0..1) of the refracted backdrop under the pill, which is what the status
     // line's ink has to stay readable against.
     float BackdropLuminance() const { return backdropLuma_; }
+    // The average COLOUR of the same area. The hover preview's card uses it as its body, so that card is
+    // the island's glass colour rather than a flat white or black fill.
+    D2D1_COLOR_F BackdropColour() const { return backdropColour_; }
 
 private:
     struct Cache;
     Cache* cache_ = nullptr;
     bool ready_ = false;
     float backdropLuma_ = 1.0f;
+    D2D1_COLOR_F backdropColour_ = D2D1::ColorF(0.5f, 0.5f, 0.5f, 1.0f);
 };
 
 }  // namespace island
