@@ -143,15 +143,13 @@ bool TextRenderer::Initialize() {
     // inside a 220 DIP pill and in the 268 DIP band, and the pill -- less its padding -- is what
     // these numbers have to live within. Measured by the self-test, not chosen by eye.
     //
-    // TWO SIZES, not four. The line is `周一 10月12日 22:34 阴 15°` and it used to be set at 12 semibold,
-    // 11, 13 semibold and 11.5 -- four sizes with two weights in one 26 DIP band, which is what makes a
-    // line of small text read as assembled rather than as designed. The weekday, the date and the weather
-    // are one run at one size now, and the time is the only thing that is bigger and heavier, because it
-    // is the only thing being read at a glance.
-    makeStatusFormat(11.5f, DWRITE_FONT_WEIGHT_NORMAL, &statusWeekdayFormat_);
-    makeStatusFormat(11.5f, DWRITE_FONT_WEIGHT_NORMAL, &statusDayFormat_);
-    makeStatusFormat(13.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD, &statusTimeFormat_);
-    makeStatusFormat(11.5f, DWRITE_FONT_WEIGHT_NORMAL, &statusWeatherFormat_);
+    // THE TIME IS THE ISLAND. The date and the reading are small in the TOP CORNERS; the time is 18 DIP
+    // semibold in the CENTRE. They used to be one 11.5/13 run on one line, which made the time a word in a
+    // sentence rather than the thing the island is read for.
+    makeStatusFormat(9.5f, DWRITE_FONT_WEIGHT_NORMAL, &statusWeekdayFormat_);
+    makeStatusFormat(9.5f, DWRITE_FONT_WEIGHT_NORMAL, &statusDayFormat_);
+    makeStatusFormat(18.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD, &statusTimeFormat_);
+    makeStatusFormat(9.5f, DWRITE_FONT_WEIGHT_NORMAL, &statusWeatherFormat_);
 
     // The music card's top row: the source name and the volume readout.
     //
@@ -802,7 +800,23 @@ float TextRenderer::MeasureStatusLine(const wchar_t* weekday, const wchar_t* day
     StatusPiece pieces[12] = {};
     const int count = BuildStatusRun(factory_, formats, weekday, day, time, sky, temperature,
                                      weatherCode, pieces, 12);
-    return StatusRunWidth(pieces, count);
+    // TWO ROWS: the date and the weather across the top corners, the time in the middle. The box has to
+    // hold the wider of the two, plus the 4 DIP corner padding on each side.
+    int timeIndex = -1;
+    for (int i = 0; i < count; ++i) {
+        if (pieces[i].format == formats.time) {
+            timeIndex = i;
+            break;
+        }
+    }
+    if (timeIndex < 0) return StatusRunWidth(pieces, count);
+    float dateWidth = 0.0f;
+    for (int i = 0; i < timeIndex; ++i) dateWidth += pieces[i].widthDip + pieces[i].afterDip;
+    float weatherWidth = 0.0f;
+    for (int i = timeIndex + 1; i < count; ++i) weatherWidth += pieces[i].widthDip + pieces[i].afterDip;
+    const float topRow = dateWidth + weatherWidth + 8.0f;
+    const float timeRow = pieces[timeIndex].widthDip + 8.0f;
+    return topRow > timeRow ? topRow : timeRow;
 }
 
 // The decoded bitmap for one tray icon, cached until the list's revision changes.
@@ -1106,48 +1120,63 @@ void TextRenderer::DrawStatusLine(ID2D1DeviceContext2* context, const RoundedBox
     const int count = BuildStatusRun(factory_, formats, weekdayText_, dayText_, timeText_, sky,
                                      temperature, weatherCode, pieces, 12);
     if (count <= 0) return;
-    const float runWidth = StatusRunWidth(pieces, count);
 
-    // CENTRED in the box, because the box is a fixed width and the run is not: the island is 220
-    // whatever the date happens to be, and centring keeps its two ends even.
-    float x = box.rect.left + ((box.rect.right - box.rect.left) - runWidth) * 0.5f;
-    if (x < box.rect.left + kStatusStripPadDip) x = box.rect.left + kStatusStripPadDip;
-
+    int timeIndex = -1;
     for (int i = 0; i < count; ++i) {
-        const StatusPiece& piece = pieces[i];
-        const float centreY = (box.rect.top + box.rect.bottom) * 0.5f;
-
-        switch (piece.kind) {
-            case StatusPiece::Kind::SkyMark:
-                DrawSkyMark(context,
-                            D2D1::RectF(x, centreY - piece.widthDip * 0.5f, x + piece.widthDip,
-                                        centreY + piece.widthDip * 0.5f),
-                            piece.mark, opacity);
-                break;
-
-            case StatusPiece::Kind::Text: {
-                ID2D1SolidColorBrush* brush = nullptr;
-                // The theme's ink, with the piece's own luminance as its ALPHA: the time stays the
-                // strongest, the date and the reading sit back a step. A grey value here was the last
-                // hard-coded white in the bar, and on the light glass it was unreadable.
-                const D2D1_COLOR_F colour = island::PillInk(opacity * piece.luminance);
-                if (SUCCEEDED(context->CreateSolidColorBrush(colour, &brush)) &&
-                    brush) {
-                    // The piece's own box, which is exactly as wide as the text measured: the format
-                    // centres within it, so the run's arithmetic and the drawing cannot drift.
-                    context->DrawTextW(piece.text, static_cast<UINT32>(std::wcslen(piece.text)),
-                                       piece.format,
-                                       D2D1::RectF(x, box.rect.top, x + piece.widthDip,
-                                                   box.rect.bottom),
-                                       brush);
-                    brush->Release();
-                }
-                break;
-            }
+        if (pieces[i].format == formats.time) {
+            timeIndex = i;
+            break;
         }
-
-        x += piece.widthDip + piece.afterDip;
     }
+    if (timeIndex < 0) return;
+
+    // THE DATE AND THE WEATHER IN THE TOP CORNERS, SMALL; THE TIME IN THE CENTRE, BIG.
+    //
+    // The three used to share one line, centred as a run. That made the time a word in a sentence and
+    // let the length of the date push it off the middle of the island -- which is what "时间居中放大"
+    // was about. The time is now placed at the box's own centre and the other two never move it.
+    const float centreX = (box.rect.left + box.rect.right) * 0.5f;
+    const float centreY = (box.rect.top + box.rect.bottom) * 0.5f;
+    const float topY = box.rect.top + 1.0f;
+    const float topHeight = 12.0f;
+
+    const auto drawPiece = [&](const StatusPiece& piece, float x, float top, float height) {
+        const float centre = top + height * 0.5f;
+        if (piece.kind == StatusPiece::Kind::SkyMark) {
+            DrawSkyMark(context, D2D1::RectF(x, centre - height * 0.5f, x + piece.widthDip,
+                                             centre + height * 0.5f),
+                        piece.mark, opacity);
+            return;
+        }
+        if (!piece.text || piece.text[0] == L'\0' || !piece.format) return;
+        ID2D1SolidColorBrush* brush = nullptr;
+        const D2D1_COLOR_F colour = island::PillInk(opacity * piece.luminance);
+        if (SUCCEEDED(context->CreateSolidColorBrush(colour, &brush)) && brush) {
+            context->DrawTextW(piece.text, static_cast<UINT32>(std::wcslen(piece.text)),
+                               piece.format,
+                               D2D1::RectF(x, top, x + piece.widthDip, top + height), brush);
+            brush->Release();
+        }
+    };
+
+    float dateWidth = 0.0f;
+    for (int i = 0; i < timeIndex; ++i) dateWidth += pieces[i].widthDip + pieces[i].afterDip;
+    float weatherWidth = 0.0f;
+    for (int i = timeIndex + 1; i < count; ++i) weatherWidth += pieces[i].widthDip + pieces[i].afterDip;
+
+    float x = box.rect.left + 4.0f;
+    for (int i = 0; i < timeIndex; ++i) {
+        drawPiece(pieces[i], x, topY, topHeight);
+        x += pieces[i].widthDip + pieces[i].afterDip;
+    }
+    x = box.rect.right - 4.0f - weatherWidth;
+    for (int i = timeIndex + 1; i < count; ++i) {
+        drawPiece(pieces[i], x, topY, topHeight);
+        x += pieces[i].widthDip + pieces[i].afterDip;
+    }
+
+    const StatusPiece& timePiece = pieces[timeIndex];
+    drawPiece(timePiece, centreX - timePiece.widthDip * 0.5f, centreY - 11.0f, 22.0f);
 }
 
 void TextRenderer::CurrentDateParts(wchar_t* weekday, size_t weekdayCapacity, wchar_t* day,
