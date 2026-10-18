@@ -553,6 +553,11 @@ struct StatusPiece {
     float luminance = 0.93f;
 };
 
+// The user asked to hide the weekday, the date and the weather for now, leaving the time alone in the
+// island. MeasureStatusLine still measures the full run, so the box does not jump when they come back;
+// this switch only decides what is DRAWN.
+constexpr bool kStatusExtrasVisible = false;
+
 // The four faces the run sets its words in. Passed in rather than reached for, because this file's
 // helpers are free functions and the formats belong to the TextRenderer that created them.
 struct StatusRunFormats {
@@ -1137,8 +1142,6 @@ void TextRenderer::DrawStatusLine(ID2D1DeviceContext2* context, const RoundedBox
     // was about. The time is now placed at the box's own centre and the other two never move it.
     const float centreX = (box.rect.left + box.rect.right) * 0.5f;
     const float centreY = (box.rect.top + box.rect.bottom) * 0.5f;
-    const float topY = box.rect.top + 1.0f;
-    const float topHeight = 12.0f;
 
     const auto drawPiece = [&](const StatusPiece& piece, float x, float top, float height) {
         const float centre = top + height * 0.5f;
@@ -1159,20 +1162,25 @@ void TextRenderer::DrawStatusLine(ID2D1DeviceContext2* context, const RoundedBox
         }
     };
 
-    float dateWidth = 0.0f;
-    for (int i = 0; i < timeIndex; ++i) dateWidth += pieces[i].widthDip + pieces[i].afterDip;
-    float weatherWidth = 0.0f;
-    for (int i = timeIndex + 1; i < count; ++i) weatherWidth += pieces[i].widthDip + pieces[i].afterDip;
+    if (kStatusExtrasVisible) {
+        const float topY = box.rect.top + 1.0f;
+        const float topHeight = 12.0f;
 
-    float x = box.rect.left + 4.0f;
-    for (int i = 0; i < timeIndex; ++i) {
-        drawPiece(pieces[i], x, topY, topHeight);
-        x += pieces[i].widthDip + pieces[i].afterDip;
-    }
-    x = box.rect.right - 4.0f - weatherWidth;
-    for (int i = timeIndex + 1; i < count; ++i) {
-        drawPiece(pieces[i], x, topY, topHeight);
-        x += pieces[i].widthDip + pieces[i].afterDip;
+        float dateWidth = 0.0f;
+        for (int i = 0; i < timeIndex; ++i) dateWidth += pieces[i].widthDip + pieces[i].afterDip;
+        float weatherWidth = 0.0f;
+        for (int i = timeIndex + 1; i < count; ++i) weatherWidth += pieces[i].widthDip + pieces[i].afterDip;
+
+        float x = box.rect.left + 4.0f;
+        for (int i = 0; i < timeIndex; ++i) {
+            drawPiece(pieces[i], x, topY, topHeight);
+            x += pieces[i].widthDip + pieces[i].afterDip;
+        }
+        x = box.rect.right - 4.0f - weatherWidth;
+        for (int i = timeIndex + 1; i < count; ++i) {
+            drawPiece(pieces[i], x, topY, topHeight);
+            x += pieces[i].widthDip + pieces[i].afterDip;
+        }
     }
 
     const StatusPiece& timePiece = pieces[timeIndex];
