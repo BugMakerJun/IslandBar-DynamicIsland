@@ -176,6 +176,7 @@ struct MaterialCache {
     ID2D1LinearGradientBrush* bottomShade = nullptr;
     ID2D1LinearGradientBrush* rimLine = nullptr;
     ID2D1LinearGradientBrush* specularRim = nullptr;
+    ID2D1LinearGradientBrush* causticRim = nullptr;
     ID2D1LinearGradientBrush* sweepBand = nullptr;
     ID2D1RadialGradientBrush* sweep = nullptr;
     ID2D1RadialGradientBrush* sheen = nullptr;
@@ -208,6 +209,7 @@ void ReleaseCache() {
     if (g_cache.bottomShade) g_cache.bottomShade->Release();
     if (g_cache.rimLine) g_cache.rimLine->Release();
     if (g_cache.specularRim) g_cache.specularRim->Release();
+    if (g_cache.causticRim) g_cache.causticRim->Release();
     if (g_cache.sweepBand) g_cache.sweepBand->Release();
     if (g_cache.sweep) g_cache.sweep->Release();
     if (g_cache.sheen) g_cache.sheen->Release();
@@ -265,11 +267,21 @@ bool EnsureMaterial(ID2D1DeviceContext2* context, const Theme& theme) {
     // at the top and again at the bottom where the glass catches the table. One DIP wide, so it reads as
     // the lit edge of the material rather than as a frame drawn round it.
     const D2D1_GRADIENT_STOP specularStops[3] = {
-        {0.0f, ThemeHighlight(theme.rim * 1.40f)},
+        {0.0f, ThemeHighlight(theme.rim * 1.55f)},
         {0.55f, ThemeHighlight(theme.rim * 0.35f)},
-        {1.0f, ThemeHighlight(theme.rim * 1.00f)},
+        {1.0f, ThemeHighlight(theme.rim * 1.10f)},
     };
     g_cache.specularRim = MakeLinear(context, specularStops, 3);
+
+    // THE CAUSTIC: light gathered through the bottom of the glass, a narrow bright run just inside the
+    // contour. It is what makes the pane look thick rather than drawn -- the reference's bottom edge has
+    // exactly this.
+    const D2D1_GRADIENT_STOP causticRimStops[3] = {
+        {0.0f, ThemeHighlight(0.0f)},
+        {0.58f, ThemeHighlight(theme.rim * 0.22f)},
+        {1.0f, ThemeHighlight(theme.rim * 1.10f)},
+    };
+    g_cache.causticRim = MakeLinear(context, causticRimStops, 3);
 
     const D2D1_GRADIENT_STOP sweepStops[3] = {
         {0.0f, ThemeHighlight(theme.sweep * 0.95f)},
@@ -507,6 +519,15 @@ void DrawThinRim(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, c
     if (!EnsureMaterial(context, theme) || !g_cache.specularRim) return;
     PlaceLinear(g_cache.specularRim, shape.rect.left, shape.rect.top, shape.rect.bottom, opacity);
     context->DrawRoundedRectangle(&shape, g_cache.specularRim, 1.05f);
+    if (theme.lens && g_cache.causticRim) {
+        const float inset = 1.8f;
+        const D2D1_ROUNDED_RECT inner = {
+            D2D1::RectF(shape.rect.left + inset, shape.rect.top + inset, shape.rect.right - inset,
+                        shape.rect.bottom - inset),
+            std::max(0.0f, shape.radiusX - inset), std::max(0.0f, shape.radiusY - inset)};
+        PlaceLinear(g_cache.causticRim, shape.rect.left, shape.rect.top, shape.rect.bottom, opacity);
+        context->DrawRoundedRectangle(&inner, g_cache.causticRim, 1.0f);
+    }
 }
 
 void DrawEdgeTints(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,

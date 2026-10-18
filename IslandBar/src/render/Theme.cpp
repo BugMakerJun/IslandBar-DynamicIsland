@@ -70,7 +70,7 @@ const Theme kThemes[] = {
     // the highlight are separate colours for exactly this theme.
     {L"\u73BB\u7483", {0.88f, 0.94f, 1.00f, 0.00f}, {0.78f, 0.89f, 1.00f, 0.00f}, 0.20f,
      {0.90f, 0.94f, 1.00f, 0.55f}, 0.30f, {0.15f, 0.45f, 0.85f, 0.95f}, {0.03f, 0.04f, 0.06f, 1.0f},
-     0.0f, 0.03f, 0.55f, 0.22f, 0.25f, {1.0f, 1.0f, 1.0f, 1.0f}, true},
+     0.0f, 0.03f, 0.55f, 0.30f, 0.25f, {1.0f, 1.0f, 1.0f, 1.0f}, true},
 };
 constexpr int kThemeCount = static_cast<int>(sizeof(kThemes) / sizeof(kThemes[0]));
 
