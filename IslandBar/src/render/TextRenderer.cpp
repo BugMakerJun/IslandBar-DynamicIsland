@@ -286,7 +286,7 @@ bool TextRenderer::Initialize() {
         DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
         24.0f, L"zh-CN", &musicTitleFormat_);
     if (SUCCEEDED(hr)) {
-        musicTitleFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        musicTitleFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         musicTitleFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         musicTitleFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
         trimWithEllipsis(musicTitleFormat_);
@@ -297,7 +297,7 @@ bool TextRenderer::Initialize() {
         DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
         14.0f, L"zh-CN", &musicSubtitleFormat_);
     if (SUCCEEDED(hr)) {
-        musicSubtitleFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        musicSubtitleFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         musicSubtitleFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         musicSubtitleFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
         trimWithEllipsis(musicSubtitleFormat_);
@@ -310,7 +310,7 @@ bool TextRenderer::Initialize() {
         DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
         16.5f, L"zh-CN", &musicLyricFormat_);
     if (SUCCEEDED(hr)) {
-        musicLyricFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        musicLyricFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         musicLyricFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         musicLyricFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
         trimWithEllipsis(musicLyricFormat_);
@@ -320,7 +320,7 @@ bool TextRenderer::Initialize() {
         DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
         14.0f, L"zh-CN", &musicLyricNextFormat_);
     if (SUCCEEDED(hr)) {
-        musicLyricNextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        musicLyricNextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         musicLyricNextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         musicLyricNextFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
         trimWithEllipsis(musicLyricNextFormat_);
@@ -1937,10 +1937,13 @@ void TextRenderer::DrawMusicCard(ID2D1DeviceContext2* context, const RoundedBox&
                 if (secondaryBrush) context->DrawTextLayout(origin, layoutLine, secondaryBrush);
                 const float fraction = text.lyricProgress > 1.0f ? 1.0f : text.lyricProgress;
                 const float filled = metrics.widthIncludingTrailingWhitespace * fraction;
+                // The text is CENTRED in its rect, so the karaoke starts at the TEXT's left edge -- which
+                // the layout reports in `metrics.left` -- rather than at the rect's.
+                const float textLeft = layout.lyricCurrent.left + metrics.left;
                 if (primaryBrush && fraction > 0.0f) {
                     context->PushAxisAlignedClip(
-                        D2D1::RectF(layout.lyricCurrent.left, layout.lyricCurrent.top,
-                                    layout.lyricCurrent.left + filled, layout.lyricCurrent.bottom),
+                        D2D1::RectF(textLeft, layout.lyricCurrent.top, textLeft + filled,
+                                    layout.lyricCurrent.bottom),
                         D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
                     context->DrawTextLayout(origin, layoutLine, primaryBrush);
                     context->PopAxisAlignedClip();
@@ -1948,8 +1951,8 @@ void TextRenderer::DrawMusicCard(ID2D1DeviceContext2* context, const RoundedBox&
                 if (accentBrush && fraction > 0.0f) {
                     // The sung part's underline: the accent, where the cover's colour reads.
                     const D2D1_ROUNDED_RECT sung = {
-                        D2D1::RectF(layout.lyricCurrent.left, layout.lyricCurrent.bottom - 2.0f,
-                                    layout.lyricCurrent.left + filled, layout.lyricCurrent.bottom),
+                        D2D1::RectF(textLeft, layout.lyricCurrent.bottom - 2.0f, textLeft + filled,
+                                    layout.lyricCurrent.bottom),
                         1.0f, 1.0f};
                     context->FillRoundedRectangle(&sung, accentBrush);
                 }
@@ -1958,13 +1961,13 @@ void TextRenderer::DrawMusicCard(ID2D1DeviceContext2* context, const RoundedBox&
         }
     } else if (secondaryBrush && musicLyricFormat_) {
         DrawTextIn(context, musicLyricFormat_, L"暂无歌词", layout.lyricCurrent, secondaryBrush,
-                   DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                   DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     }
     if (text.lyricNext && text.lyricNext[0] != '\0' && musicLyricNextFormat_) {
         wchar_t wideNext[512] = {};
         if (MultiByteToWideChar(CP_UTF8, 0, text.lyricNext, -1, wideNext, 512) > 0) {
             DrawTextIn(context, musicLyricNextFormat_, wideNext, layout.lyricNext, secondaryBrush,
-                       DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                       DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         }
     }
 
