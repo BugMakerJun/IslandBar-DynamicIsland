@@ -1642,14 +1642,6 @@ void TextRenderer::DrawMusicCard(ID2D1DeviceContext2* context, const RoundedBox&
         popSilhouette();
     }
 
-    // The glass edge, over the album wash and the thin scrim.
-    if (island::CurrentTheme().lens) {
-        const D2D1_ROUNDED_RECT rounded = {
-            D2D1::RectF(box.rect.left, box.rect.top, box.rect.right, box.rect.bottom),
-            box.radiusX, box.radiusY};
-        island::DrawLensRimBand(context, rounded, island::CurrentTheme(), opacity);
-    }
-
     // Text colour. Everything below uses these three brushes, so the whole card's contrast moves together.
     // The ALBUM is what is behind the words, not the island: black or white comes from the blurred
     // background's average. PillInk is only the fallback for a track that published no cover.
@@ -1675,6 +1667,44 @@ void TextRenderer::DrawMusicCard(ID2D1DeviceContext2* context, const RoundedBox&
         }
     }
 
+    // THE COVER'S OWN COLOUR, behind the top half. The wash above is the album's PICTURE, blurred; this
+    // is its COLOUR, pooled where the cover sits and fading out across the card, so a track with a
+    // saturated cover reads as that colour rather than as a grey photograph.
+    {
+        const D2D1_GRADIENT_STOP stops[2] = {
+            {0.0f, D2D1::ColorF(accent.r, accent.g, accent.b, 0.16f * opacity)},
+            {1.0f, D2D1::ColorF(accent.r, accent.g, accent.b, 0.0f)},
+        };
+        ID2D1GradientStopCollection* collection = nullptr;
+        if (SUCCEEDED(context->CreateGradientStopCollection(stops, 2, &collection)) && collection) {
+            ID2D1RadialGradientBrush* glow = nullptr;
+            const float centreX = (layout.artwork.left + layout.artwork.right) * 0.5f;
+            const float centreY = (layout.artwork.top + layout.artwork.bottom) * 0.5f;
+            context->CreateRadialGradientBrush(
+                D2D1::RadialGradientBrushProperties(
+                    D2D1::Point2F(centreX, centreY), D2D1::Point2F(0.0f, 0.0f),
+                    (box.rect.right - box.rect.left) * 0.55f,
+                    (box.rect.bottom - box.rect.top) * 0.80f),
+                collection, &glow);
+            collection->Release();
+            if (glow) {
+                pushSilhouette();
+                context->FillRectangle(
+                    D2D1::RectF(box.rect.left, box.rect.top, box.rect.right, box.rect.bottom), glow);
+                popSilhouette();
+                glow->Release();
+            }
+        }
+    }
+
+    // The glass edge, over the album wash, the thin scrim and the glow.
+    if (island::CurrentTheme().lens) {
+        const D2D1_ROUNDED_RECT rounded = {
+            D2D1::RectF(box.rect.left, box.rect.top, box.rect.right, box.rect.bottom),
+            box.radiusX, box.radiusY};
+        island::DrawLensRimBand(context, rounded, island::CurrentTheme(), opacity);
+    }
+
     ID2D1SolidColorBrush* primaryBrush = nullptr;
     ID2D1SolidColorBrush* secondaryBrush = nullptr;
     ID2D1SolidColorBrush* accentBrush = nullptr;
@@ -1692,13 +1722,21 @@ void TextRenderer::DrawMusicCard(ID2D1DeviceContext2* context, const RoundedBox&
     };
 
     // --- 3. the album cover, clipped to a rounded square ----------------
+    // The cover's own shadow first, so the picture sits ON the card rather than in a cut-out.
+    {
+        const D2D1_ROUNDED_RECT artShadow = {
+            D2D1::RectF(layout.artwork.left, layout.artwork.top, layout.artwork.right,
+                        layout.artwork.bottom),
+            10.0f, 10.0f};
+        island::DrawSoftShadow(context, artShadow, 0.35f * opacity, 10.0f);
+    }
     if (artwork && artworkWidth > 0 && artworkHeight > 0) {
         ID2D1RoundedRectangleGeometry* artClip = nullptr;
         {
             const D2D1_ROUNDED_RECT rounded = {
                 D2D1::RectF(layout.artwork.left, layout.artwork.top, layout.artwork.right,
                             layout.artwork.bottom),
-                8.0f, 8.0f};
+                10.0f, 10.0f};
             ID2D1Factory* factory = nullptr;
             context->GetFactory(&factory);
             if (factory) {
@@ -1742,7 +1780,7 @@ void TextRenderer::DrawMusicCard(ID2D1DeviceContext2* context, const RoundedBox&
         const D2D1_ROUNDED_RECT placeholder = {
             D2D1::RectF(layout.artwork.left, layout.artwork.top, layout.artwork.right,
                         layout.artwork.bottom),
-            8.0f, 8.0f};
+            10.0f, 10.0f};
         ID2D1SolidColorBrush* slotBrush = nullptr;
         const D2D1_COLOR_F slotColour =
             D2D1::ColorF(primary.r, primary.g, primary.b, 0.07f * opacity);
@@ -1818,7 +1856,8 @@ void TextRenderer::DrawMusicCard(ID2D1DeviceContext2* context, const RoundedBox&
     const float barRight = layout.remaining.left - 6.0f;
     if (barRight > barLeft + 8.0f) {
         ID2D1SolidColorBrush* trackBrush = nullptr;
-        const D2D1_COLOR_F trackColour = CardInk(0.22f * opacity);
+        const D2D1_COLOR_F trackColour = D2D1::ColorF(primary.r, primary.g, primary.b,
+                                                     0.16f * opacity);
         if (SUCCEEDED(context->CreateSolidColorBrush(trackColour, &trackBrush)) &&
             trackBrush) {
             const D2D1_ROUNDED_RECT track = {
@@ -1840,6 +1879,22 @@ void TextRenderer::DrawMusicCard(ID2D1DeviceContext2* context, const RoundedBox&
                                 layout.progress.bottom),
                     kMusicProgressBarDip * 0.5f, kMusicProgressBarDip * 0.5f};
                 context->FillRoundedRectangle(&bar, accentBrush);
+
+                // The knob at the head of the fill: the flyout's own handle, which also says where the
+                // track is at a glance instead of only by the bar's length. The ring is the card's ink so
+                // it stays visible against the accent and the album behind it.
+                const float midY = (layout.progress.top + layout.progress.bottom) * 0.5f;
+                ID2D1SolidColorBrush* knobRing = nullptr;
+                if (SUCCEEDED(context->CreateSolidColorBrush(
+                        D2D1::ColorF(primary.r, primary.g, primary.b, 0.90f * opacity),
+                        &knobRing)) &&
+                    knobRing) {
+                    context->FillEllipse(
+                        D2D1::Ellipse(D2D1::Point2F(filled, midY), 4.4f, 4.4f), knobRing);
+                    knobRing->Release();
+                }
+                context->FillEllipse(
+                    D2D1::Ellipse(D2D1::Point2F(filled, midY), 3.1f, 3.1f), accentBrush);
             }
         }
     }
@@ -1864,7 +1919,7 @@ void TextRenderer::DrawMusicCard(ID2D1DeviceContext2* context, const RoundedBox&
 
             ID2D1SolidColorBrush* discBrush = nullptr;
             const D2D1_COLOR_F discColour =
-                D2D1::ColorF(0.42f, 0.68f, 0.96f, 0.32f * opacity);
+                D2D1::ColorF(accent.r, accent.g, accent.b, 0.34f * opacity);
             if (SUCCEEDED(context->CreateSolidColorBrush(discColour, &discBrush)) &&
                 discBrush) {
                 const D2D1_ELLIPSE disc =
