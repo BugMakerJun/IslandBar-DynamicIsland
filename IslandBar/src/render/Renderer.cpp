@@ -761,6 +761,29 @@ void Renderer::RenderFrame(const FrameState& frame) {
             Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
             std::uint64_t revision = 0;
             const RECT source = capture_.SourceRect();
+
+            // THE BAR'S INK FROM THE SCREEN ITSELF, whether or not the capture is running. A full-screen
+            // application cannot be captured by WGC at all, and that is exactly the case the dark words
+            // were reported in ("右边是我全屏的时候 不对") -- with this inside the capture's guard, the
+            // ink fell back to the last desktop reading and never changed. The sample only needs the
+            // screen. Taken just BELOW the bar, where none of the bar is drawn, so its own ink cannot
+            // feed back into the choice.
+            float sampled = -1.0f;
+            {
+                POINT inkOrigin = {0, 0};
+                if (ClientToScreen(window_, &inkOrigin)) {
+                    const RECT below = {
+                        inkOrigin.x + static_cast<LONG>(std::lround(rounded.rect.left * scale_)),
+                        inkOrigin.y + static_cast<LONG>(std::lround(rounded.rect.bottom * scale_)) + 2,
+                        inkOrigin.x + static_cast<LONG>(std::lround(rounded.rect.right * scale_)),
+                        inkOrigin.y + static_cast<LONG>(std::lround(rounded.rect.bottom * scale_)) + 50};
+                    sampled = SampleUnderCard(below, scale_);
+                }
+            }
+            // Fed every frame from the cached reading, so the crossover finishes even when the window
+            // behind has gone still and WGC is sending nothing.
+            island::SetPillInkBackdrop(sampled >= 0.0f ? sampled : lens_.BackdropLuminance());
+
             if (capture_.Running() && ClientToScreen(window_, &origin)) {
                 // A new captured frame re-warps the lens; without one the last warp is still the right
                 // image to draw (WGC sends nothing while the window behind is static).
@@ -775,27 +798,6 @@ void Renderer::RenderFrame(const FrameState& frame) {
                                      static_cast<float>(origin.y) + rounded.rect.top * scale_);
                     }
                 }
-                // THE BAR'S INK FROM THE SCREEN ITSELF -- the same rule the cards follow (see
-                // SampleUnderCard). The window under the bar is not always what is on screen there: a
-                // wallpaper window can sit above a maximised application in the Z order, which is how a
-                // light desktop kept the words black over a dark full-screen application. Sampled just
-                // BELOW the bar, where none of the bar is drawn, so the bar's own ink cannot feed back
-                // into the choice.
-                float sampled = -1.0f;
-                {
-                    POINT inkOrigin = {0, 0};
-                    if (ClientToScreen(window_, &inkOrigin)) {
-                        const RECT below = {
-                            inkOrigin.x + static_cast<LONG>(std::lround(rounded.rect.left * scale_)),
-                            inkOrigin.y + static_cast<LONG>(std::lround(rounded.rect.bottom * scale_)) + 2,
-                            inkOrigin.x + static_cast<LONG>(std::lround(rounded.rect.right * scale_)),
-                            inkOrigin.y + static_cast<LONG>(std::lround(rounded.rect.bottom * scale_)) + 50};
-                        sampled = SampleUnderCard(below, scale_);
-                    }
-                }
-                // Fed every frame from the cached reading, so the crossover finishes even when the
-                // window behind has gone still and WGC is sending nothing.
-                island::SetPillInkBackdrop(sampled >= 0.0f ? sampled : lens_.BackdropLuminance());
                 lens_.Fill(d2dContext_, rounded, scale_, 1.0f);
             }
         }
