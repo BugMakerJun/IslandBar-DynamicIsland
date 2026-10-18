@@ -817,7 +817,7 @@ private:
     // frame. Same contract as BrushFor: the cache owns the layout, and callers must NOT release what this
     // returns.
     IDWriteTextLayout* LayoutFor(const wchar_t* text, IDWriteTextFormat* format, float width,
-                                 float height);
+                                 float height) const;
     struct LayoutEntry {
         IDWriteTextLayout* layout = nullptr;
         std::wstring       text;
@@ -827,8 +827,10 @@ private:
         unsigned long long used = 0;
     };
     static constexpr int kLayoutCacheSize = 32;
-    LayoutEntry layoutCache_[kLayoutCacheSize];
-    unsigned long long layoutCacheTick_ = 0;
+    // Mutable because the measuring helpers (TextWidth, TrackLineWidth) are const and still want the
+    // cache: measuring a string does not change the renderer.
+    mutable LayoutEntry layoutCache_[kLayoutCacheSize];
+    mutable unsigned long long layoutCacheTick_ = 0;
     StartBitmap startPinBitmaps_[24];   // as many as can be on screen at once, and then some
     StartBitmap startListBitmaps_[24];  // the same, for the all-applications grid
     StartBitmap startAvatarBitmap_;

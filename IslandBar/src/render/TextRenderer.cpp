@@ -473,7 +473,7 @@ void TextRenderer::ClearBrushCache() {
 
 // See the header: the cache owns the layout, and callers must not release what this returns.
 IDWriteTextLayout* TextRenderer::LayoutFor(const wchar_t* text, IDWriteTextFormat* format,
-                                           float width, float height) {
+                                           float width, float height) const {
     if (!factory_ || !text || !format) return nullptr;
     ++layoutCacheTick_;
     for (auto& entry : layoutCache_) {
@@ -2459,15 +2459,10 @@ float TextRenderer::TextWidth(const wchar_t* text, bool titleStyle) const {
     IDWriteTextFormat* format = titleStyle ? titleFormat_ : appFormat_;
     if (!format) return 0.0f;
 
-    IDWriteTextLayout* layout = nullptr;
-    if (FAILED(factory_->CreateTextLayout(text, static_cast<UINT32>(std::wcslen(text)),
-                                          format, 8192.0f, 512.0f, &layout)) ||
-        !layout) {
-        return 0.0f;
-    }
+    IDWriteTextLayout* layout = LayoutFor(text, format, 8192.0f, 512.0f);
+    if (!layout) return 0.0f;
     DWRITE_TEXT_METRICS metrics = {};
     const HRESULT hr = layout->GetMetrics(&metrics);
-    layout->Release();
     return SUCCEEDED(hr) ? metrics.width : 0.0f;
 }
 
@@ -2479,15 +2474,10 @@ float TextRenderer::TrackLineWidth(const wchar_t* text) const {
     // The same 8192-wide, 512-tall area TextWidth uses: the width of a line is a property of the TEXT and the
     // face, not of the box it will be drawn into -- putting it in a box is what wrapping is for, and wrapping
     // is exactly what this line must never do.
-    IDWriteTextLayout* layout = nullptr;
-    if (FAILED(factory_->CreateTextLayout(text, static_cast<UINT32>(std::wcslen(text)), format,
-                                          8192.0f, 512.0f, &layout)) ||
-        !layout) {
-        return 0.0f;
-    }
+    IDWriteTextLayout* layout = LayoutFor(text, format, 8192.0f, 512.0f);
+    if (!layout) return 0.0f;
     DWRITE_TEXT_METRICS metrics = {};
     const HRESULT hr = layout->GetMetrics(&metrics);
-    layout->Release();
     return SUCCEEDED(hr) ? metrics.width : 0.0f;
 }
 
