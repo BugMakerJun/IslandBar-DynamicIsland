@@ -284,7 +284,7 @@ bool TextRenderer::Initialize() {
     hr = factory_->CreateTextFormat(
         L"Segoe UI Variable Display", nullptr,
         DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-        22.0f, L"zh-CN", &musicTitleFormat_);
+        24.0f, L"zh-CN", &musicTitleFormat_);
     if (SUCCEEDED(hr)) {
         musicTitleFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
         musicTitleFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
@@ -295,7 +295,7 @@ bool TextRenderer::Initialize() {
     hr = factory_->CreateTextFormat(
         L"Segoe UI Variable Text", nullptr,
         DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-        13.0f, L"zh-CN", &musicSubtitleFormat_);
+        14.0f, L"zh-CN", &musicSubtitleFormat_);
     if (SUCCEEDED(hr)) {
         musicSubtitleFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
         musicSubtitleFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
@@ -308,7 +308,7 @@ bool TextRenderer::Initialize() {
     hr = factory_->CreateTextFormat(
         L"Segoe UI Variable Text", nullptr,
         DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-        15.5f, L"zh-CN", &musicLyricFormat_);
+        16.5f, L"zh-CN", &musicLyricFormat_);
     if (SUCCEEDED(hr)) {
         musicLyricFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
         musicLyricFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
@@ -318,7 +318,7 @@ bool TextRenderer::Initialize() {
     hr = factory_->CreateTextFormat(
         L"Segoe UI Variable Text", nullptr,
         DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-        13.0f, L"zh-CN", &musicLyricNextFormat_);
+        14.0f, L"zh-CN", &musicLyricNextFormat_);
     if (SUCCEEDED(hr)) {
         musicLyricNextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
         musicLyricNextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
@@ -1931,17 +1931,27 @@ void TextRenderer::DrawMusicCard(ID2D1DeviceContext2* context, const RoundedBox&
                 layoutLine->GetMetrics(&metrics);
                 const D2D1_POINT_2F origin =
                     D2D1::Point2F(layout.lyricCurrent.left, layout.lyricCurrent.top);
-                if (primaryBrush) context->DrawTextLayout(origin, layoutLine, primaryBrush);
-                if (accentBrush && text.lyricProgress > 0.0f) {
-                    const float fraction = text.lyricProgress > 1.0f ? 1.0f : text.lyricProgress;
-                    const float filled =
-                        metrics.widthIncludingTrailingWhitespace * fraction;
+                // THE UNSUNG WORDS ARE THE DIM ONES and the sung ones the bright ink. The first version
+                // painted the sung part in the ACCENT, which on a blue cover is almost the background --
+                // "歌词唱完的部分 看不清". The accent is the underline instead, where it can be seen.
+                if (secondaryBrush) context->DrawTextLayout(origin, layoutLine, secondaryBrush);
+                const float fraction = text.lyricProgress > 1.0f ? 1.0f : text.lyricProgress;
+                const float filled = metrics.widthIncludingTrailingWhitespace * fraction;
+                if (primaryBrush && fraction > 0.0f) {
                     context->PushAxisAlignedClip(
                         D2D1::RectF(layout.lyricCurrent.left, layout.lyricCurrent.top,
                                     layout.lyricCurrent.left + filled, layout.lyricCurrent.bottom),
                         D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-                    context->DrawTextLayout(origin, layoutLine, accentBrush);
+                    context->DrawTextLayout(origin, layoutLine, primaryBrush);
                     context->PopAxisAlignedClip();
+                }
+                if (accentBrush && fraction > 0.0f) {
+                    // The sung part's underline: the accent, where the cover's colour reads.
+                    const D2D1_ROUNDED_RECT sung = {
+                        D2D1::RectF(layout.lyricCurrent.left, layout.lyricCurrent.bottom - 2.0f,
+                                    layout.lyricCurrent.left + filled, layout.lyricCurrent.bottom),
+                        1.0f, 1.0f};
+                    context->FillRoundedRectangle(&sung, accentBrush);
                 }
                 layoutLine->Release();
             }
@@ -1955,6 +1965,36 @@ void TextRenderer::DrawMusicCard(ID2D1DeviceContext2* context, const RoundedBox&
         if (MultiByteToWideChar(CP_UTF8, 0, text.lyricNext, -1, wideNext, 512) > 0) {
             DrawTextIn(context, musicLyricNextFormat_, wideNext, layout.lyricNext, secondaryBrush,
                        DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        }
+    }
+
+    // --- 5c. the thin level bar, at the card's right edge ----------------
+    //
+    // One thin bar filled from the bottom in the cover's accent, on a 10% track. The reading is the same
+    // peak the pill's ribbon moves with, so the card and the bar agree; the card has no room for the
+    // ribbon itself.
+    if (text.levelKnown && layout.levelBar.right > layout.levelBar.left) {
+        const D2D1_ROUNDED_RECT track = {
+            D2D1::RectF(layout.levelBar.left, layout.levelBar.top, layout.levelBar.right,
+                        layout.levelBar.bottom),
+            2.0f, 2.0f};
+        ID2D1SolidColorBrush* levelTrack = nullptr;
+        if (SUCCEEDED(context->CreateSolidColorBrush(
+                D2D1::ColorF(primary.r, primary.g, primary.b, 0.10f * opacity), &levelTrack)) &&
+            levelTrack) {
+            context->FillRoundedRectangle(&track, levelTrack);
+            levelTrack->Release();
+        }
+        float level = text.level;
+        if (level < 0.0f) level = 0.0f;
+        if (level > 1.0f) level = 1.0f;
+        if (level > 0.01f && accentBrush) {
+            const float height = (layout.levelBar.bottom - layout.levelBar.top) * level;
+            const D2D1_ROUNDED_RECT filled = {
+                D2D1::RectF(layout.levelBar.left, layout.levelBar.bottom - height,
+                            layout.levelBar.right, layout.levelBar.bottom),
+                2.0f, 2.0f};
+            context->FillRoundedRectangle(&filled, accentBrush);
         }
     }
 

@@ -1353,6 +1353,9 @@ void Renderer::RenderFrame(const FrameState& frame) {
                     text.lyricLine = frame.lyricLine;
                     text.lyricNext = frame.lyricLineNext;
                     text.lyricProgress = frame.lyricProgress;
+                    // The thin level bar at the card's right edge, from the same peak the pill's wave uses.
+                    text.level = frame.musicLevel;
+                    text.levelKnown = frame.musicLevelKnown;
 
                     text_->DrawMusicCard(d2dContext_, panelCard, text,
                                          CachedBitmap(frame.artworkPixels, frame.artworkWidth,

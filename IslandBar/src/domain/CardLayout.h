@@ -510,7 +510,7 @@ inline constexpr float kMusicAppRowHeightDip  = 20.0f;
 // was 80 DIP against a 520 DIP card, which is 15%: half the reference's share, and the single
 // biggest reason the card was reported as looking unfinished. The cover is the card's largest
 // element and it was being drawn as a thumbnail; this round takes it to 108.
-inline constexpr float kMusicArtworkSizeDip   = 108.0f;
+inline constexpr float kMusicArtworkSizeDip   = 124.0f;
 inline constexpr float kMusicGapAfterArtDip   = 20.0f;
 inline constexpr float kMusicTimeRowDip       = 16.0f;
 inline constexpr float kMusicProgressBarDip   = 4.0f;
@@ -552,6 +552,7 @@ struct MusicCardLayout {
     RectF subtitle;        // artist 路 album
     RectF lyricCurrent;    // the current lyric line, beside the cover
     RectF lyricNext;       // the line after it
+    RectF levelBar;        // the thin output-level bar at the card's right edge
     RectF elapsed;         // "01:33", left of the bar
     RectF remaining;       // "05:40", right of the bar
     RectF progress;        // the bar itself
@@ -1616,23 +1617,35 @@ inline MusicCardLayout MusicCardFor(const RoundedBox& box) {
     // 显示歌词" is what fills it.
     layout.title.left = layout.artwork.right + kMusicGapAfterArtDip;
     layout.title.right = box.rect.right - pad;
-    layout.title.top = layout.artwork.top + 2.0f;
-    layout.title.bottom = layout.title.top + 30.0f;
+    layout.title.top = layout.artwork.top;
+    layout.title.bottom = layout.title.top + 32.0f;
 
     layout.subtitle.left = layout.title.left;
     layout.subtitle.right = layout.title.right;
     layout.subtitle.top = layout.title.bottom - 2.0f;
-    layout.subtitle.bottom = layout.subtitle.top + 18.0f;
+    layout.subtitle.bottom = layout.subtitle.top + 20.0f;
 
     layout.lyricCurrent.left = layout.title.left;
     layout.lyricCurrent.right = layout.title.right;
     layout.lyricCurrent.top = layout.subtitle.bottom + 6.0f;
-    layout.lyricCurrent.bottom = layout.lyricCurrent.top + 26.0f;
+    layout.lyricCurrent.bottom = layout.lyricCurrent.top + 28.0f;
 
     layout.lyricNext.left = layout.title.left;
     layout.lyricNext.right = layout.title.right;
     layout.lyricNext.top = layout.lyricCurrent.bottom + 2.0f;
-    layout.lyricNext.bottom = layout.lyricNext.top + 20.0f;
+    layout.lyricNext.bottom = layout.lyricNext.top + 22.0f;
+
+    // The thin level bar at the card's right edge, spanning the cover's height. A single bar rather than
+    // the pill's ribbon: the card has no room for the wave, and the number it would show is this one.
+    // The text stops short of it, so no word ever runs under it.
+    layout.levelBar.right = box.rect.right - pad;
+    layout.levelBar.left = layout.levelBar.right - 4.0f;
+    layout.levelBar.top = layout.artwork.top;
+    layout.levelBar.bottom = layout.artwork.bottom;
+    layout.title.right = layout.levelBar.left - 10.0f;
+    layout.subtitle.right = layout.title.right;
+    layout.lyricCurrent.right = layout.title.right;
+    layout.lyricNext.right = layout.title.right;
 
     // Three buttons, centred as a group. The play disc is 46 and the skips 38, which is what makes the
     // transport read as play-with-two-skips rather than as three equal buttons.

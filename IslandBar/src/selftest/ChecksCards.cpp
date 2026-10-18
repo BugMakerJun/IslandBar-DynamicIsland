@@ -961,6 +961,13 @@ void TestMusicCardLayout() {
           L"the lyrics are below the artist");
     Check(layout.lyricNext.top >= layout.lyricCurrent.bottom - 0.01f,
           L"the next lyric is below the current one");
+    // The thin level bar at the card's right edge, and the words stop before it.
+    Check(insideCard(layout.levelBar) && layout.levelBar.right > layout.levelBar.left,
+          L"the level bar is inside the card");
+    Check(layout.levelBar.right <= cardRect.right - 8.0f,
+          L"the level bar is inside the right padding");
+    Check(layout.title.right <= layout.levelBar.left,
+          L"the title stops before the level bar");
 
     // The vertical order is the reference image's, and it is what broke before: the
     // time row used to overlap the cover.

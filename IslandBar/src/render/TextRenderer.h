@@ -277,6 +277,10 @@ public:
         const char* lyricLine = nullptr;
         const char* lyricNext = nullptr;
         float lyricProgress = 0.0f;
+        // The output level for the card's thin level bar, 0..1. `levelKnown` false means the reader has
+        // no peak yet, and the card draws only the bar's track.
+        float level = 0.0f;
+        bool levelKnown = false;
     };
 
     // Draws the now-playing card, laid out like the Windows 11 media flyout: blurred
