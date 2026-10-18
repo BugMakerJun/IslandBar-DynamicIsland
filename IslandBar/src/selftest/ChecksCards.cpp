@@ -60,6 +60,7 @@
 #include "render/Theme.h"
 #include "render/GlassMaterial.h"
 #include "shell/Weather.h"   // SkyMarkForCode: the word and the mark come from the same WMO code
+#include "render/Ambient.h"  // AmbientKindFor: the island's weather and the real sunset
 #include "domain/Motion.h"
 #include "render/Renderer.h"
 #include "render/TextRenderer.h"
@@ -3313,6 +3314,44 @@ void TestMusicCardLayout() {
                       L"a document with no reading is not read as one", csvDetail);
                 Check(!ParseCurrentCsv("2026-10-12T17:15,19.4\n", &temperature, &code),
                       L"a line missing the weather code is not a reading", csvDetail);
+            }
+
+            // The daily answer, likewise: the LAST line is today's "date,sunrise,sunset".
+            {
+                const char* daily =
+                    "latitude,longitude,elevation,utc_offset_seconds,timezone,timezone_abbreviation\n"
+                    "39.89455,116.35983,47.0,28800,Asia/Shanghai,GMT+8\n"
+                    "\n"
+                    "time,sunrise,sunset\n"
+                    "2026-10-12,2026-10-12T06:18,2026-10-12T17:39\n";
+                int sunrise = -1;
+                int sunset = -1;
+                const bool readDaily = ParseDailyCsv(daily, &sunrise, &sunset);
+                wchar_t dailyDetail[160];
+                std::swprintf(dailyDetail, 160, L"sunrise %d, sunset %d", sunrise, sunset);
+                Check(readDaily && sunrise == 6 * 60 + 18 && sunset == 17 * 60 + 39,
+                      L"the daily CSV gives the sunrise and the sunset", dailyDetail);
+                Check(!ParseDailyCsv(nullptr, &sunrise, &sunset) &&
+                          !ParseDailyCsv("time,sunrise,sunset\n", &sunrise, &sunset),
+                      L"a daily answer with no row is refused", dailyDetail);
+            }
+
+            // The ambient kind: precipitation first, then the REAL sunset window for a clear sky.
+            {
+                const int rise = 6 * 60 + 18;
+                const int set = 17 * 60 + 39;
+                Check(AmbientKindFor(61, 12 * 60, rise, set) == AmbientKind::Rain,
+                      L"rain is rain at noon");
+                Check(AmbientKindFor(0, 12 * 60, rise, set) == AmbientKind::ClearDay,
+                      L"a clear noon is the clear day");
+                Check(AmbientKindFor(0, set - 10, rise, set) == AmbientKind::Sunset,
+                      L"the real sunset window is the sunset");
+                Check(AmbientKindFor(0, 23 * 60, rise, set) == AmbientKind::Night,
+                      L"after the sunset it is night");
+                Check(AmbientKindFor(95, 12 * 60, rise, set) == AmbientKind::Thunder,
+                      L"a thunderstorm code is the storm");
+                Check(AmbientKindFor(71, 12 * 60, rise, set) == AmbientKind::Snow,
+                      L"a snow code is the snow");
             }
 
             // The geocoder's answer, as Open-Meteo sends it: the wanted coordinates are the first

@@ -245,6 +245,11 @@ struct FrameState {
     // DrawSkyMark), and the two must be answers to the same question. -1 means no reading.
     int statusCode = -1;
     const wchar_t* statusTemperature = nullptr;
+    // The site's own sunrise and sunset, in minutes since local midnight; -1 until the daily answer
+    // arrives. render/Ambient uses them to decide between day, sunset and night; the fallback there is
+    // 06:00/18:00.
+    int sunriseMinutes = 6 * 60;
+    int sunsetMinutes = 18 * 60;
     float          statusStripOpacity = 0.0f;
 
     // 0..1 strength of the BAR's own content: the deck, the icon row, the clock, the lyric / notice /

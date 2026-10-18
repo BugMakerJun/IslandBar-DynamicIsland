@@ -3839,9 +3839,14 @@ static void FillCallAndStatusStrip(island::FrameState& frame, island::BarState& 
     {
         double statusTemperatureC = 0.0;
         int statusWeatherCode = -1;
-        frame.statusCode = systems.weather.Get(&statusTemperatureC, &statusWeatherCode)
+        int statusSunrise = frame.sunriseMinutes;
+        int statusSunset = frame.sunsetMinutes;
+        frame.statusCode = systems.weather.Get(&statusTemperatureC, &statusWeatherCode,
+                                               &statusSunrise, &statusSunset)
                                ? statusWeatherCode
                                : -1;
+        frame.sunriseMinutes = statusSunrise;
+        frame.sunsetMinutes = statusSunset;
     }
 
     // Read by the next pass's redraw decision, like the icon row's own arrival flags.

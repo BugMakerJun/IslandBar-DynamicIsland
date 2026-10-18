@@ -437,6 +437,62 @@ bool ParseCurrentCsv(const char* csv, double* temperatureC, int* weatherCode) {
     return true;
 }
 
+bool ParseDailyCsv(const char* csv, int* sunriseMinutes, int* sunsetMinutes) {
+    if (sunriseMinutes) *sunriseMinutes = -1;
+    if (sunsetMinutes) *sunsetMinutes = -1;
+    if (!csv) return false;
+
+    // The LAST non-empty line is today's row: date,sunrise,sunset.
+    char lastLine[256] = {};
+    bool haveLastLine = false;
+    const char* cursor = csv;
+    while (*cursor != '\0') {
+        const char* lineEnd = std::strchr(cursor, '\n');
+        const size_t length = lineEnd ? static_cast<size_t>(lineEnd - cursor) : std::strlen(cursor);
+
+        bool blank = true;
+        for (size_t i = 0; i < length; ++i) {
+            if (cursor[i] != ' ' && cursor[i] != '\t' && cursor[i] != '\r') {
+                blank = false;
+                break;
+            }
+        }
+        if (!blank && length < sizeof(lastLine)) {
+            std::memcpy(lastLine, cursor, length);
+            lastLine[length] = '\0';
+            haveLastLine = true;
+        }
+
+        if (!lineEnd) break;
+        cursor = lineEnd + 1;
+    }
+
+    if (!haveLastLine || !IsDataLine(lastLine)) return false;
+
+    char sunrise[48] = {};
+    char sunset[48] = {};
+    if (!CsvField(lastLine, 1, sunrise, sizeof(sunrise))) return false;
+    if (!CsvField(lastLine, 2, sunset, sizeof(sunset))) return false;
+
+    const auto minutesSinceMidnight = [](const char* iso) -> int {
+        if (!iso) return -1;
+        const char* t = std::strchr(iso, 'T');
+        if (!t) return -1;
+        int hour = -1;
+        int minute = -1;
+        if (std::sscanf(t + 1, "%d:%d", &hour, &minute) != 2) return -1;
+        if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return -1;
+        return hour * 60 + minute;
+    };
+    const int rise = minutesSinceMidnight(sunrise);
+    const int set = minutesSinceMidnight(sunset);
+    if (rise < 0 || set < 0) return false;
+
+    if (sunriseMinutes) *sunriseMinutes = rise;
+    if (sunsetMinutes) *sunsetMinutes = set;
+    return true;
+}
+
 bool ParseGeocodeJson(const char* json, double* latitude, double* longitude) {
     if (!json) return false;
 
@@ -494,7 +550,8 @@ void WeatherReader::Stop() {
     running_ = false;
 }
 
-bool WeatherReader::Get(double* temperatureC, int* code) const {
+bool WeatherReader::Get(double* temperatureC, int* code, int* sunriseMinutes,
+                        int* sunsetMinutes) const {
     if (!worker_.Prepared() || !haveReading_) return false;
 
     lock_.Enter();
@@ -502,6 +559,8 @@ bool WeatherReader::Get(double* temperatureC, int* code) const {
     if (have) {
         if (temperatureC) *temperatureC = temperatureC_;
         if (code) *code = code_;
+        if (sunriseMinutes) *sunriseMinutes = sunriseMinutes_;
+        if (sunsetMinutes) *sunsetMinutes = sunsetMinutes_;
     }
     lock_.Leave();
     return have;
@@ -706,18 +765,41 @@ unsigned WeatherReader::Refresh(char* resolvedCity, size_t resolvedCapacity, dou
         return kRetryMs;
     }
 
+    // THE SUNRISE AND THE SUNSET, for the island's ambient light. A second call, because Open-Meteo's
+    // CSV puts the current block and the daily block on different time axes and only the daily line
+    // carries the two times. A failure here leaves them at -1 and the ambient falls back to 06:00/18:00.
+    int sunriseMinutes = -1;
+    int sunsetMinutes = -1;
+    {
+        wchar_t dailyPath[512] = {};
+        swprintf(dailyPath, 512,
+                 L"/v1/forecast?latitude=%.4f&longitude=%.4f&daily=sunrise,sunset"
+                 L"&format=csv&timezone=auto",
+                 *latitude, *longitude);
+        char dailyBody[4096] = {};
+        size_t dailyLength = 0;
+        DWORD dailyStatus = 0;
+        if (HttpGet(kForecastHost, dailyPath, nullptr, kTimeoutMs, dailyBody, sizeof(dailyBody),
+                    &dailyLength, &dailyStatus)) {
+            ParseDailyCsv(dailyBody, &sunriseMinutes, &sunsetMinutes);
+        }
+    }
+
     wchar_t line[64] = {};
     WeatherLineFor(temperature, code, line, 64);
 
     lock_.Enter();
     temperatureC_ = temperature;
     code_ = code;
+    sunriseMinutes_ = sunriseMinutes;
+    sunsetMinutes_ = sunsetMinutes;
     wcsncpy_s(line_, 64, line, _TRUNCATE);
     haveReading_ = true;
     lock_.Leave();
     InterlockedIncrement(&revision_);
 
-    LogAndPrint(L"  weather: %.1f C, code %d -> %ls\n", temperature, code, line);
+    LogAndPrint(L"  weather: %.1f C, code %d, sunrise %d, sunset %d -> %ls\n", temperature, code,
+                sunriseMinutes, sunsetMinutes, line);
     std::fflush(stdout);
     return kPollMs;
 }

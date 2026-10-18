@@ -105,6 +105,7 @@ target_link_libraries(island_shell PUBLIC island_services)
 islandbar_enable_cppwinrt(island_shell)   # SystemToggles and Weather read the projection directly
 
 add_library(island_render STATIC
+    render/Ambient.cpp
     render/GlassMaterial.cpp
     render/LensMaterial.cpp
     render/Renderer.cpp

@@ -109,6 +109,12 @@ size_t PercentEncodeUtf8(const char* text, char* out, size_t capacity);
 // worth parsing.
 bool ParseCurrentCsv(const char* csv, double* temperatureC, int* weatherCode);
 
+// The sunrise and the sunset out of Open-Meteo's CSV answer to
+// `...&daily=sunrise,sunset&format=csv&timezone=auto`: the last data line is
+// "date,sunrise,sunset", the two times ISO ("2026-10-18T06:32"). Answers minutes since midnight in
+// the site's own time zone, or false (both set to -1) when there is no such line.
+bool ParseDailyCsv(const char* csv, int* sunriseMinutes, int* sunsetMinutes);
+
 // The first result's coordinates out of Open-Meteo's geocoding answer.
 //
 // Scanned rather than parsed: the document is
@@ -141,7 +147,9 @@ public:
 
     // The last published reading, or false when there is none. A copy, taken
     // under the worker's lock, because the reading is two numbers and a string.
-    bool Get(double* temperatureC, int* code) const;
+    // The sunrise/sunset are minutes since local midnight, or -1 until the daily answer arrives.
+    bool Get(double* temperatureC, int* code, int* sunriseMinutes = nullptr,
+             int* sunsetMinutes = nullptr) const;
 
     // The reading as the strip prints it, e.g. "\u6674 21\u00b0". Empty when
     // nothing has been fetched yet, which is how the strip knows to show the date
@@ -181,6 +189,8 @@ private:
     bool           haveReading_ = false;
     double         temperatureC_ = 0.0;
     int            code_ = -1;
+    int            sunriseMinutes_ = -1;
+    int            sunsetMinutes_ = -1;
     wchar_t        line_[64] = {};
     volatile long  revision_ = 0;
 };

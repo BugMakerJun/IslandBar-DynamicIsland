@@ -2,6 +2,7 @@
 //  Renderer.cpp
 // =====================================================================
 #include "render/Renderer.h"
+#include "render/Ambient.h"   // the island's weather: rain, sunset, night, the slow sun
 #include "render/Theme.h"   // the material: two stops, a highlight, a hairline, an accent and an ink
 #include "render/GlassMaterial.h"   // the shadow under the shape and the grain over it
 
@@ -934,6 +935,25 @@ void Renderer::RenderFrame(const FrameState& frame) {
                 //
                 // NO SURFACE: the pill has already been filled with exactly the colour the strip paints
                 // for itself.
+                // THE ISLAND'S OWN SKY. Under the words, inside the resting pill, fading with the
+                // content: rain that falls, a sunset that glows from the bottom, stars at night, a
+                // slow sun in the afternoon. The kind comes from the real weather code and the
+                // site's own sunrise and sunset (render/Ambient.h).
+                {
+                    SYSTEMTIME localNow = {};
+                    GetLocalTime(&localNow);
+                    const int nowMinutes = static_cast<int>(localNow.wHour) * 60 +
+                                           static_cast<int>(localNow.wMinute);
+                    const float phase = static_cast<float>(GetTickCount64() % 3600000ull) / 1000.0f;
+                    const island::AmbientKind ambient = island::AmbientKindFor(
+                        frame.statusCode, nowMinutes, frame.sunriseMinutes, frame.sunsetMinutes);
+                    const D2D1_ROUNDED_RECT ambientShape = {
+                        D2D1::RectF(lineBox.rect.left, lineBox.rect.top, lineBox.rect.right,
+                                    lineBox.rect.bottom),
+                        lineBox.radiusX, lineBox.radiusY};
+                    island::DrawAmbient(d2dContext_, ambientShape, ambient, phase,
+                                        frame.contentOpacity, island::CurrentTheme());
+                }
                 text_->DrawStatusLine(d2dContext_, lineBox, frame.contentOpacity, frame.statusSky,
                                       frame.statusTemperature, frame.statusCode,
                                       D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
