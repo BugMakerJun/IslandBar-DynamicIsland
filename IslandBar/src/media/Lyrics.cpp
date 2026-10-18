@@ -3,9 +3,11 @@
 // =====================================================================
 #include "media/Lyrics.h"
 
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 
 #include "domain/MiniJson.h"
 #include "core/Log.h"
@@ -586,6 +588,40 @@ int ParseLrc(const char* lrc, Lyrics* out) {
     return out->count;
 }
 
+// Whether a service's search hit is the track that is playing. See the header for why this exists.
+bool LyricsLooksLike(const char* requestedTitle, const char* requestedArtist,
+                     const char* foundTitle, const char* foundArtist) {
+    const auto normalised = [](const char* text) {
+        std::string out;
+        if (!text) return out;
+        for (const unsigned char* p = reinterpret_cast<const unsigned char*>(text); *p; ++p) {
+            if (std::isspace(*p)) continue;
+            out.push_back(static_cast<char>(std::tolower(*p)));
+        }
+        return out;
+    };
+    // Either side containing the other counts: services append "(Live)", "(电视剧...)" and the like, and
+    // a session's title is sometimes the bare name. An empty side is "did not say" rather than a mismatch.
+    const auto agree = [](const std::string& a, const std::string& b) {
+        if (a.empty() || b.empty()) return true;
+        return a == b || a.find(b) != std::string::npos || b.find(a) != std::string::npos;
+    };
+    const std::string requestedName = normalised(requestedTitle);
+    const std::string foundName = normalised(foundTitle);
+    if (!requestedName.empty() && !foundName.empty() && !agree(requestedName, foundName)) {
+        return false;
+    }
+    // The artist only when both sides named one: a soundtrack can credit "群星" while the session reports
+    // the performer, and that is not a different track.
+    const std::string requestedSinger = normalised(requestedArtist);
+    const std::string foundSinger = normalised(foundArtist);
+    if (!requestedSinger.empty() && !foundSinger.empty() &&
+        !agree(requestedSinger, foundSinger)) {
+        return false;
+    }
+    return true;
+}
+
 // --- the two services -------------------------------------------------
 //
 // Two, tried in order, because they fail independently: a network that blocks or cannot
@@ -676,6 +712,18 @@ bool FetchFromNetEase(const char* title, const char* artist, int timeoutMs, Lyri
         if (!FindFlatIntegerInArray(searchBody, kSongsPath, 1, "duration", &songDurationMs) ||
             songDurationMs <= 0) {
             songDurationMs = 0;   // it did not say; the card then prints `--:--` instead of a number
+        }
+
+        // THE FIRST HIT IS NOT ALWAYS THIS SONG -- see LyricsLooksLike. Both names are already in this
+        // response, so the check costs nothing and saves the lyric request for the wrong track.
+        char foundName[192] = {};
+        char foundSinger[192] = {};
+        static const char* const kArtistsPath[] = {"songs", "artists"};
+        FindFlatStringInArray(searchBody, kSongsPath, 1, "name", foundName, sizeof(foundName));
+        FindFlatStringInArray(searchBody, kArtistsPath, 2, "name", foundSinger, sizeof(foundSinger));
+        if (!LyricsLooksLike(title, artist, foundName, foundSinger)) {
+            explain("netease: the search found a different track");
+            return false;
         }
     }
 
@@ -816,6 +864,19 @@ bool FetchFromQqMusic(const char* title, const char* artist, int timeoutMs, Lyri
         long long seconds = 0;
         if (FindFlatIntegerInArray(searchBody, kSongListPath, 2, "interval", &seconds) && seconds > 0) {
             songDurationMs = seconds * 1000;
+        }
+    }
+
+    // ... and the same check on QQ's own response, before its lyric request (see LyricsLooksLike).
+    {
+        char foundName[192] = {};
+        char foundSinger[192] = {};
+        static const char* const kSingerPath[] = {"song", "list", "singer"};
+        FindFlatStringInArray(searchBody, kSongListPath, 2, "name", foundName, sizeof(foundName));
+        FindFlatStringInArray(searchBody, kSingerPath, 3, "name", foundSinger, sizeof(foundSinger));
+        if (!LyricsLooksLike(title, artist, foundName, foundSinger)) {
+            explain("qq: the search found a different track");
+            return false;
         }
     }
 

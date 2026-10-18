@@ -128,6 +128,16 @@ inline bool LyricLineChanged(const char* arrivingText, const char* shownText) {
 // are handled: the result is always sorted.
 int ParseLrc(const char* lrc, Lyrics* out);
 
+// Whether a service's search hit is the track that is playing.
+//
+// A search's FIRST result is not necessarily the song, and a wrong lyric is indistinguishable from a right
+// one once parsed -- reported as "歌名，封面，歌手全对，就是歌词不对". Both searches name the track they
+// picked, so the name and artist are compared BEFORE the lyric request; a different song falls through to
+// the other service. A name that is empty on one side is accepted: the service did not say, and refusing
+// then would lose correct lyrics to a field the parser could not read.
+bool LyricsLooksLike(const char* requestedTitle, const char* requestedArtist,
+                     const char* foundTitle, const char* foundArtist);
+
 // --- response parsing -------------------------------------------------
 //
 // Exposed rather than kept file-local because the two services' response shapes are the

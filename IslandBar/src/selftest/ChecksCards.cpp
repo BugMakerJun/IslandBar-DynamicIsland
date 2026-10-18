@@ -487,6 +487,21 @@ void TestLyrics() {
         Check(lyrics.count == 1, L"metadata lines are not lyric lines");
     }
 
+    // THE SEARCH'S HIT MUST BE THE TRACK THAT IS PLAYING: "歌名，封面，歌手全对，就是歌词不对".
+    {
+        Check(LyricsLooksLike("不懂", "郭零叁", "不懂", "郭零叁"),
+              L"the service's own names identify the track");
+        Check(!LyricsLooksLike("不懂", "郭零叁", "腿也有一点累了", "某人"),
+              L"a different song from the same search is refused");
+        Check(LyricsLooksLike("不懂", "郭零叁", "不懂 (Live)", "郭零叁"),
+              L"a version suffix does not make it a different track");
+        Check(LyricsLooksLike("不懂", "", "不懂", "郭零叁"), L"an unstated artist is not evidence");
+        Check(LyricsLooksLike("不懂", "郭零叁", "不懂", ""),
+              L"a found name the parser could not read is not evidence");
+        Check(LyricsLooksLike("不懂", "郭零叁", "不懂", "郭零叁/某某"),
+              L"one name among several is enough");
+    }
+
     // Several tags on one line mean the same text at each time.
     {
         Lyrics& lyrics = sharedLyrics;
