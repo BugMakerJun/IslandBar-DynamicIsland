@@ -695,12 +695,16 @@ inline constexpr float kStartFooterDip  = 46.0f;
 inline constexpr float kStartAvatarDip  = 28.0f;
 inline constexpr float kStartPowerDip   = 30.0f;   // the power button's square
 inline constexpr float kStartRowHeight  = 34.0f;   // one line of the picker or the power list
+inline constexpr float kStartHeaderDip  = 30.0f;   // the row the 全部 button sits in, above the grid
+inline constexpr float kStartAllAppsWidth = 64.0f;
+inline constexpr float kStartAllAppsHeight = 22.0f;
 
 struct StartPageLayout {
     RectF grid;         // where the pinned tiles live
     RectF footer;       // the account picture and the power button
     RectF avatar;
     RectF powerButton;
+    RectF allApps;      // the 全部 button, in the header row at the card's top-right
     bool  valid = false;
 };
 
@@ -725,8 +729,15 @@ inline StartPageLayout StartPageFor(const RoundedBox& card) {
         kStartColumns * kStartCellWidth + (kStartColumns - 1) * kStartCellGap;
     layout.grid.left = card.rect.left + pad + (innerWidth - gridWidth) * 0.5f;
     layout.grid.right = layout.grid.left + gridWidth;
-    layout.grid.top = card.rect.top + pad;
+    // The header row belongs to the 全部 button: the grid starts under it, so the button can never sit on
+    // top of a tile (it would have covered the first row's last application).
+    layout.grid.top = card.rect.top + pad + kStartHeaderDip;
     layout.grid.bottom = layout.footer.top - 10.0f;
+
+    layout.allApps.right = card.rect.right - pad;
+    layout.allApps.left = layout.allApps.right - kStartAllAppsWidth;
+    layout.allApps.top = card.rect.top + pad - 2.0f;
+    layout.allApps.bottom = layout.allApps.top + kStartAllAppsHeight;
 
     layout.avatar.right = layout.footer.left + kStartAvatarDip;
     layout.avatar.left = layout.footer.left;

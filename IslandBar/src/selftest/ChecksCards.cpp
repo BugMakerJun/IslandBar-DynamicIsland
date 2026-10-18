@@ -4096,6 +4096,10 @@ void TestMusicCardLayout() {
                                         (startLayout.powerButton.left + startLayout.powerButton.right) * 0.5f,
                                         (startLayout.powerButton.top + startLayout.powerButton.bottom) * 0.5f),
                       L"the power button is under its own centre", trayDetail);
+                Check(startLayout.allApps.right <= startCard.rect.right - 15.0f &&
+                          startLayout.allApps.right - startLayout.allApps.left > 40.0f &&
+                          startLayout.allApps.bottom <= startLayout.grid.top,
+                      L"the 全部 button owns a header row above the grid", trayDetail);
 
                 const RectF powerRow = StartPowerRowFor(startCard, 0);
                 Check(StartPowerRowAt(startCard, (powerRow.left + powerRow.right) * 0.5f,

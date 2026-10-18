@@ -32,6 +32,7 @@ const wchar_t* StartHitTargetName(IslandWindow::StartHitTarget target) {
         case IslandWindow::StartHitTarget::PowerRow:    return L"power row";
         case IslandWindow::StartHitTarget::PowerButton: return L"power button";
         case IslandWindow::StartHitTarget::EmptyGrid:   return L"empty grid";
+    case IslandWindow::StartHitTarget::AllApps:     return L"all apps";
         case IslandWindow::StartHitTarget::None:        break;
     }
     return L"none";
@@ -1338,6 +1339,8 @@ void IslandWindow::UpdatePointerState() {
             const island::StartPageLayout layout = island::StartPageFor(card);
             if (island::StartRectHasPoint(layout.powerButton, localX, localY)) {
                 startHit_.target = StartHitTarget::PowerButton;
+            } else if (startPage_ == 0 && island::StartRectHasPoint(layout.allApps, localX, localY)) {
+                startHit_.target = StartHitTarget::AllApps;
             } else if (startPage_ == 2) {
                 const int row = island::StartPowerRowAt(card, localX, localY);
                 if (row >= 0) {

@@ -4031,6 +4031,29 @@ void TextRenderer::DrawStartPage(ID2D1DeviceContext2* context, const RoundedBox&
                                    dimBrush);
             }
         }
+
+        // THE 全部 BUTTON, in the header row the layout reserves at the card's top-right: every
+        // application the shell offers, where a row click OPENS the application instead of pinning it.
+        // Drawn after the grid so the empty-card hint can never paint over it.
+        {
+            const RectF button = layout.allApps;
+            if (button.right > button.left) {
+                const float radius = island::kStartAllAppsHeight * 0.5f;
+                fillWash(button, radius, text.allAppsHovered ? 1.0f : 0.0f);
+                if (lineBrush) {
+                    const D2D1_ROUNDED_RECT pill = {
+                        D2D1::RectF(button.left, button.top, button.right, button.bottom), radius, radius};
+                    context->DrawRoundedRectangle(&pill, lineBrush, 1.0f);
+                }
+                if (startLabelFormat_ && inkBrush) {
+                    const wchar_t* label = L"全部";
+                    context->DrawTextW(label, static_cast<UINT32>(std::wcslen(label)),
+                                       startLabelFormat_,
+                                       D2D1::RectF(button.left, button.top, button.right, button.bottom),
+                                       inkBrush);
+                }
+            }
+        }
     }
 
     // --- the footer: the account picture, the name, and the power button --------------------------
@@ -4044,7 +4067,10 @@ void TextRenderer::DrawStartPage(ID2D1DeviceContext2* context, const RoundedBox&
         // picture steps aside: the card has one line at the bottom and this is the more useful one.
         if (dimBrush && startRowFormat_) {
             wchar_t hint[128] = {};
-            std::swprintf(hint, 128, L"全部应用 %d 个 · 滚轮翻页 · 点一个固定", text.listCount);
+            std::swprintf(hint, 128,
+                          text.allAppsMode ? L"全部应用 %d 个 · 滚轮翻页 · 点一个打开"
+                                           : L"全部应用 %d 个 · 滚轮翻页 · 点一个固定",
+                          text.listCount);
             const D2D1_RECT_F target = D2D1::RectF(layout.footer.left, layout.footer.top,
                                                    layout.footer.right - 40.0f, layout.footer.bottom);
             context->DrawTextW(hint, static_cast<UINT32>(std::wcslen(hint)), startRowFormat_, target,

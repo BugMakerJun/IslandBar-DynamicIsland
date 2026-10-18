@@ -64,6 +64,10 @@ struct BarState {
     int startPageState = 0;        // 0 = the pins, 1 = the picker, 2 = the power list
     int startPickerScroll = 0;
     int startPowerConfirm = -1;
+    // True while the picker was opened by the 全部 button: its rows LAUNCH the application instead of
+    // pinning it. The empty grid still opens the same list in pin mode, which is what keeps the card
+    // fillable.
+    bool startAllApps = false;
     std::vector<uint8_t> accountAvatarPng;
     wchar_t accountName[64] = {};
     // Rebuilt per frame for the frame's icon pointers (see below), and kept here so the storage outlives

@@ -227,7 +227,7 @@ public:
     // the picker's scroll offset are TOLD to the window, the way the tray's count is: the window owns no
     // application list, but it is the only place that knows where the pointer is -- and a hit test against
     // geometry the drawing did not use is the defect this project has paid for more often than any other.
-    enum class StartHitTarget { None, Pin, PickerRow, PowerRow, PowerButton, EmptyGrid };
+    enum class StartHitTarget { None, Pin, PickerRow, PowerRow, PowerButton, EmptyGrid, AllApps };
     struct StartHit {
         StartHitTarget target = StartHitTarget::None;
         int index = -1;

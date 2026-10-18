@@ -148,6 +148,10 @@ public:
         int hoveredPickerRow = -1;
         int hoveredPowerRow = -1;
         bool powerButtonHovered = false;
+        // The 全部 button's highlight, and whether the picker was opened by it (its rows then launch
+        // instead of pinning -- the footer says which).
+        bool allAppsHovered = false;
+        bool allAppsMode = false;
         // How far each item's highlight has come up, 0 to 1, one entry per item in the same order as
         // `pins`, `list` and the power rows. Spring-animated by the frame loop, for the reason the deck's
         // washes are (see ControlWashStep): a highlight that switches on in one frame reads as a hard edge,

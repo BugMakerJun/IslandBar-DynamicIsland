@@ -2209,6 +2209,15 @@ static void ApplyStartCardPress(island::BarState& bar, island::BarSystems& syste
         case island::IslandWindow::StartHitTarget::PickerRow: {
             if (startHit.index >= 0 && startHit.index < bar.startAppCount) {
                 const island::StartApp& app = systems.startApps.ListAt(startHit.index);
+                if (bar.startAllApps) {
+                    // THE 全部 VIEW OPENS THE APPLICATION. The same list has one meaning per door: the
+                    // 全部 button launches, the empty grid pins, and neither has to explain itself in the
+                    // footer. This is the user's "点击应用可以打开".
+                    island::LogAndPrint("  start: launching '%ls'\n", app.name);
+                    island::LaunchStartApp(app.target);
+                    DismissPanelSurface(bar, systems, active, resting);
+                    break;
+                }
                 // The shortcut is NAMED after the application, which is also what the tile
                 // will show: renaming the file in Explorer renames the tile.
                 const bool added = systems.startApps.Pin(app.target, app.name);
@@ -2245,6 +2254,7 @@ static void ApplyStartCardPress(island::BarState& bar, island::BarSystems& syste
         case island::IslandWindow::StartHitTarget::PowerButton: {
             if (bar.startPageState == 1) {
                 bar.startPageState = 0;   // the × on the picker: back to the pins
+                bar.startAllApps = false;
             } else {
                 bar.startPageState = bar.startPageState == 2 ? 0 : 2;
             }
@@ -2255,9 +2265,20 @@ static void ApplyStartCardPress(island::BarState& bar, island::BarSystems& syste
             // The empty upper area is the way to fill it, which is what "上面的应该可以让用户
             // 手动添加" asks for: the card itself is the control.
             bar.startPageState = 1;
+            bar.startAllApps = false;
             bar.startPickerScroll = 0;
             island::LogAndPrint("  start: picker open (%d application(s))\n",
                                 bar.startAppCount);
+            break;
+        }
+        case island::IslandWindow::StartHitTarget::AllApps: {
+            // The 全部 button at the card's top-right: the same list, but a row OPENS the application
+            // rather than pinning it (see PickerRow). Reset the scroll so the list starts at the top.
+            bar.startPageState = 1;
+            bar.startAllApps = true;
+            bar.startPickerScroll = 0;
+            bar.startPowerConfirm = -1;
+            island::LogAndPrint("  start: all applications (%d)\n", bar.startAppCount);
             break;
         }
         case island::IslandWindow::StartHitTarget::None:
@@ -2586,6 +2607,7 @@ static void ApplyPressesAndClicks(island::BarState& bar, island::BarSystems& sys
             bar.startPageOpen = !bar.startPageOpen;
             bar.systemPanelOpen = bar.startPageOpen;
             bar.startPageState = 0;
+            bar.startAllApps = false;
             bar.startPickerScroll = 0;
             bar.startPowerConfirm = -1;
             bar.trayPageOpen = false;
@@ -3492,6 +3514,8 @@ static void FillStartCardFrame(island::FrameState& frame, island::BarState& bar,
                 : -1;
         card.powerButtonHovered =
             startHit.target == island::IslandWindow::StartHitTarget::PowerButton;
+        card.allAppsHovered = startHit.target == island::IslandWindow::StartHitTarget::AllApps;
+        card.allAppsMode = bar.startAllApps;
         card.powerConfirmRow = bar.startPowerConfirm;
         card.pinWashes = bar.startPinWashValues.empty() ? nullptr : bar.startPinWashValues.data();
         card.rowWashes = bar.startRowWashValues.empty() ? nullptr : bar.startRowWashValues.data();
