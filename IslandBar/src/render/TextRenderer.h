@@ -271,6 +271,12 @@ public:
         // The accent taken from the cover (island::AccentColourFromArtwork), so the progress bar and the
         // play button follow the album rather than a fixed blue. A zero alpha means "use the default".
         D2D1_COLOR_F accent = D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f);
+        // THE CARD'S LYRICS, in the space beside the cover ("这个区域显示歌词"): the current line, the one
+        // after it, and how far through the current line the song is (0..1) for the karaoke fill. All
+        // three come from the same sheet the pill's line is read from.
+        const char* lyricLine = nullptr;
+        const char* lyricNext = nullptr;
+        float lyricProgress = 0.0f;
     };
 
     // Draws the now-playing card, laid out like the Windows 11 media flyout: blurred
@@ -830,6 +836,8 @@ private:
     // because its title is larger. See the comment in Initialize().
     IDWriteTextFormat*   musicTitleFormat_    = nullptr;
     IDWriteTextFormat*   musicSubtitleFormat_ = nullptr;
+    IDWriteTextFormat*   musicLyricFormat_    = nullptr;   // the current lyric line, with the karaoke
+    IDWriteTextFormat*   musicLyricNextFormat_ = nullptr;  // the line after it, dimmed
     // The ♪ that marks a cover-less track's empty cover slot. Its own format rather than the title's: the
     // glyph has to read as a placeholder at a glance, and 20 DIP left it a speck in a 92 DIP square.
     IDWriteTextFormat*   coverNoteFormat_     = nullptr;

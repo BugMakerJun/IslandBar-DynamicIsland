@@ -951,6 +951,17 @@ void TestMusicCardLayout() {
     Check(layout.subtitle.top >= layout.title.bottom - 0.01f,
           L"the subtitle is below the title");
 
+    // THE LYRIC REGION beside the cover ("这个区域显示歌词"): inside the card, right of the cover, below
+    // the artist, and the next line below the current one -- the same order the drawing uses.
+    Check(insideCard(layout.lyricCurrent) && insideCard(layout.lyricNext),
+          L"the lyric region is inside the card");
+    Check(layout.lyricCurrent.left >= layout.artwork.right,
+          L"the lyrics start to the right of the cover");
+    Check(layout.lyricCurrent.top >= layout.subtitle.bottom - 0.01f,
+          L"the lyrics are below the artist");
+    Check(layout.lyricNext.top >= layout.lyricCurrent.bottom - 0.01f,
+          L"the next lyric is below the current one");
+
     // The vertical order is the reference image's, and it is what broke before: the
     // time row used to overlap the cover.
     {

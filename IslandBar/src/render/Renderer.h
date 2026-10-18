@@ -466,6 +466,11 @@ struct FrameState {
 
     const char* lyricLine = nullptr;
     const char* fallbackLine = nullptr;
+    // THE MUSIC CARD's lyric region, beside the cover: the line after the current one, and how far
+    // through the current line the song is (0..1) for the karaoke fill. The current line is `lyricLine`
+    // itself; a null next line and a zero progress mean "no lyrics", which the card prints as 暂无歌词.
+    const char* lyricLineNext = nullptr;
+    float lyricProgress = 0.0f;
     // The line the NOTICE STRIP shows: the sender and the message, in the one line the strip has room for.
     //
     // A separate field rather than a reuse of `lyricLine`, because the two say different things and the

@@ -284,11 +284,12 @@ bool TextRenderer::Initialize() {
     hr = factory_->CreateTextFormat(
         L"Segoe UI Variable Display", nullptr,
         DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-        20.0f, L"zh-CN", &musicTitleFormat_);
+        22.0f, L"zh-CN", &musicTitleFormat_);
     if (SUCCEEDED(hr)) {
         musicTitleFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
         musicTitleFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         musicTitleFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        trimWithEllipsis(musicTitleFormat_);
     }
 
     hr = factory_->CreateTextFormat(
@@ -299,6 +300,30 @@ bool TextRenderer::Initialize() {
         musicSubtitleFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
         musicSubtitleFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         musicSubtitleFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        trimWithEllipsis(musicSubtitleFormat_);
+    }
+
+    // THE CARD'S LYRIC LINES: the current one (with room for the karaoke) and the next one, dimmed.
+    // Both leading-aligned, because the karaoke sweeps from the left edge of the words.
+    hr = factory_->CreateTextFormat(
+        L"Segoe UI Variable Text", nullptr,
+        DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+        15.5f, L"zh-CN", &musicLyricFormat_);
+    if (SUCCEEDED(hr)) {
+        musicLyricFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        musicLyricFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        musicLyricFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        trimWithEllipsis(musicLyricFormat_);
+    }
+    hr = factory_->CreateTextFormat(
+        L"Segoe UI Variable Text", nullptr,
+        DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+        13.0f, L"zh-CN", &musicLyricNextFormat_);
+    if (SUCCEEDED(hr)) {
+        musicLyricNextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        musicLyricNextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        musicLyricNextFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        trimWithEllipsis(musicLyricNextFormat_);
     }
 
     // The transport glyphs. Bigger than any body text, because a control has to look
@@ -1887,6 +1912,51 @@ void TextRenderer::DrawMusicCard(ID2D1DeviceContext2* context, const RoundedBox&
                   _TRUNCATE);
     }
     draw(subtitle, musicSubtitleFormat_, layout.subtitle, secondaryBrush);
+
+    // --- 5b. the lyric region, beside the cover --------------------------
+    //
+    // The user's "这个区域显示歌词": the current line, with the accent sweeping across it as the line is
+    // sung, and the next line dimmed under it. Both come from the same sheet as the pill's line, so the
+    // card and the bar cannot show different words.
+    if (text.lyricLine && text.lyricLine[0] != '\0' && musicLyricFormat_ && factory_) {
+        wchar_t wideLine[512] = {};
+        if (MultiByteToWideChar(CP_UTF8, 0, text.lyricLine, -1, wideLine, 512) > 0) {
+            const float width = layout.lyricCurrent.right - layout.lyricCurrent.left;
+            IDWriteTextLayout* layoutLine = nullptr;
+            if (SUCCEEDED(factory_->CreateTextLayout(
+                    wideLine, static_cast<UINT32>(std::wcslen(wideLine)), musicLyricFormat_, width,
+                    layout.lyricCurrent.bottom - layout.lyricCurrent.top, &layoutLine)) &&
+                layoutLine) {
+                DWRITE_TEXT_METRICS metrics = {};
+                layoutLine->GetMetrics(&metrics);
+                const D2D1_POINT_2F origin =
+                    D2D1::Point2F(layout.lyricCurrent.left, layout.lyricCurrent.top);
+                if (primaryBrush) context->DrawTextLayout(origin, layoutLine, primaryBrush);
+                if (accentBrush && text.lyricProgress > 0.0f) {
+                    const float fraction = text.lyricProgress > 1.0f ? 1.0f : text.lyricProgress;
+                    const float filled =
+                        metrics.widthIncludingTrailingWhitespace * fraction;
+                    context->PushAxisAlignedClip(
+                        D2D1::RectF(layout.lyricCurrent.left, layout.lyricCurrent.top,
+                                    layout.lyricCurrent.left + filled, layout.lyricCurrent.bottom),
+                        D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+                    context->DrawTextLayout(origin, layoutLine, accentBrush);
+                    context->PopAxisAlignedClip();
+                }
+                layoutLine->Release();
+            }
+        }
+    } else if (secondaryBrush && musicLyricFormat_) {
+        DrawTextIn(context, musicLyricFormat_, L"暂无歌词", layout.lyricCurrent, secondaryBrush,
+                   DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    }
+    if (text.lyricNext && text.lyricNext[0] != '\0' && musicLyricNextFormat_) {
+        wchar_t wideNext[512] = {};
+        if (MultiByteToWideChar(CP_UTF8, 0, text.lyricNext, -1, wideNext, 512) > 0) {
+            DrawTextIn(context, musicLyricNextFormat_, wideNext, layout.lyricNext, secondaryBrush,
+                       DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        }
+    }
 
     // --- 6. times and progress ------------------------------------------
     wchar_t elapsed[16] = {};

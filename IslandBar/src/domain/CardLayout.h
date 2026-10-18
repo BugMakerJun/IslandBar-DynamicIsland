@@ -550,6 +550,8 @@ struct MusicCardLayout {
     RectF artwork;         // the album cover
     RectF title;           // track title
     RectF subtitle;        // artist 路 album
+    RectF lyricCurrent;    // the current lyric line, beside the cover
+    RectF lyricNext;       // the line after it
     RectF elapsed;         // "01:33", left of the bar
     RectF remaining;       // "05:40", right of the bar
     RectF progress;        // the bar itself
@@ -1608,16 +1610,29 @@ inline MusicCardLayout MusicCardFor(const RoundedBox& box) {
     layout.artwork.right = layout.artwork.left + kMusicArtworkSizeDip;
     layout.artwork.bottom = layout.artwork.top + kMusicArtworkSizeDip;
 
-    // Title and subtitle to the right of the artwork, vertically centred against it.
+    // Title, artist and the lyric region, top to bottom in the right-hand column. The cover is 108 tall
+    // and the column beside it has about 100 DIP: the title (22) and the artist (13) take the top, and
+    // the current lyric and the next one take the rest. The lyrics used to be an empty area -- "这个区域
+    // 显示歌词" is what fills it.
     layout.title.left = layout.artwork.right + kMusicGapAfterArtDip;
     layout.title.right = box.rect.right - pad;
-    layout.title.top = layout.artwork.top + 16.0f;
-    layout.title.bottom = layout.title.top + 28.0f;
+    layout.title.top = layout.artwork.top + 2.0f;
+    layout.title.bottom = layout.title.top + 30.0f;
 
     layout.subtitle.left = layout.title.left;
     layout.subtitle.right = layout.title.right;
-    layout.subtitle.top = layout.title.bottom + 2.0f;
-    layout.subtitle.bottom = layout.subtitle.top + 20.0f;
+    layout.subtitle.top = layout.title.bottom - 2.0f;
+    layout.subtitle.bottom = layout.subtitle.top + 18.0f;
+
+    layout.lyricCurrent.left = layout.title.left;
+    layout.lyricCurrent.right = layout.title.right;
+    layout.lyricCurrent.top = layout.subtitle.bottom + 6.0f;
+    layout.lyricCurrent.bottom = layout.lyricCurrent.top + 26.0f;
+
+    layout.lyricNext.left = layout.title.left;
+    layout.lyricNext.right = layout.title.right;
+    layout.lyricNext.top = layout.lyricCurrent.bottom + 2.0f;
+    layout.lyricNext.bottom = layout.lyricNext.top + 20.0f;
 
     // Three buttons, centred as a group. The play disc is 46 and the skips 38, which is what makes the
     // transport read as play-with-two-skips rather than as three equal buttons.

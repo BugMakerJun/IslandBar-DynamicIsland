@@ -4193,6 +4193,33 @@ static void FillHoverPreview(BarRuntime& runtime, island::FrameState& frame, isl
         (nowPlaying.state == island::PlaybackState::Playing) ? ">" : "||";
     frame.lyricLine = lyricLine;
     frame.fallbackLine = fallbackLine;
+
+    // THE CARD'S OWN LYRICS, beside the cover: the line after the current one and how far through the
+    // current line the song is -- the karaoke fill. The same sheet the pill's line is read from, so the
+    // two cannot disagree; the current line itself is `lyricLine`, already set above.
+    frame.lyricLineNext = nullptr;
+    frame.lyricProgress = 0.0f;
+    if (runtime.currentLyrics && !runtime.currentLyrics->Empty() &&
+        runtime.lastLyricIndex >= 0) {
+        const island::LyricLine* current = runtime.currentLyrics->At(runtime.lastLyricIndex);
+        const island::LyricLine* next = runtime.currentLyrics->At(runtime.lastLyricIndex + 1);
+        if (current) {
+            frame.lyricLineNext = next ? next->text : nullptr;
+            const long long start = current->timeMs;
+            const long long end =
+                next ? next->timeMs
+                     : (runtime.currentLyrics->trackDurationMs > start
+                            ? runtime.currentLyrics->trackDurationMs
+                            : start + 4000);
+            float progress = (end > start)
+                                 ? static_cast<float>(bar.track.ms - start) /
+                                       static_cast<float>(end - start)
+                                 : 1.0f;
+            if (progress < 0.0f) progress = 0.0f;
+            if (progress > 1.0f) progress = 1.0f;
+            frame.lyricProgress = progress;
+        }
+    }
     // How far through its arrival the pill's line is, and what it is replacing: 1 and
     // nothing once it has settled.
     frame.lyricLineRoll = island::LyricLineRollFor(bar.lyricLineAge);

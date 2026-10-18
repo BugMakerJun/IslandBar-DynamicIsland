@@ -1348,6 +1348,11 @@ void Renderer::RenderFrame(const FrameState& frame) {
                     text.backgroundLuminance = musicBackgroundLuma_;
                     // The cover's accent, so the progress bar and the play button follow the album.
                     text.accent = frame.musicAccent;
+                    // The lyric region beside the cover: the pill's current line, the one after it and
+                    // the karaoke fill (see the frame loop's lyric block).
+                    text.lyricLine = frame.lyricLine;
+                    text.lyricNext = frame.lyricLineNext;
+                    text.lyricProgress = frame.lyricProgress;
 
                     text_->DrawMusicCard(d2dContext_, panelCard, text,
                                          CachedBitmap(frame.artworkPixels, frame.artworkWidth,
