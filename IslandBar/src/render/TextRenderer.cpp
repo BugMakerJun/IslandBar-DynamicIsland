@@ -2428,9 +2428,13 @@ void TextRenderer::DrawTaskIcons(ID2D1DeviceContext2* context, const RoundedBox&
         // The hairline stroke in the fill colour is there for the same reason the island has one: a
         // plain rounded-rectangle fill leaves an antialiased fringe along the curve, which shows as
         // a pale seam against the desktop.
-        if (button.fill.a > 0.001f) {
-            D2D1_COLOR_F fill = button.fill;
-            fill.a *= appear;
+        // THE BODY IS THE ISLAND'S OWN, not whatever fill the task data carries. The active window's
+        // button can arrive with a black fill -- that was the black plate under the black title the user
+        // saw. On the glass theme the body is the theme's own pill fill, the same 0.08 the island draws.
+        const island::Theme& theme = island::CurrentTheme();
+        D2D1_COLOR_F fill = theme.lens ? theme.pillTop : button.fill;
+        fill.a *= appear;
+        if (fill.a > 0.001f) {
             const float radius = (box.bottom - box.top) * 0.5f;
             const D2D1_ROUNDED_RECT rounded = {
                 D2D1::RectF(box.left, box.top, box.right, box.bottom), radius, radius};
@@ -2440,22 +2444,21 @@ void TextRenderer::DrawTaskIcons(ID2D1DeviceContext2* context, const RoundedBox&
                 context->FillRoundedRectangle(&rounded, background);
                 // The glass theme's hairline is the 2.5 DIP rim band below; a 1px stroke in the fill
                 // colour on top of it is the line the user saw on the island.
-                if (!island::CurrentTheme().lens) {
+                if (!theme.lens) {
                     context->DrawRoundedRectangle(&rounded, background, 1.0f);
                 }
                 background->Release();
             }
         }
 
-        // THE SAME GLASS AS THE ISLAND. The task buttons used to be flat circles. Their body is already
-        // `button.fill` (the island's own pill fill, supplied by the caller), so drawing the same 2.5 DIP
+        // THE SAME GLASS AS THE ISLAND. The task buttons used to be flat circles. Drawing the same 2.5 DIP
         // rim band -- bright top, almost nothing at the sides, soft dark bottom -- makes them the same
         // material without a second copy of the numbers.
-        if (island::CurrentTheme().lens) {
+        if (theme.lens) {
             const float radius = (box.bottom - box.top) * 0.5f;
             const D2D1_ROUNDED_RECT rounded = {
                 D2D1::RectF(box.left, box.top, box.right, box.bottom), radius, radius};
-            island::DrawLensRimBand(context, rounded, island::CurrentTheme(), opacity * appear);
+            island::DrawLensRimBand(context, rounded, theme, opacity * appear);
         }
 
         // The window in front is marked by a LIGHTER wash ON TOP of the glass, so the mark is visible
