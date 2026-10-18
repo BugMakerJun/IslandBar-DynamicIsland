@@ -15,11 +15,11 @@
 //      which is what `|nx|` weights below.
 //
 //  WHY THESE NUMBERS. The reference leaves the middle 57.5% of its 200 px height alone and moves the
-//  edge by 3-8% of its size. A 36 DIP pill cannot carry a 43 DIP band: a 10-14 DIP band keeps 16 DIP of
-//  flat centre (enough for the one text line) and still bends 3 DIP at the top and 8 DIP at the ends.
-//  The shift is kept below ~2/3 of the band, because the sample is `pixel + shift`: a shift that falls
-//  faster than the band would make the mapping fold, and the image would mirror at the rim. The
-//  self-test asserts the flat centre, the monotonic mapping and the DPI scaling.
+//  edge by 3-8% of its size. A 36 DIP pill cannot carry a 43 DIP band: a 12-18 DIP band keeps 12 DIP of
+//  flat centre and still bends 5 DIP at the top and 11 DIP at the ends -- enough to see the glass on a
+//  detailed desktop. The shift is kept below ~2/3 of the band, because the sample is `pixel + shift`: a
+//  shift that falls faster than the band would make the mapping fold, and the image would mirror at the
+//  rim. The self-test asserts the flat centre, the monotonic mapping and the DPI scaling.
 // =====================================================================
 #pragma once
 
@@ -35,10 +35,10 @@ struct LensOffset {
 
 // In DIP; `scale` converts them to physical pixels at the current DPI. The band grows on the ends,
 // where the surface is more curved and the reference bends hardest.
-inline constexpr float kLensBandBaseDip = 10.0f;
-inline constexpr float kLensBandEndDip = 14.0f;
-inline constexpr float kLensShiftTopDip = 3.0f;
-inline constexpr float kLensShiftEndDip = 8.0f;
+inline constexpr float kLensBandBaseDip = 12.0f;
+inline constexpr float kLensBandEndDip = 18.0f;
+inline constexpr float kLensShiftTopDip = 5.0f;
+inline constexpr float kLensShiftEndDip = 11.0f;
 
 // `px`/`py` are the pixel's centre inside the pill, in physical pixels (0..pillW, 0..pillH). The result
 // is how far the sample moves from that pixel, in physical pixels, along the INWARD normal: the top

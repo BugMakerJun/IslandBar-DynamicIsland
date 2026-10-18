@@ -2398,17 +2398,17 @@ void TestLensProfile() {
 
     const LensOffset top = at(w * 0.5f, 0.5f);
     const LensOffset bottom = at(w * 0.5f, h - 0.5f);
-    Check(top.dy > 2.5f && top.dy < 3.5f && Nearly(top.dx, 0.0f),
-          L"the top edge samples 3 DIP inward (down), not outward");
-    Check(bottom.dy < -2.5f && bottom.dy > -3.5f && Nearly(bottom.dx, 0.0f),
-          L"the bottom edge samples 3 DIP inward (up)");
+    Check(top.dy > 4.5f && top.dy < 5.5f && Nearly(top.dx, 0.0f),
+          L"the top edge samples 5 DIP inward (down), not outward");
+    Check(bottom.dy < -4.5f && bottom.dy > -5.5f && Nearly(bottom.dx, 0.0f),
+          L"the bottom edge samples 5 DIP inward (up)");
 
     const LensOffset left = at(0.5f, h * 0.5f);
     const LensOffset right = at(w - 0.5f, h * 0.5f);
-    Check(left.dx > 7.0f && left.dx < 9.0f && Nearly(left.dy, 0.0f),
-          L"the left end samples 8 DIP inward (right)");
-    Check(right.dx < -7.0f && right.dx > -9.0f && Nearly(right.dy, 0.0f),
-          L"the right end samples 8 DIP inward (left)");
+    Check(left.dx > 10.0f && left.dx < 12.0f && Nearly(left.dy, 0.0f),
+          L"the left end samples 11 DIP inward (right)");
+    Check(right.dx < -10.0f && right.dx > -12.0f && Nearly(right.dy, 0.0f),
+          L"the right end samples 11 DIP inward (left)");
     Check(Nearly(left.dx, -right.dx, 0.02f) && Nearly(top.dy, -bottom.dy, 0.02f),
           L"the profile is symmetric left/right and top/bottom");
 
