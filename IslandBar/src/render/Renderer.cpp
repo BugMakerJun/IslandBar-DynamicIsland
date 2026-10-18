@@ -947,10 +947,13 @@ void Renderer::RenderFrame(const FrameState& frame) {
                     const float phase = static_cast<float>(GetTickCount64() % 3600000ull) / 1000.0f;
                     const island::AmbientKind ambient = island::AmbientKindFor(
                         frame.statusCode, nowMinutes, frame.sunriseMinutes, frame.sunsetMinutes);
+                    // THE WHOLE GLASS, not the status line's inner box: `lineBox` is the narrower
+                    // RowAnchorBox the words are laid out in, and the weather drawn into it stopped
+                    // short of the pill's own left and right ends ("没有撑满整个灵动岛"). `box` is
+                    // the pill's own shape, which is what the glass and the rim are drawn from.
                     const D2D1_ROUNDED_RECT ambientShape = {
-                        D2D1::RectF(lineBox.rect.left, lineBox.rect.top, lineBox.rect.right,
-                                    lineBox.rect.bottom),
-                        lineBox.radiusX, lineBox.radiusY};
+                        D2D1::RectF(box.rect.left, box.rect.top, box.rect.right, box.rect.bottom),
+                        box.radiusX, box.radiusY};
                     island::DrawAmbient(d2dContext_, ambientShape, ambient, phase,
                                         frame.contentOpacity, island::CurrentTheme());
                 }
