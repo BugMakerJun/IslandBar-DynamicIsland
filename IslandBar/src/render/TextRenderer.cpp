@@ -870,7 +870,7 @@ void TextRenderer::DrawTrayButton(ID2D1DeviceContext2* context, const RectF& box
     if (strength > 0.01f && opacity > 0.01f) {
         ID2D1SolidColorBrush* washBrush = nullptr;
         if (SUCCEEDED(context->CreateSolidColorBrush(
-                ThemeInk(strength * opacity), &washBrush)) &&
+                PillInk(strength * opacity), &washBrush)) &&
             washBrush) {
             context->FillRoundedRectangle(&rounded, washBrush);
             washBrush->Release();
@@ -884,7 +884,7 @@ void TextRenderer::DrawTrayButton(ID2D1DeviceContext2* context, const RectF& box
     ID2D1SolidColorBrush* ink = nullptr;
     const float brightness = open ? 1.0f : 0.90f;
     if (FAILED(context->CreateSolidColorBrush(
-            ThemeInk(brightness * 0.94f * opacity), &ink)) ||
+            PillInk(brightness * 0.94f * opacity), &ink)) ||
         !ink) {
         return;
     }
@@ -2674,7 +2674,7 @@ void TextRenderer::DrawSystemButton(ID2D1DeviceContext2* context, const RectF& b
         const D2D1_ROUNDED_RECT rounded = {
             D2D1::RectF(box.left, box.top, box.right, box.bottom), radius, radius};
         ID2D1SolidColorBrush* washBrush = nullptr;
-        const D2D1_COLOR_F colour = ThemeInk(0.16f * opacity * wash);
+        const D2D1_COLOR_F colour = PillInk(0.16f * opacity * wash);
         if (SUCCEEDED(context->CreateSolidColorBrush(colour, &washBrush)) && washBrush) {
             context->FillRoundedRectangle(&rounded, washBrush);
             washBrush->Release();
@@ -2686,7 +2686,7 @@ void TextRenderer::DrawSystemButton(ID2D1DeviceContext2* context, const RectF& b
     // close", down means "this will open". Drawing it makes the direction a parameter rather than a
     // second codepoint to get wrong, which is exactly how the Bluetooth glyph went wrong.
     ID2D1SolidColorBrush* ink = nullptr;
-    const D2D1_COLOR_F colour = ThemeInk(0.92f * opacity);
+    const D2D1_COLOR_F colour = PillInk(0.92f * opacity);
     if (FAILED(context->CreateSolidColorBrush(colour, &ink)) || !ink) return;
 
     const float cx = (box.left + box.right) * 0.5f;
@@ -3666,7 +3666,7 @@ void TextRenderer::DrawStartButton(ID2D1DeviceContext2* context, const RoundedBo
             D2D1::RectF(box.left, box.top, box.right, box.bottom), radius, radius};
         ID2D1SolidColorBrush* washBrush = nullptr;
         const float amount = open ? 0.16f : 0.16f * strength;
-        const D2D1_COLOR_F colour = ThemeInk(amount * opacity);
+        const D2D1_COLOR_F colour = PillInk(amount * opacity);
         if (SUCCEEDED(context->CreateSolidColorBrush(colour, &washBrush)) && washBrush) {
             context->FillRoundedRectangle(&rounded, washBrush);
             washBrush->Release();
@@ -3680,7 +3680,7 @@ void TextRenderer::DrawStartButton(ID2D1DeviceContext2* context, const RoundedBo
     // cannot go missing.
     {
         ID2D1SolidColorBrush* mark = nullptr;
-        const D2D1_COLOR_F colour = ThemeInk(0.95f * opacity);
+        const D2D1_COLOR_F colour = PillInk(0.95f * opacity);
         if (SUCCEEDED(context->CreateSolidColorBrush(colour, &mark)) && mark) {
             const float side = kStartIconDip;
             const float centreX = (box.left + box.right) * 0.5f;
