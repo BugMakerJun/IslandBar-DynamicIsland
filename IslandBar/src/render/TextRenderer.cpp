@@ -553,10 +553,9 @@ struct StatusPiece {
     float luminance = 0.93f;
 };
 
-// The user asked to hide the weekday, the date and the weather for now, leaving the time alone in the
-// island. MeasureStatusLine still measures the full run, so the box does not jump when they come back;
-// this switch only decides what is DRAWN.
-constexpr bool kStatusExtrasVisible = false;
+// The date and the weather are back as of the user's word. MeasureStatusLine measures the full run, so
+// the box is the same width either way; this switch only decides what is DRAWN.
+constexpr bool kStatusExtrasVisible = true;
 
 // The four faces the run sets its words in. Passed in rather than reached for, because this file's
 // helpers are free functions and the formats belong to the TextRenderer that created them.
