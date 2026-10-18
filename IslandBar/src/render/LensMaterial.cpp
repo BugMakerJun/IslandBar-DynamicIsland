@@ -146,10 +146,6 @@ struct LensMaterial::Cache {
     // picture. The stall that buffering avoided was under half a millisecond -- the stale image was far
     // more expensive.
     Microsoft::WRL::ComPtr<ID3D11Texture2D> staging;
-    // The card ink's 24x24 sample: the cards are below the bar, over a different part of the desktop,
-    // so their text is decided by their own rectangle rather than by the island's.
-    Microsoft::WRL::ComPtr<ID3D11Texture2D> sampleGpu;
-    Microsoft::WRL::ComPtr<ID3D11Texture2D> sampleStaging;
     Microsoft::WRL::ComPtr<ID2D1Bitmap> warped;
     Microsoft::WRL::ComPtr<ID2D1BitmapBrush> brush;
     Microsoft::WRL::ComPtr<ID2D1DeviceContext> brushContext;
@@ -355,89 +351,6 @@ bool LensMaterial::Update(ID3D11Texture2D* texture, const RECT& source, const D2
         LensFail(L"updating the lens bitmap failed");
         return false;
     }
-    return true;
-}
-
-bool LensMaterial::SampleLuminance(ID3D11Texture2D* texture, const RECT& source,
-                                   const RECT& screenArea, float* luminance) {
-    if (luminance) *luminance = -1.0f;
-    if (!cache_ || !texture || !luminance) return false;
-    if (screenArea.right <= screenArea.left || screenArea.bottom <= screenArea.top) return false;
-    if (source.right <= source.left || source.bottom <= source.top) return false;
-
-    // A fixed 24x24 at the middle of the card: one number for one piece of text, and small enough that
-    // the readback is a rounding error next to the lens's own crop.
-    constexpr int kSide = 24;
-    const int frameW = source.right - source.left;
-    const int frameH = source.bottom - source.top;
-    const int centreX = (screenArea.left + screenArea.right) / 2 - source.left;
-    const int centreY = (screenArea.top + screenArea.bottom) / 2 - source.top;
-    int left = centreX - kSide / 2;
-    int top = centreY - kSide / 2;
-    if (left + kSide <= 0 || top + kSide <= 0 || left >= frameW || top >= frameH) return false;
-    left = std::max(0, std::min(left, frameW - 1));
-    top = std::max(0, std::min(top, frameH - 1));
-    const int width = std::min(kSide, frameW - left);
-    const int height = std::min(kSide, frameH - top);
-    if (width <= 0 || height <= 0) return false;
-
-    if (!cache_->sampleGpu || !cache_->sampleStaging) {
-        D3D11_TEXTURE2D_DESC gpu = {};
-        gpu.Width = static_cast<UINT>(kSide);
-        gpu.Height = static_cast<UINT>(kSide);
-        gpu.MipLevels = 1;
-        gpu.ArraySize = 1;
-        gpu.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-        gpu.SampleDesc.Count = 1;
-        gpu.Usage = D3D11_USAGE_DEFAULT;
-        D3D11_TEXTURE2D_DESC readback = gpu;
-        readback.Usage = D3D11_USAGE_STAGING;
-        readback.BindFlags = 0;
-        readback.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-        ID3D11Device* device = nullptr;
-        texture->GetDevice(&device);
-        if (!device) return false;
-        const HRESULT createdGpu = device->CreateTexture2D(&gpu, nullptr, &cache_->sampleGpu);
-        const HRESULT createdRead =
-            device->CreateTexture2D(&readback, nullptr, &cache_->sampleStaging);
-        device->Release();
-        if (FAILED(createdGpu) || FAILED(createdRead)) {
-            cache_->sampleGpu.Reset();
-            cache_->sampleStaging.Reset();
-            return false;
-        }
-    }
-
-    Microsoft::WRL::ComPtr<ID3D11DeviceContext> d3d;
-    {
-        ID3D11Device* device = nullptr;
-        texture->GetDevice(&device);
-        if (device) {
-            device->GetImmediateContext(&d3d);
-            device->Release();
-        }
-    }
-    if (!d3d) return false;
-
-    const D3D11_BOX box = {static_cast<UINT>(left), static_cast<UINT>(top), 0,
-                           static_cast<UINT>(left + width), static_cast<UINT>(top + height), 1};
-    d3d->CopySubresourceRegion(cache_->sampleGpu.Get(), 0, 0, 0, 0, texture, 0, &box);
-    d3d->CopyResource(cache_->sampleStaging.Get(), cache_->sampleGpu.Get());
-    D3D11_MAPPED_SUBRESOURCE mapped = {};
-    if (FAILED(d3d->Map(cache_->sampleStaging.Get(), 0, D3D11_MAP_READ, 0, &mapped))) return false;
-    const auto* rows = static_cast<const unsigned char*>(mapped.pData);
-    double sum = 0.0;
-    int counted = 0;
-    for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
-            const unsigned char* p = rows + static_cast<size_t>(y) * mapped.RowPitch + x * 4;
-            sum += 0.0722 * p[0] + 0.7152 * p[1] + 0.2126 * p[2];
-            ++counted;
-        }
-    }
-    d3d->Unmap(cache_->sampleStaging.Get(), 0);
-    if (!counted) return false;
-    *luminance = static_cast<float>(sum / counted / 255.0);
     return true;
 }
 

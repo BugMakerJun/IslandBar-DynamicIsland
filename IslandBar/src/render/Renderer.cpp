@@ -54,6 +54,79 @@ UINT DipToSurfacePixels(LONG pixels, float scale) {
     return static_cast<UINT>(std::max(1.0f, std::floor(dip + 0.5f)));
 }
 
+// The luminance of the screen under the CARD, sampled from the screen itself.
+//
+// The captured frame the lens uses is the window under the ISLAND, and a card hangs over a different
+// window: a white desktop with a dark editor open in front gave the system panel black words on a dark
+// card, because the card's ink was following the desktop rather than the editor. The screen at the
+// card's own rectangle IS the composite the words are read against -- the app behind plus our glass --
+// so it is sampled at four inset corners and the median taken, which survives a tile or a glyph sitting
+// in one corner.
+float SampleUnderCard(const RECT& area, float scale) {
+    const int inset = std::max(2, static_cast<int>(std::lround(16.0f * scale)));
+    const int side = std::max(4, static_cast<int>(std::lround(16.0f * scale)));
+    if (area.right - area.left < inset * 2 + side || area.bottom - area.top < inset * 2 + side) {
+        return -1.0f;
+    }
+    HDC screen = GetDC(nullptr);
+    if (!screen) return -1.0f;
+    HDC memory = CreateCompatibleDC(screen);
+    if (!memory) {
+        ReleaseDC(nullptr, screen);
+        return -1.0f;
+    }
+    BITMAPINFO info = {};
+    info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    info.bmiHeader.biWidth = side;
+    info.bmiHeader.biHeight = -side;   // top-down: row n of the DIB is screen y + n
+    info.bmiHeader.biPlanes = 1;
+    info.bmiHeader.biBitCount = 32;
+    info.bmiHeader.biCompression = BI_RGB;
+    void* pixels = nullptr;
+    HBITMAP bitmap = CreateDIBSection(screen, &info, DIB_RGB_COLORS, &pixels, nullptr, 0);
+    if (!bitmap || !pixels) {
+        if (bitmap) DeleteObject(bitmap);
+        DeleteDC(memory);
+        ReleaseDC(nullptr, screen);
+        return -1.0f;
+    }
+    HGDIOBJ previous = SelectObject(memory, bitmap);
+    const int xs[2] = {area.left + inset, area.right - inset - side};
+    const int ys[2] = {area.top + inset, area.bottom - inset - side};
+    float samples[4] = {};
+    int count = 0;
+    for (int column = 0; column < 2; ++column) {
+        for (int row = 0; row < 2; ++row) {
+            if (!BitBlt(memory, 0, 0, side, side, screen, xs[column], ys[row],
+                        SRCCOPY | CAPTUREBLT)) {
+                continue;
+            }
+            const auto* bytes = static_cast<const unsigned char*>(pixels);
+            double sum = 0.0;
+            for (int i = 0; i < side * side; ++i) {
+                const unsigned char* p = bytes + static_cast<size_t>(i) * 4;
+                sum += 0.0722 * p[0] + 0.7152 * p[1] + 0.2126 * p[2];
+            }
+            samples[count++] = static_cast<float>(sum / (side * side) / 255.0);
+        }
+    }
+    SelectObject(memory, previous);
+    DeleteObject(bitmap);
+    DeleteDC(memory);
+    ReleaseDC(nullptr, screen);
+    if (count == 0) return -1.0f;
+    for (int i = 0; i < count; ++i) {
+        for (int j = i + 1; j < count; ++j) {
+            if (samples[j] < samples[i]) {
+                const float swap = samples[i];
+                samples[i] = samples[j];
+                samples[j] = swap;
+            }
+        }
+    }
+    return (count == 4) ? (samples[1] + samples[2]) * 0.5f : samples[count / 2];
+}
+
 // The window the lens samples: the first visible top-level window below ours in the Z order. Windows
 // of this process are skipped -- the bar, the settings popup, the backdrop window -- because capturing
 // one of them would either show the island itself or an empty surface.
@@ -1108,29 +1181,22 @@ void Renderer::RenderFrame(const FrameState& frame) {
 
             // THE CARD'S INK IS DECIDED UNDER THE CARD.
             //
-            // The system panel and the Start menu hang BELOW the bar, over a different part of the
-            // desktop, and they were taking the island's ink -- black words over whatever dark wallpaper
-            // was under the card. Sample the same captured frame the lens uses, at the card's own centre,
-            // once per frame, and let CardInk cross over exactly as PillInk does. The fallback is the
-            // island's own reading, which is the answer when the capture does not cover the card.
+            // The system panel and the Start menu hang BELOW the bar, over a different window from the
+            // one the lens captured: a white desktop with a dark editor in front gave the cards black
+            // words on a dark card. The screen under the card's own rectangle is the composite the words
+            // are read against, so it is sampled directly, once per frame. The fallback is the island's
+            // own reading, which is all that is left if the screen cannot be read.
             {
                 float cardLuminance = lens_.BackdropLuminance();
-                if (capture_.Running()) {
-                    ID3D11Texture2D* texture = capture_.LatestTexture();
-                    POINT origin = {0, 0};
-                    ClientToScreen(window_, &origin);
-                    const RECT area = {
-                        origin.x + static_cast<LONG>(std::lround(panelCard.rect.left * scale_)),
-                        origin.y + static_cast<LONG>(std::lround(panelCard.rect.top * scale_)),
-                        origin.x + static_cast<LONG>(std::lround(panelCard.rect.right * scale_)),
-                        origin.y + static_cast<LONG>(std::lround(panelCard.rect.bottom * scale_))};
-                    float sampled = -1.0f;
-                    if (texture &&
-                        lens_.SampleLuminance(texture, capture_.SourceRect(), area, &sampled) &&
-                        sampled >= 0.0f) {
-                        cardLuminance = sampled;
-                    }
-                }
+                POINT origin = {0, 0};
+                ClientToScreen(window_, &origin);
+                const RECT area = {
+                    origin.x + static_cast<LONG>(std::lround(panelCard.rect.left * scale_)),
+                    origin.y + static_cast<LONG>(std::lround(panelCard.rect.top * scale_)),
+                    origin.x + static_cast<LONG>(std::lround(panelCard.rect.right * scale_)),
+                    origin.y + static_cast<LONG>(std::lround(panelCard.rect.bottom * scale_))};
+                const float sampled = SampleUnderCard(area, scale_);
+                if (sampled >= 0.0f) cardLuminance = sampled;
                 island::SetCardInkBackdrop(cardLuminance);
             }
 

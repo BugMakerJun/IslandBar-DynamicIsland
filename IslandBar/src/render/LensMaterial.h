@@ -26,11 +26,6 @@ public:
     bool Update(ID3D11Texture2D* texture, const RECT& source, const D2D1_ROUNDED_RECT& shape, float scale,
                 float pillLeft, float pillTop);
     bool Fill(ID2D1DeviceContext* target, const D2D1_ROUNDED_RECT& shape, float scale, float opacity);
-    // The average luminance (0..1) of a screen rectangle inside the captured frame, for the cards' ink.
-    // `screenArea` is in screen pixels; `source` is BackdropCapture::SourceRect(). False when the capture
-    // does not cover the area or the readback fails.
-    bool SampleLuminance(ID3D11Texture2D* texture, const RECT& source, const RECT& screenArea,
-                         float* luminance);
     // Average luminance (0..1) of the refracted backdrop under the pill, which is what the status
     // line's ink has to stay readable against.
     float BackdropLuminance() const { return backdropLuma_; }
