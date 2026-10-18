@@ -2118,14 +2118,14 @@ float TextRenderer::TrackLineWidth(const wchar_t* text) const {
 
 void TextRenderer::DrawLyricLine(ID2D1DeviceContext2* context, const RoundedBox& box,
                                  const char* utf8Line, float scrollDip, float opacity,
-                                 const LineRoll& fade) {
+                                 const LineRoll& fade, const D2D1_COLOR_F* over) {
     if (!context || !utf8Line || utf8Line[0] == '\0') return;
-    DrawTrackLine(context, box, utf8Line, scrollDip, opacity, fade);
+    DrawTrackLine(context, box, utf8Line, scrollDip, opacity, fade, over);
 }
 
 void TextRenderer::DrawTrackLine(ID2D1DeviceContext2* context, const RoundedBox& box,
                                  const char* utf8Line, float scrollDip, float opacity,
-                                 const LineRoll& roll) {
+                                 const LineRoll& roll, const D2D1_COLOR_F* over) {
     // The pill's own heavier format; the fallback keeps this working if that one could not be created.
     IDWriteTextFormat* format = pillLineFormat_ ? pillLineFormat_ : appFormat_;
     if (!context || !format || !utf8Line || utf8Line[0] == '\0') return;
@@ -2133,8 +2133,18 @@ void TextRenderer::DrawTrackLine(ID2D1DeviceContext2* context, const RoundedBox&
     wchar_t wide[512] = {};
     if (MultiByteToWideChar(CP_UTF8, 0, utf8Line, -1, wide, 512) <= 0) return;
 
+    // THE LINE'S INK IS DECIDED BY WHAT IS BEHIND IT. Over the music wave the card's ink is wrong twice
+    // over: the wave is the COVER's accent -- almost black on one track, a bright pastel on the next --
+    // and the lyric sat on it unreadably. When `over` is given, the ink is that colour's contrast: the
+    // theme's dark ink on a bright wave, its light ink on a dark one.
+    D2D1_COLOR_F ink = TextColour(opacity);
+    if (over) {
+        const float luma = 0.2126f * over->r + 0.7152f * over->g + 0.0722f * over->b;
+        const D2D1_COLOR_F base = (luma > 0.45f) ? CurrentTheme().ink : CurrentTheme().highlight;
+        ink = D2D1::ColorF(base.r, base.g, base.b, opacity);
+    }
     ID2D1SolidColorBrush* brush = nullptr;
-    if (FAILED(context->CreateSolidColorBrush(TextColour(opacity), &brush)) || !brush) {
+    if (FAILED(context->CreateSolidColorBrush(ink, &brush)) || !brush) {
         return;
     }
 
@@ -4225,9 +4235,15 @@ void TextRenderer::DrawStartPage(ID2D1DeviceContext2* context, const RoundedBox&
         }
         if (borderBrush) context->DrawEllipse(&circle, borderBrush, 1.0f);
         if (text.page == 1) {
-            // The way out of the picker: a multiplication sign, in the text font, where the power button
-            // is. Two marks in one place, chosen by the page -- which is what the slot means.
-            drawGlyph(L"×", layout.powerButton, inkBrush, startRowFormat_);
+            // THE WAY OUT, DRAWN AND CENTRED: a back chevron. It used to be the multiplication glyph in
+            // `startRowFormat_`, which is LEADING-aligned -- so the mark sat against the circle's left
+            // edge instead of in the middle of it, reported as "这个返回的按钮 改个样式 并剧中一下".
+            const float arm = 4.6f;
+            if (inkBrush) {
+                const D2D1_POINT_2F apex = D2D1::Point2F(cx - arm * 0.55f, cy);
+                context->DrawLine(D2D1::Point2F(cx + arm * 0.40f, cy - arm), apex, inkBrush, 1.7f);
+                context->DrawLine(apex, D2D1::Point2F(cx + arm * 0.40f, cy + arm), inkBrush, 1.7f);
+            }
         } else {
             // THE POWER MARK, DRAWN AS GEOMETRY, for the reason the Start button's mark is: no glyph to get
             // wrong and nothing to fail to load. That rule was earned here again -- the icon font's power

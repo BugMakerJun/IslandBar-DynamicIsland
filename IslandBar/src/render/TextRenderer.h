@@ -338,13 +338,15 @@ public:
     // what every caller that is not changing lines passes (the default).
     void DrawLyricLine(ID2D1DeviceContext2* context, const RoundedBox& box,
                        const char* utf8Line, float scrollDip, float opacity,
-                       const LineRoll& roll = {});
+                       const LineRoll& roll = {}, const D2D1_COLOR_F* over = nullptr);
 
     // Draws one line of the track's title in the resting pill. Used when there are
-    // no lyrics to show.
+    // no lyrics to show. `over` is the colour the words are painted ON -- the music wave -- and the line
+    // then takes its contrast rather than the card's ink, which is what makes a lyric readable over a
+    // bright accent ("歌词 要根据后面的音波图 变反差色 要不看不清").
     void DrawTrackLine(ID2D1DeviceContext2* context, const RoundedBox& box,
                        const char* utf8Line, float scrollDip, float opacity,
-                       const LineRoll& roll = {});
+                       const LineRoll& roll = {}, const D2D1_COLOR_F* over = nullptr);
 
     // The pill's BACKGROUND audio wave.
     //

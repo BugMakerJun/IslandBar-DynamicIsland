@@ -984,7 +984,8 @@ void Renderer::RenderFrame(const FrameState& frame) {
                     fade.progress = frame.lyricLineRoll;
                     fade.previousScrollDip = frame.lyricLinePrevScrollDip;
                     text_->DrawLyricLine(d2dContext_, lineBox, frame.lyricLine,
-                                         frame.lyricScrollDip, frame.contentOpacity, fade);
+                                         frame.lyricScrollDip, frame.contentOpacity, fade,
+                                         &frame.musicAccent);
                 } else if (frame.fallbackLine && frame.fallbackLine[0] != '\0') {
                     // No lyrics available: the track name is the honest fallback.
                     TextRenderer::LineRoll fade;
@@ -992,7 +993,8 @@ void Renderer::RenderFrame(const FrameState& frame) {
                     fade.progress = frame.lyricLineRoll;
                     fade.previousScrollDip = frame.lyricLinePrevScrollDip;
                     text_->DrawTrackLine(d2dContext_, lineBox, frame.fallbackLine,
-                                         frame.lyricScrollDip, frame.contentOpacity, fade);
+                                         frame.lyricScrollDip, frame.contentOpacity, fade,
+                                         &frame.musicAccent);
                 } else {
                     text_->DrawClock(d2dContext_, lineBox,
                                      intoPill ? ClockStyle::Compact : frame.clock,
