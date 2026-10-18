@@ -311,6 +311,9 @@ bool LensMaterial::Update(ID3D11Texture2D* texture, const RECT& source, const D2
     {
         // The middle of the pill is where the date and time will sit.
         double sum = 0.0;
+        double red = 0.0;
+        double green = 0.0;
+        double blue = 0.0;
         int count = 0;
         const int x0 = pillW / 5;
         const int x1 = pillW - x0;
@@ -320,10 +323,18 @@ bool LensMaterial::Update(ID3D11Texture2D* texture, const RECT& source, const D2
             for (int x = x0; x < x1; x += 2) {
                 const unsigned char* p = cache_->image.data() + (static_cast<size_t>(y) * pillW + x) * 4;
                 sum += 0.0722 * p[0] + 0.7152 * p[1] + 0.2126 * p[2];
+                blue += p[0];
+                green += p[1];
+                red += p[2];
                 ++count;
             }
         }
         backdropLuma_ = count ? static_cast<float>(sum / count / 255.0) : 1.0f;
+        backdropColour_ =
+            count ? D2D1::ColorF(static_cast<float>(red / count / 255.0),
+                                 static_cast<float>(green / count / 255.0),
+                                 static_cast<float>(blue / count / 255.0), 1.0f)
+                  : D2D1::ColorF(0.5f, 0.5f, 0.5f, 1.0f);
     }
     if (resized || !cache_->warped) {
         const D2D1_BITMAP_PROPERTIES properties = D2D1::BitmapProperties(

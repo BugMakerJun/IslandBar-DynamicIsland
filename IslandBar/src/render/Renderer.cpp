@@ -366,12 +366,18 @@ void Renderer::DrawDecks(const RoundedBox& island, const FrameState& frame) {
     // The icons are resolved here rather than by the caller because this is where the GPU bitmaps and
     // their cache live, so the fetch and decode happen once per window rather than once per button per
     // frame.
+    // The task buttons' body. On the glass theme the island's own refracted average is the glass colour:
+    // a flat 0.08 pill fill over a dark wallpaper reads as a black circle, which is what the user saw.
+    // 0.65 still lets 35% of the live wallpaper through, so the button sits on the desktop as glass.
+    D2D1_COLOR_F taskFill = frame.pill.fill;
+    if (CurrentTheme().lens && lensActive_) {
+        const D2D1_COLOR_F glass = lens_.BackdropColour();
+        taskFill = D2D1::ColorF(glass.r, glass.g, glass.b, 0.65f);
+    }
     for (int i = 0; i < frame.taskButtonCount && i < FrameState::kMaxTaskButtons; ++i) {
         taskButtons_[i] = frame.taskButtons[i];
         taskButtons_[i].icon = IconForWindow(frame.taskButtonWindow[i]);
-        // The background is the island's own colour, so the row reads as part of the island rather than
-        // as icons floating on the wallpaper.
-        taskButtons_[i].fill = frame.pill.fill;
+        taskButtons_[i].fill = taskFill;
 
         // Reported once per window, the first time its icon is resolved. "A button has no icon" has
         // three causes a screenshot cannot separate -- the window has none, the icon could not become a
