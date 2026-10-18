@@ -836,6 +836,8 @@ private:
     // separator character at draw time is the kind of thing that works until the separator changes.
     wchar_t weekdayText_[8] = {};
     wchar_t dayText_[24]   = {};
+    // The island's compact date: "10.18". The card's date line and the clock keep the long form.
+    wchar_t shortDateText_[16] = {};
     wchar_t dateKey_[16]   = {};   // L"yyyy-mm-dd", to detect a day rollover
     bool haveTime_ = false;
 

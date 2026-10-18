@@ -458,6 +458,9 @@ void TextRenderer::Refresh() {
         wcsncpy_s(weekdayText_, 8, kWeekdays[weekday], _TRUNCATE);
         std::swprintf(dayText_, 24, L"%s%u\u65e5", kMonths[month - 1],
                       static_cast<unsigned>(now.wDay));
+        // The compact form the island itself draws: "10.18", no weekday and no month name.
+        std::swprintf(shortDateText_, 16, L"%u.%u", static_cast<unsigned>(now.wMonth),
+                      static_cast<unsigned>(now.wDay));
 
         std::swprintf(dateText_, 32, L"%s%c%s%u\u65e5",
                       kWeekdays[weekday], kDateSeparator, kMonths[month - 1],
@@ -597,6 +600,13 @@ float TextWidthIn(IDWriteFactory3* factory, IDWriteTextFormat* format, const wch
 int BuildStatusRun(IDWriteFactory3* factory, const StatusRunFormats& formats, const wchar_t* weekday,
                    const wchar_t* day, const wchar_t* time, const wchar_t* sky,
                    const wchar_t* temperature, int weatherCode, StatusPiece* pieces, int capacity) {
+    // "10.18   16:03   14°": the compact date, the clock, the temperature -- the three values alone.
+    // The weekday, the sky word and the sun mark are deliberately not part of this line any more; the
+    // reference the user drew is exactly three values.
+    (void)weekday;
+    (void)sky;
+    (void)weatherCode;
+
     int count = 0;
     const auto push = [&](const StatusPiece& piece) {
         if (count < capacity) pieces[count++] = piece;
@@ -613,36 +623,9 @@ int BuildStatusRun(IDWriteFactory3* factory, const StatusRunFormats& formats, co
         piece.luminance = luminance;
         push(piece);
     };
-    // THE HIERARCHY, in one place: the TIME is the anchor (bigger, semibold, brightest), the weekday is
-    // solid, the DATE is clearly secondary, and the weather is a reading rather than part of the date.
-    //
-    // The date used to be 0.62, which is dimmer than anything else on the bar and read as disabled rather
-    // than as secondary -- the same complaint the brief makes about "cheap" hierarchies: a step that big
-    // looks like a mistake, not a rank.
-    pushText(weekday, formats.weekday, kStatusRun.groupGapDip, 0.88f);
-    pushText(day, formats.day, kStatusRun.groupSpaceDip, 0.72f);
-    pushText(time, formats.time, kStatusRun.groupSpaceDip, 0.99f);
-    // The mark is a function of the SAME code the word came from, and it is skipped when there is no sky
-    // word: an unknown code prints the temperature alone, and a cloud beside it would be a claim about a
-    // sky nobody knows. Both halves of that sentence were wrong before -- the mark was drawn for every
-    // code, and always the same one.
-    StatusPiece cloud;
-    cloud.kind = StatusPiece::Kind::SkyMark;
-    cloud.mark = island::SkyMarkForCode(weatherCode);
-    cloud.widthDip = kStatusRun.glyphDip;
-    // ... and the weather group is separated from the time by the same amount of SPACE the date is, so
-    // all three groups read as three. The mark sits tight against its own word and the temperature is a
-    // half-step behind it, which is the one place a gap is smaller than `groupGapDip`.
-    cloud.afterDip = kStatusRun.glyphGapDip;
-    if (cloud.mark == island::SkyMark::None) {
-        // No mark: the word has to carry the group's own separation itself, or it would sit closer to the
-        // time than the date does.
-        pushText(sky, formats.weather, kStatusRun.groupGapDip, 0.92f);
-    } else {
-        push(cloud);
-        pushText(sky, formats.weather, kStatusRun.groupGapDip, 0.92f);
-    }
-    pushText(temperature, formats.weather, 0.0f, 0.80f);
+    pushText(day, formats.day, kStatusRun.groupSpaceDip, 0.92f);
+    pushText(time, formats.time, kStatusRun.groupSpaceDip, 1.0f);
+    pushText(temperature, formats.weather, 0.0f, 0.88f);
     return count;
 }
 
@@ -802,14 +785,12 @@ float TextRenderer::MeasureStatusLine(const wchar_t* weekday, const wchar_t* day
     const StatusRunFormats formats{statusWeekdayFormat_, statusDayFormat_, statusTimeFormat_,
                                    statusWeatherFormat_};
     StatusPiece pieces[12] = {};
-    const int count = BuildStatusRun(factory_, formats, weekday, day, time, sky, temperature,
-                                     weatherCode, pieces, 12);
-    // THE DATE AND THE WEATHER ARE ONE SMALL COLUMN ON THE LEFT; THE TIME IS THE CENTRE.
-    //
-    // One row of three zones made the middle of the island a contest between three different sizes:
-    // the long Chinese date on the left, a 20 DIP clock in the middle and a sun plus a temperature on
-    // the right, all on the same baseline. Stacking the two small facts in a column gives the eye one
-    // place for the metadata and leaves the clock alone in the middle, which is what the island is for.
+    (void)day;
+    const int count = BuildStatusRun(factory_, formats, weekday, shortDateText_, time, sky,
+                                     temperature, weatherCode, pieces, 12);
+    // "10.18   16:03   14°": one row, three zones -- the compact date on the left, the time in the
+    // CENTRE, the temperature on the right, all vertically centred. The box is the three widths plus the
+    // two 12 DIP gaps and the 4 DIP corner padding on each side.
     int timeIndex = -1;
     for (int i = 0; i < count; ++i) {
         if (pieces[i].format == formats.time) {
@@ -820,10 +801,9 @@ float TextRenderer::MeasureStatusLine(const wchar_t* weekday, const wchar_t* day
     if (timeIndex < 0) return StatusRunWidth(pieces, count);
     float dateWidth = 0.0f;
     for (int i = 0; i < timeIndex; ++i) dateWidth += pieces[i].widthDip + pieces[i].afterDip;
-    float weatherWidth = 0.0f;
-    for (int i = timeIndex + 1; i < count; ++i) weatherWidth += pieces[i].widthDip + pieces[i].afterDip;
-    const float leftWidth = dateWidth > weatherWidth ? dateWidth : weatherWidth;
-    return leftWidth + 12.0f + pieces[timeIndex].widthDip + 8.0f;
+    float temperatureWidth = 0.0f;
+    for (int i = timeIndex + 1; i < count; ++i) temperatureWidth += pieces[i].widthDip + pieces[i].afterDip;
+    return dateWidth + 12.0f + pieces[timeIndex].widthDip + 12.0f + temperatureWidth + 8.0f;
 }
 
 // The decoded bitmap for one tray icon, cached until the list's revision changes.
@@ -1124,7 +1104,7 @@ void TextRenderer::DrawStatusLine(ID2D1DeviceContext2* context, const RoundedBox
     if (!formats.weekday || !formats.day || !formats.time || !formats.weather) return;
 
     StatusPiece pieces[12] = {};
-    const int count = BuildStatusRun(factory_, formats, weekdayText_, dayText_, timeText_, sky,
+    const int count = BuildStatusRun(factory_, formats, weekdayText_, shortDateText_, timeText_, sky,
                                      temperature, weatherCode, pieces, 12);
     if (count <= 0) return;
 
@@ -1137,11 +1117,9 @@ void TextRenderer::DrawStatusLine(ID2D1DeviceContext2* context, const RoundedBox
     }
     if (timeIndex < 0) return;
 
-    // THE DATE AND THE WEATHER IN THE TOP CORNERS, SMALL; THE TIME IN THE CENTRE, BIG.
-    //
-    // The three used to share one line, centred as a run. That made the time a word in a sentence and
-    // let the length of the date push it off the middle of the island -- which is what "时间居中放大"
-    // was about. The time is now placed at the box's own centre and the other two never move it.
+    // "10.18   16:03   14°": the compact date on the left, the temperature on the right, the time alone
+    // in the middle -- one row, all vertically centred. The long Chinese date and the weather group are
+    // gone; the three values are the whole line.
     const float centreX = (box.rect.left + box.rect.right) * 0.5f;
     const float centreY = (box.rect.top + box.rect.bottom) * 0.5f;
 
@@ -1165,21 +1143,22 @@ void TextRenderer::DrawStatusLine(ID2D1DeviceContext2* context, const RoundedBox
     };
 
     if (kStatusExtrasVisible) {
-        // The metadata column on the left: the date on its top line, the reading on its bottom line,
-        // both small. Even their vertical centres are 12 DIP apart, so the column reads as one block
-        // rather than as two loose lines, and the time keeps the middle to itself.
-        const float dateY = centreY - 11.0f;
-        const float weatherY = centreY + 1.0f;
-        const float lineHeight = 10.0f;
+        const float sideY = centreY - 6.0f;
+        const float sideHeight = 12.0f;
+
+        float temperatureWidth = 0.0f;
+        for (int i = timeIndex + 1; i < count; ++i) {
+            temperatureWidth += pieces[i].widthDip + pieces[i].afterDip;
+        }
 
         float x = box.rect.left + 4.0f;
         for (int i = 0; i < timeIndex; ++i) {
-            drawPiece(pieces[i], x, dateY, lineHeight);
+            drawPiece(pieces[i], x, sideY, sideHeight);
             x += pieces[i].widthDip + pieces[i].afterDip;
         }
-        x = box.rect.left + 4.0f;
+        x = box.rect.right - 4.0f - temperatureWidth;
         for (int i = timeIndex + 1; i < count; ++i) {
-            drawPiece(pieces[i], x, weatherY, lineHeight);
+            drawPiece(pieces[i], x, sideY, sideHeight);
             x += pieces[i].widthDip + pieces[i].afterDip;
         }
     }
