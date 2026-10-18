@@ -55,23 +55,23 @@ const Theme kThemes[] = {
     //     S_OK and does nothing on Windows 11: the classic Aero glass it drove was removed.
     //
     // THE LENS (2026-10-18): the real desktop behind the island, captured by platform/BackdropCapture and
-    // bent by render/LensMaterial. The fill is transparent because the lens IS the surface. The material
-    // is the refraction plus its grade and the soft shade at the bottom -- no drawn outline, because the
-    // user rejected the ring ("no contour at all").
+    // bent by render/LensMaterial. The lens is the surface, and a light 0.40/0.30 body sits over it: on a
+    // dark wallpaper a fully transparent pill disappeared, and the black text had nothing to read against.
+    // The body is not a film -- the refraction still shows through 60% -- it is the light pane of the
+    // reference. The 1 DIP rim (0.20) is the reference's lit edge, not the old double contour.
     //
     // THE NUMBERS come from the reference the user chose (shuding/liquid-glass): a flat centre, a narrow
     // band at the edge, and the round ends bending more than the straight top and bottom. On a 36 DIP
-    // pill that is a 10-14 DIP band and 3-8 DIP of displacement (render/LensProfile.h). The ink is near
-    // black because the grade brightens the refracted image; the status line switches to the light ink
-    // when the backdrop under it is dark (PillInk below).
+    // pill that is a 10-14 DIP band and 3-8 DIP of displacement (render/LensProfile.h). The ink is black
+    // because the body carries it; PillInk only switches to the light ink for a theme with no body.
     //
     // `tint` is 0: the reference has no coloured fringe, and the old cool/violet end tints were a
     // painted-material cue. `sweep` is the pointer's light, which is not part of the reference's static
     // material; it is kept because the bar is interactive and it is only drawn while the pointer is on
     // the island.
-    {L"\u73BB\u7483", {0.88f, 0.94f, 1.00f, 0.00f}, {0.78f, 0.89f, 1.00f, 0.00f}, 0.20f,
+    {L"\u73BB\u7483", {0.88f, 0.94f, 1.00f, 0.40f}, {0.78f, 0.89f, 1.00f, 0.30f}, 0.20f,
      {0.90f, 0.94f, 1.00f, 0.55f}, 0.30f, {0.15f, 0.45f, 0.85f, 0.95f}, {0.03f, 0.04f, 0.06f, 1.0f},
-     0.0f, 0.03f, 0.55f, 0.00f, 0.00f, {1.0f, 1.0f, 1.0f, 1.0f}, true},
+     0.0f, 0.03f, 0.55f, 0.20f, 0.00f, {1.0f, 1.0f, 1.0f, 1.0f}, true},
 };
 constexpr int kThemeCount = static_cast<int>(sizeof(kThemes) / sizeof(kThemes[0]));
 
@@ -231,6 +231,10 @@ void SetPillInkBackdrop(float luminance) {
 D2D1_COLOR_F PillInk(float alpha) {
     const Theme& theme = CurrentTheme();
     if (!theme.lens) return ThemeInk(alpha);
+    // A theme with a body has its own surface: the ink is the theme's dark ink, not the adaptive one.
+    // The adaptive crossover exists for the fully clear lens, where the backdrop IS the surface and a
+    // mixed dark/light photo can make a single ink wrong on half the text.
+    if (theme.pillTop.a > 0.15f || theme.pillBottom.a > 0.15f) return ThemeInk(alpha);
     const float m = Clamp01(g_pillInkMix);
     return D2D1::ColorF(theme.ink.r * m + theme.highlight.r * (1.0f - m),
                         theme.ink.g * m + theme.highlight.g * (1.0f - m),
