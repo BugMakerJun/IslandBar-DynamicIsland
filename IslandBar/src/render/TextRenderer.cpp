@@ -940,30 +940,46 @@ void TextRenderer::DrawTrayPage(ID2D1DeviceContext2* context, const RoundedBox& 
 
     if (count == 0) return;   // the heading alone, over an empty page
 
+    const island::Theme& theme = island::CurrentTheme();
     for (int i = 0; i < layout.count; ++i) {
         const RectF& cell = layout.cells[i];
 
-        // THE CELL IS DARKER THAN THE CARD, not lighter, and the reason is the pictures that go in it.
+        // THE CELL IS DARKER THAN THE CARD for the PAINTED themes, not for the glass one.
         //
         // The shell snapshots these icons onto a near-black background, so a LIGHTER tile shows every one of
         // them as a black square sitting inside it -- which is what "看着不协调" was, past the empty card.
         // A dark tile makes the pictures' own backgrounds disappear into it, and the hairline plus the hover
         // wash are what still say "this is a control". (The panel's own tiles stay light: nothing is drawn
         // inside them but a glyph we choose.)
+        //
+        // The glass card is the exception: its surface IS the card's own material, and a 0.28 black fill on
+        // top of it read as grey squares floating in the glass. The tile there is the same 2.5 DIP rim band
+        // as the island's edge, with a white hover -- the card shows through, the icon sits on the glass.
         const float radius = 10.0f;
         const D2D1_ROUNDED_RECT tile = {
             D2D1::RectF(cell.left, cell.top, cell.right, cell.bottom), radius, radius};
-        if (ID2D1SolidColorBrush* tileFill =
-                BrushFor(context, D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.28f * opacity))) {
-            context->FillRoundedRectangle(&tile, tileFill);
-        }
-        if (ID2D1SolidColorBrush* tileEdge = BrushFor(context, island::PillInk(0.13f * opacity))) {
-            context->DrawRoundedRectangle(&tile, tileEdge, 1.0f);
-        }
-        if (i == hoveredIndex) {
-            ID2D1SolidColorBrush* wash = nullptr;
-            if ((wash = BrushFor(context, island::PillInk(0.16f * opacity))) != nullptr) {
-                context->FillRoundedRectangle(&tile, wash);
+        if (theme.lens) {
+            island::DrawLensRimBand(context, tile, theme, opacity);
+            if (i == hoveredIndex) {
+                if (ID2D1SolidColorBrush* wash =
+                        BrushFor(context, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.12f * opacity))) {
+                    context->FillRoundedRectangle(&tile, wash);
+                }
+            }
+        } else {
+            if (ID2D1SolidColorBrush* tileFill =
+                    BrushFor(context, D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.28f * opacity))) {
+                context->FillRoundedRectangle(&tile, tileFill);
+            }
+            if (ID2D1SolidColorBrush* tileEdge =
+                    BrushFor(context, island::PillInk(0.13f * opacity))) {
+                context->DrawRoundedRectangle(&tile, tileEdge, 1.0f);
+            }
+            if (i == hoveredIndex) {
+                ID2D1SolidColorBrush* wash = nullptr;
+                if ((wash = BrushFor(context, island::PillInk(0.16f * opacity))) != nullptr) {
+                    context->FillRoundedRectangle(&tile, wash);
+                }
             }
         }
 
@@ -990,25 +1006,34 @@ void TextRenderer::DrawTrayMenu(ID2D1DeviceContext2* context, const island::Rect
     Refresh();
 
     // The surface: a raised rectangle that sits ON the card, so it reads as something in front rather than
-    // as a hole in it. The card's own surface is 0.05/0.05/0.07; this is lighter and outlined.
+    // as a hole in it. The PAINTED themes get the lighter outlined rectangle; the glass theme gets the
+    // card's own surface, so the menu is a piece of the same glass rather than an opaque dark panel
+    // dropped into it.
     const float pad = kTrayMenuPadDip;
     const D2D1_ROUNDED_RECT box = {
         D2D1::RectF(rows[0].left - pad, rows[0].top - pad, rows[0].right + pad,
                     rows[count - 1].bottom + pad),
         10.0f, 10.0f};
-    ID2D1SolidColorBrush* fill = nullptr;
-    if (SUCCEEDED(context->CreateSolidColorBrush(
-            D2D1::ColorF(0.13f, 0.13f, 0.16f, 0.99f * opacity), &fill)) &&
-        fill) {
-        context->FillRoundedRectangle(&box, fill);
-        fill->Release();
-    }
-    ID2D1SolidColorBrush* edge = nullptr;
-    if (SUCCEEDED(context->CreateSolidColorBrush(
-            PillInk(0.12f * opacity), &edge)) &&
-        edge) {
-        context->DrawRoundedRectangle(&box, edge, 1.0f);
-        edge->Release();
+    const island::Theme& theme = island::CurrentTheme();
+    if (theme.lens) {
+        const island::RoundedBox menuBox = {
+            island::RectF{box.rect.left, box.rect.top, box.rect.right, box.rect.bottom}, 10.0f, 10.0f};
+        FillCardSurface(context, menuBox, opacity, false);
+    } else {
+        ID2D1SolidColorBrush* fill = nullptr;
+        if (SUCCEEDED(context->CreateSolidColorBrush(
+                D2D1::ColorF(0.13f, 0.13f, 0.16f, 0.99f * opacity), &fill)) &&
+            fill) {
+            context->FillRoundedRectangle(&box, fill);
+            fill->Release();
+        }
+        ID2D1SolidColorBrush* edge = nullptr;
+        if (SUCCEEDED(context->CreateSolidColorBrush(
+                PillInk(0.12f * opacity), &edge)) &&
+            edge) {
+            context->DrawRoundedRectangle(&box, edge, 1.0f);
+            edge->Release();
+        }
     }
 
     for (int i = 0; i < count; ++i) {
@@ -1016,10 +1041,13 @@ void TextRenderer::DrawTrayMenu(ID2D1DeviceContext2* context, const island::Rect
         const D2D1_ROUNDED_RECT rowBox = {
             D2D1::RectF(row.left, row.top, row.right, row.bottom), 6.0f, 6.0f};
         if (i == hoveredRow) {
+            // A white gloss on the glass; the ink tint on the painted themes. The ink as a wash turned a
+            // hovered row into a black bar on a light theme, which is the same defect the task buttons had.
+            const D2D1_COLOR_F hover = theme.lens
+                                           ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.12f * opacity)
+                                           : PillInk(0.16f * opacity);
             ID2D1SolidColorBrush* wash = nullptr;
-            if (SUCCEEDED(context->CreateSolidColorBrush(
-                    PillInk(0.16f * opacity), &wash)) &&
-                wash) {
+            if (SUCCEEDED(context->CreateSolidColorBrush(hover, &wash)) && wash) {
                 context->FillRoundedRectangle(&rowBox, wash);
                 wash->Release();
             }
@@ -1027,9 +1055,7 @@ void TextRenderer::DrawTrayMenu(ID2D1DeviceContext2* context, const island::Rect
         const wchar_t* label = labels[i] ? labels[i] : L"";
         if (label[0] == L'\0') continue;
         ID2D1SolidColorBrush* ink = nullptr;
-        if (SUCCEEDED(context->CreateSolidColorBrush(
-                D2D1::ColorF(0.90f, 0.91f, 0.95f, 0.94f * opacity), &ink)) &&
-            ink) {
+        if (SUCCEEDED(context->CreateSolidColorBrush(PillInk(0.94f * opacity), &ink)) && ink) {
             if (appRowFormat_) {
                 // Left-aligned inside the row, vertically centred by the format's own paragraph alignment.
                 context->DrawTextW(label, static_cast<UINT32>(std::wcslen(label)), appRowFormat_,
