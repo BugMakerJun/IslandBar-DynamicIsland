@@ -503,15 +503,15 @@ inline float LyricEndFadeDip(float stripWidthDip) {
 // art lines up with the scrim it sits under.
 inline constexpr float kMusicCardPadDip = 16.0f;
 
-inline constexpr float kMusicAppRowHeightDip  = 22.0f;
+inline constexpr float kMusicAppRowHeightDip  = 20.0f;
 // Sized from the reference image's PROPORTIONS, not by eye.
 //
 // The reference card is 384 DIP wide and its cover is 111 DIP -- 29% of the width. The cover here
 // was 80 DIP against a 520 DIP card, which is 15%: half the reference's share, and the single
 // biggest reason the card was reported as looking unfinished. The cover is the card's largest
-// element and it was being drawn as a thumbnail.
-inline constexpr float kMusicArtworkSizeDip   = 96.0f;
-inline constexpr float kMusicGapAfterArtDip   = 18.0f;
+// element and it was being drawn as a thumbnail; this round takes it to 108.
+inline constexpr float kMusicArtworkSizeDip   = 108.0f;
+inline constexpr float kMusicGapAfterArtDip   = 20.0f;
 inline constexpr float kMusicTimeRowDip       = 16.0f;
 inline constexpr float kMusicProgressBarDip   = 4.0f;
 // The source icon, in the same proportion: the reference draws it at about 12% of the card width.
@@ -520,9 +520,11 @@ inline constexpr float kMusicAppIconSizeDip   = 22.0f;
 //
 // They used to be separate (a 40 DIP row holding a 38 DIP target), which the layout
 // test caught: the buttons were taller than the size they advertise, so a click just
-// outside the drawn disc was still accepted.
+// outside the drawn disc was still accepted. The PLAY disc is bigger than the two skips: it is the
+// card's anchor and the one control a hand goes to without looking.
 inline constexpr float kMusicControlSizeDip   = 38.0f;
-inline constexpr float kMusicControlGapDip    = 32.0f;
+inline constexpr float kMusicPlaySizeDip      = 46.0f;
+inline constexpr float kMusicControlGapDip    = 26.0f;
 
 // Where everything on the music card goes.
 //
@@ -1552,24 +1554,27 @@ inline MusicCardLayout MusicCardFor(const RoundedBox& box) {
     layout.controls.left = box.rect.left + pad;
     layout.controls.right = box.rect.right - pad;
     layout.controls.bottom = bottom;
-    layout.controls.top = bottom - kMusicControlSizeDip;
+    layout.controls.top = bottom - kMusicPlaySizeDip;
 
     layout.progress.left = box.rect.left + pad;
     layout.progress.right = box.rect.right - pad;
-    layout.progress.bottom = layout.controls.top - 10.0f;
+    layout.progress.bottom = layout.controls.top - 18.0f;
     layout.progress.top = layout.progress.bottom - kMusicProgressBarDip;
 
-    // The times sit ABOVE the bar, one at each end, which is where the reference image
-    // puts them. Below it they landed on the card's lower edge and read as clipped.
+    // The times sit AT THE BAR'S LEVEL, one at each end -- the row reads as "03:30 --- 03:49" rather
+    // than as two numbers floating above a line, which is what the reference flyout does. They are
+    // centred on the bar's own vertical centre, so the row is one line however tall the text is.
+    const float timeRowTop =
+        layout.progress.top - (kMusicTimeRowDip - kMusicProgressBarDip) * 0.5f;
     layout.elapsed.left = layout.progress.left;
     layout.elapsed.right = layout.elapsed.left + 56.0f;
-    layout.elapsed.bottom = layout.progress.top - 4.0f;
-    layout.elapsed.top = layout.elapsed.bottom - kMusicTimeRowDip;
+    layout.elapsed.top = timeRowTop;
+    layout.elapsed.bottom = timeRowTop + kMusicTimeRowDip;
 
     layout.remaining.right = layout.progress.right;
     layout.remaining.left = layout.remaining.right - 56.0f;
-    layout.remaining.top = layout.elapsed.top;
-    layout.remaining.bottom = layout.elapsed.bottom;
+    layout.remaining.top = timeRowTop;
+    layout.remaining.bottom = timeRowTop + kMusicTimeRowDip;
 
     // The app row is the top strip, inside the padding: the source application's own icon and
     // name, left aligned, which is the reference image's arrangement and leaves the row's rest
@@ -1614,17 +1619,21 @@ inline MusicCardLayout MusicCardFor(const RoundedBox& box) {
     layout.subtitle.top = layout.title.bottom + 2.0f;
     layout.subtitle.bottom = layout.subtitle.top + 20.0f;
 
-    // Three buttons, centred as a group.
-    const float groupWidth = kMusicControlSizeDip * 3.0f + kMusicControlGapDip * 2.0f;
+    // Three buttons, centred as a group. The play disc is 46 and the skips 38, which is what makes the
+    // transport read as play-with-two-skips rather than as three equal buttons.
+    const float groupWidth = kMusicControlSizeDip * 2.0f + kMusicPlaySizeDip +
+                             kMusicControlGapDip * 2.0f;
     const float groupLeft = (box.rect.left + box.rect.right) * 0.5f - groupWidth * 0.5f;
 
     layout.previous.left = groupLeft;
     layout.previous.right = groupLeft + kMusicControlSizeDip;
     layout.playPause.left = layout.previous.right + kMusicControlGapDip;
-    layout.playPause.right = layout.playPause.left + kMusicControlSizeDip;
+    layout.playPause.right = layout.playPause.left + kMusicPlaySizeDip;
     layout.next.left = layout.playPause.right + kMusicControlGapDip;
     layout.next.right = layout.next.left + kMusicControlSizeDip;
 
+    // The disc's own height is the row's; the skips are centred inside it, so their click targets are
+    // as tall as the row they live in.
     const auto setVertical = [&](RectF& r) {
         r.top = layout.controls.top;
         r.bottom = layout.controls.bottom;

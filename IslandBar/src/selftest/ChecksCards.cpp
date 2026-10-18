@@ -966,8 +966,14 @@ void TestMusicCardLayout() {
     }
     Check(layout.artwork.bottom <= layout.elapsed.top + 0.01f,
           L"the artwork ends before the time row");
-    Check(layout.elapsed.bottom <= layout.progress.top + 0.01f,
-          L"the times sit above the progress bar");
+    // The times are ON the bar's line now -- one row, "03:30 --- 03:49" -- so they straddle it rather
+    // than sitting above it. What matters is that the two are centred on the same line and that the
+    // row clears the controls.
+    Check(Nearly((layout.elapsed.top + layout.elapsed.bottom) * 0.5f,
+                 (layout.progress.top + layout.progress.bottom) * 0.5f, 0.5f),
+          L"the times are centred on the progress bar's own line");
+    Check(layout.elapsed.bottom <= layout.controls.top + 0.01f,
+          L"the time row clears the controls");
     Check(layout.progress.bottom <= layout.controls.top + 0.01f,
           L"the bar sits above the controls");
 
@@ -986,8 +992,8 @@ void TestMusicCardLayout() {
 
     const float playWidth = layout.playPause.right - layout.playPause.left;
     const float playHeight = layout.playPause.bottom - layout.playPause.top;
-    Check(Nearly(playWidth, kMusicControlSizeDip, 0.01f) &&
-              Nearly(playHeight, kMusicControlSizeDip, 0.01f),
+    Check(Nearly(playWidth, kMusicPlaySizeDip, 0.01f) &&
+              Nearly(playHeight, kMusicPlaySizeDip, 0.01f),
           L"the play/pause target is the size it claims");
     Check(playWidth >= 28.0f, L"the play/pause target is comfortable to click");
 

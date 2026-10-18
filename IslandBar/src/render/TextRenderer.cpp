@@ -1930,9 +1930,9 @@ void TextRenderer::DrawMusicCard(ID2D1DeviceContext2* context, const RoundedBox&
 
             if (primaryBrush) {
                 if (playing) {
-                    const float barWidth = 4.5f;
-                    const float barHeight = 16.0f;
-                    const float gap = 5.0f;
+                    const float barWidth = 5.0f;
+                    const float barHeight = 18.0f;
+                    const float gap = 6.0f;
                     context->FillRectangle(
                         D2D1::RectF(centreX - gap * 0.5f - barWidth,
                                     centreY - barHeight * 0.5f, centreX - gap * 0.5f,
@@ -1952,7 +1952,7 @@ void TextRenderer::DrawMusicCard(ID2D1DeviceContext2* context, const RoundedBox&
                     ID2D1GeometrySink* sink = nullptr;
                     if (factory && SUCCEEDED(factory->CreatePathGeometry(&triangle)) &&
                         triangle && SUCCEEDED(triangle->Open(&sink)) && sink) {
-                        const float half = 9.5f;
+                        const float half = 11.0f;
                         // Nudged right: a triangle's visual centre sits left of its
                         // bounding box's, so a box-centred one looks off-centre in a
                         // circle.
