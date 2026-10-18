@@ -1766,6 +1766,60 @@ void TextRenderer::DrawMusicCard(ID2D1DeviceContext2* context, const RoundedBox&
             context->PopLayer();
             artClip->Release();
         }
+
+        // --- 3a. the cover's REFLECTION -----------------------------------
+        //
+        // The bottom ~17 DIP of the cover, mirrored below it and faded to nothing: the one thing that makes
+        // a picture sit ON the glass rather than in it. Drawn from the same bitmap, so it can never
+        // disagree with the cover above it.
+        {
+            const float reflectTop = layout.artwork.bottom + 3.0f;
+            constexpr float kReflectHeight = 20.0f;
+            if (reflectTop + kReflectHeight < layout.progress.top) {
+                ID2D1Factory* factory = nullptr;
+                context->GetFactory(&factory);
+                ID2D1RoundedRectangleGeometry* reflectClip = nullptr;
+                if (factory) {
+                    const D2D1_ROUNDED_RECT shape = {
+                        D2D1::RectF(layout.artwork.left, reflectTop, layout.artwork.right,
+                                    reflectTop + kReflectHeight),
+                        8.0f, 8.0f};
+                    factory->CreateRoundedRectangleGeometry(shape, &reflectClip);
+                    factory->Release();
+                }
+                // The mask: three tenths at the top of the reflection, nothing at its bottom.
+                ID2D1GradientStopCollection* stops = nullptr;
+                const D2D1_GRADIENT_STOP fade[2] = {
+                    {0.0f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.30f * opacity)},
+                    {1.0f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.0f)},
+                };
+                ID2D1LinearGradientBrush* mask = nullptr;
+                if (SUCCEEDED(context->CreateGradientStopCollection(fade, 2, &stops)) && stops) {
+                    context->CreateLinearGradientBrush(
+                        D2D1::LinearGradientBrushProperties(
+                            D2D1::Point2F(0.0f, reflectTop),
+                            D2D1::Point2F(0.0f, reflectTop + kReflectHeight)),
+                        stops, &mask);
+                    stops->Release();
+                }
+                if (mask && reflectClip) {
+                    const D2D1_LAYER_PARAMETERS1 params = D2D1::LayerParameters1(
+                        D2D1::InfiniteRect(), reflectClip, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                        D2D1::IdentityMatrix(), 1.0f, mask, D2D1_LAYER_OPTIONS1_NONE);
+                    context->PushLayer(params, nullptr);
+                    D2D1_MATRIX_3X2_F previous = D2D1::IdentityMatrix();
+                    context->GetTransform(&previous);
+                    // Mirror about the line y = reflectTop: y' = 2 * reflectTop - y.
+                    context->SetTransform(D2D1::Matrix3x2F::Scale(1.0f, -1.0f) *
+                                          D2D1::Matrix3x2F::Translation(0.0f, 2.0f * reflectTop));
+                    DrawBitmapRect(context, artwork, layout.artwork, opacity);
+                    context->SetTransform(previous);
+                    context->PopLayer();
+                }
+                if (mask) mask->Release();
+                if (reflectClip) reflectClip->Release();
+            }
+        }
     } else {
         // --- 3b. no cover: a PLACEHOLDER, not a hole ---------------------
         //
