@@ -54,23 +54,24 @@ const Theme kThemes[] = {
     //   * DwmEnableBlurBehindWindow WITH a region -- the one API documented to honour one -- returns
     //     S_OK and does nothing on Windows 11: the classic Aero glass it drove was removed.
     //
-    // THE ROUTE THAT WAS LEFT IS NOW TAKEN (HANDOFF 8.166-8.168): `backdrop = true` gives this theme a
-    // second, island-sized window that carries the system's acrylic, so the desktop behind the island IS
-    // blurred. The painted material stays, and it is not decoration: the second window can fail to exist
-    // (no export, a refused material), and then this theme is exactly what it used to be. Its fill is
-    // deliberately much more transparent than the other three, because a 0.92 alpha would hide the
-    // backdrop entirely; the gloss, the double rim, the grain and the wallpaper tint are what make the
-    // blurred content read as a THICK piece of glass rather than as frosted plastic.
-    // The numbers moved toward Apple's material on 2026-10-17, after the first real backdrop was judged
-    // "still not liquid glass": it was a flat, nearly opaque grey slab. The backdrop is really blurred
-    // now, so the fill can be much more transparent -- the colour behind comes through -- and the rim,
-    // gloss and sweep carry the thickness that a photograph cannot (HANDOFF 8.170).
-    // THE LIGHT GLASS, following the user's reference photograph (2026-10-17): a clear, pale-blue
-    // surface that shows the desktop's own colours, a bright white specular, and BLACK text. The ink and
-    // the highlight are separate colours for exactly this theme.
+    // THE LENS (2026-10-18): the real desktop behind the island, captured by platform/BackdropCapture and
+    // bent by render/LensMaterial. The fill is transparent because the lens IS the surface. The material
+    // is the refraction plus its grade and the soft shade at the bottom -- no drawn outline, because the
+    // user rejected the ring ("no contour at all").
+    //
+    // THE NUMBERS come from the reference the user chose (shuding/liquid-glass): a flat centre, a narrow
+    // band at the edge, and the round ends bending more than the straight top and bottom. On a 36 DIP
+    // pill that is a 10-14 DIP band and 3-8 DIP of displacement (render/LensProfile.h). The ink is near
+    // black because the grade brightens the refracted image; the status line switches to the light ink
+    // when the backdrop under it is dark (PillInk below).
+    //
+    // `tint` is 0: the reference has no coloured fringe, and the old cool/violet end tints were a
+    // painted-material cue. `sweep` is the pointer's light, which is not part of the reference's static
+    // material; it is kept because the bar is interactive and it is only drawn while the pointer is on
+    // the island.
     {L"\u73BB\u7483", {0.88f, 0.94f, 1.00f, 0.00f}, {0.78f, 0.89f, 1.00f, 0.00f}, 0.20f,
      {0.90f, 0.94f, 1.00f, 0.55f}, 0.30f, {0.15f, 0.45f, 0.85f, 0.95f}, {0.03f, 0.04f, 0.06f, 1.0f},
-     0.0f, 0.03f, 0.55f, 0.00f, 0.25f, {1.0f, 1.0f, 1.0f, 1.0f}, true},
+     0.0f, 0.03f, 0.55f, 0.00f, 0.00f, {1.0f, 1.0f, 1.0f, 1.0f}, true},
 };
 constexpr int kThemeCount = static_cast<int>(sizeof(kThemes) / sizeof(kThemes[0]));
 

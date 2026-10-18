@@ -2,9 +2,9 @@
 //  LensMaterial.cpp -- see the header.
 //
 //  The lens is an optical mapping, not a painted effect: every pixel of the pill samples the captured
-//  backdrop a little further OUT near the rim, which is how a thick piece of glass bends what is behind
-//  it. The mapping runs on the small crop (the pill plus a 32 px margin, about 12k output pixels), then
-//  Direct2D draws that bitmap back into the pill's rounded shape.
+//  backdrop a little further IN near the rim, and not at all in the flat centre, which is how a thick
+//  piece of glass bends what is behind it without warping the date and the time. The mapping runs on the
+//  pill itself (about 8k output pixels), then Direct2D draws that bitmap back into the rounded shape.
 //
 //  It is CPU-side on purpose: Direct2D's DisplacementMap effect produced an empty image here for every
 //  input form that was tried (a render target, a bitmap copy, a CPU bitmap), while the same effect in the
@@ -14,6 +14,7 @@
 #include "render/LensMaterial.h"
 
 #include "core/Log.h"
+#include "render/LensProfile.h"
 
 #include <algorithm>
 #include <cmath>
@@ -24,9 +25,19 @@
 namespace island {
 namespace {
 
-constexpr int kMarginPx = 32;
-constexpr float kLensBandPx = 26.0f;
-constexpr float kLensShiftPx = 22.0f;   // the largest displacement, at the very rim
+// Inward sampling never leaves the pill, so the crop only needs a hairline of slack for the bilinear
+// fetch. It used to be 32 px because the old mapping sampled OUTWARD, outside the pill.
+constexpr int kMarginPx = 2;
+
+// THE GRADE AND THE INNER SHADE, from the reference (the displacement itself is LensProfile.h). The
+// shade is the CSS `inset 0 -10px 25px rgba(0,0,0,.15)` scaled to a 36 DIP pill: one soft dark band
+// above the bottom edge, put into the refracted pixels rather than drawn over them, so it cannot become
+// the ring the user rejected.
+constexpr float kLensContrast = 1.20f;
+constexpr float kLensBrightness = 1.05f;
+constexpr float kLensSaturation = 1.10f;
+constexpr float kLensInnerShade = 0.10f;
+constexpr float kLensInnerShadeBand = 0.28f;
 
 ULONGLONG g_lastLensLog = 0;
 void LensFail(const wchar_t* why) {
@@ -34,10 +45,6 @@ void LensFail(const wchar_t* why) {
     if (now - g_lastLensLog < 1000) return;
     g_lastLensLog = now;
     LogLine(L"  lens: %s", why);
-}
-
-inline unsigned char MixByte(unsigned char a, unsigned char b, float t) {
-    return static_cast<unsigned char>(static_cast<float>(a) + (static_cast<float>(b) - a) * t + 0.5f);
 }
 
 // Bilinear sample of a BGRA buffer, clamped at the edges.
@@ -63,64 +70,57 @@ inline void Sample(const std::vector<unsigned char>& src, int w, int h, float x,
 }
 
 // dst is the pill only (pillW x pillH); src is the crop, whose pill starts at (margin, margin).
+// The displacement is LensOffsetFor (render/LensProfile.h); this function adds the fetch and the
+// material's colour. The offset is applied to the pixel INDEX, not to a centre: Sample() treats 0 as
+// the centre of the first pixel, so a zero offset on a flat centre fetches exactly the same pixel.
+inline unsigned char ClampByte(float value) {
+    const int rounded = static_cast<int>(value * 255.0f + 0.5f);
+    return static_cast<unsigned char>(rounded < 0 ? 0 : (rounded > 255 ? 255 : rounded));
+}
+
 void Warp(const std::vector<unsigned char>& src, int srcW, int srcH, int pillW, int pillH,
-          std::vector<unsigned char>& dst) {
-    const float radius = pillH * 0.5f;
-    const float cxL = radius;
-    const float cxR = static_cast<float>(pillW) - radius;
-    const float cy = radius;
+          float scale, std::vector<unsigned char>& dst) {
     for (int y = 0; y < pillH; ++y) {
         for (int x = 0; x < pillW; ++x) {
-            const float px = x + 0.5f;
-            const float py = y + 0.5f;
-            float nx = 0.0f;
-            float ny = 0.0f;
-            float inside = kLensBandPx;
-            if (px >= cxL && px <= cxR) {
-                inside = std::min(py, static_cast<float>(pillH) - py);
-                ny = (py < cy) ? -1.0f : 1.0f;
-            } else {
-                const float centreX = (px < cxL) ? cxL : cxR;
-                const float dx = px - centreX;
-                const float dy = py - cy;
-                const float length = std::sqrt(dx * dx + dy * dy);
-                if (length > 0.001f) {
-                    nx = dx / length;
-                    ny = dy / length;
-                }
-                inside = radius - length;
-            }
+            const float px = static_cast<float>(x) + 0.5f;
+            const float py = static_cast<float>(y) + 0.5f;
+            const LensOffset offset =
+                LensOffsetFor(px, py, static_cast<float>(pillW), static_cast<float>(pillH), scale);
             unsigned char* out = &dst[(static_cast<size_t>(y) * pillW + x) * 4];
-            // THE RIM BAND: samples a little further out, strongest at the rim. A stadium bends more
-            // where it is more curved, so the round ends take a stronger pull.
-            float shift = 0.0f;
-            const float t = inside / kLensBandPx;
-            if (t < 1.0f) {
-                const float falloff = 1.0f - std::max(0.0f, t);
-                shift = falloff * falloff * kLensShiftPx;
-            }
-            shift *= 1.0f + 0.35f * std::fabs(nx);
-            // THE BODY: a barrel term pulls towards the middle line across the whole height, so stripes
-            // and text behind the glass curve through it instead of lying flat.
-            const float nyN = (py - cy) / radius;
-            const float barrel = 1.50f * (1.0f - nyN * nyN);
-            const float lensY = -(py - cy) * barrel;
-            Sample(src, srcW, srcH, static_cast<float>(kMarginPx) + px + nx * shift,
-                   static_cast<float>(kMarginPx) + py + ny * shift + lensY, out);
-            // THE MATERIAL GRADE, from the same reference: a little contrast, a little saturation and
-            // 2% more light. It is what makes the refracted image read as glass rather than as a hole;
-            // it adds no veil, because it works on the pixels themselves.
-            {
-                const float luma = 0.2126f * out[2] + 0.7152f * out[1] + 0.0722f * out[0];
-                for (int c = 0; c < 3; ++c) {
-                    float value = out[c] / 255.0f;
-                    value = (value - 0.5f) * 1.08f + 0.5f;
-                    value *= 1.02f;
-                    const float channel = luma + (value * 255.0f - luma) * 1.08f;
-                    const int rounded = static_cast<int>(channel + 0.5f);
-                    out[c] = static_cast<unsigned char>(rounded < 0 ? 0 : (rounded > 255 ? 255 : rounded));
-                }
-            }
+            Sample(src, srcW, srcH, static_cast<float>(kMarginPx) + static_cast<float>(x) + offset.dx,
+                   static_cast<float>(kMarginPx) + static_cast<float>(y) + offset.dy, out);
+
+            // THE MATERIAL GRADE, from the same reference: contrast, a little more light, a little
+            // saturation. It works on the refracted pixels themselves, so it adds no veil.
+            float r = static_cast<float>(out[2]) / 255.0f;
+            float g = static_cast<float>(out[1]) / 255.0f;
+            float b = static_cast<float>(out[0]) / 255.0f;
+            r = (r - 0.5f) * kLensContrast + 0.5f;
+            g = (g - 0.5f) * kLensContrast + 0.5f;
+            b = (b - 0.5f) * kLensContrast + 0.5f;
+            r *= kLensBrightness;
+            g *= kLensBrightness;
+            b *= kLensBrightness;
+            const float luma = 0.2126f * r + 0.7152f * g + 0.0722f * b;
+            r = luma + (r - luma) * kLensSaturation;
+            g = luma + (g - luma) * kLensSaturation;
+            b = luma + (b - luma) * kLensSaturation;
+
+            // THE INNER SHADE: the bottom edge absorbs a little light, which is the reference's inset
+            // shadow. It is part of the refracted image, so it can never become the ring the user
+            // rejected, and the content drawn on top is not shaded.
+            const float bottom = static_cast<float>(pillH) - py;
+            const float shadeBand = static_cast<float>(pillH) * kLensInnerShadeBand;
+            const float shadeT = std::clamp(bottom / shadeBand, 0.0f, 1.0f);
+            const float shadeW = 1.0f - shadeT;
+            const float shade = kLensInnerShade * shadeW * shadeW * (3.0f - 2.0f * shadeW);
+            r *= 1.0f - shade;
+            g *= 1.0f - shade;
+            b *= 1.0f - shade;
+
+            out[2] = ClampByte(r);
+            out[1] = ClampByte(g);
+            out[0] = ClampByte(b);
             // The captured frame is opaque; forcing alpha avoids a premultiplied bitmap that draws
             // nothing when a window's capture comes back with alpha 0.
             out[3] = 255;
@@ -300,7 +300,7 @@ bool LensMaterial::Update(ID3D11Texture2D* texture, const RECT& source, const D2
         cache_->pillW = pillW;
         cache_->pillH = pillH;
     }
-    Warp(cache_->crop, cropW, cropH, pillW, pillH, cache_->image);
+    Warp(cache_->crop, cropW, cropH, pillW, pillH, scale, cache_->image);
     {
         // The middle of the pill is where the date and time will sit.
         double sum = 0.0;

@@ -328,6 +328,7 @@ int RunSelfTest() {
         if (created) {
             TestWindow(window, monitor);
             TestRenderer(window);
+            TestLensProfile();
 
             // Bring it up for real: the pass-through/click-through behaviour is
             // only meaningful on a visible window.

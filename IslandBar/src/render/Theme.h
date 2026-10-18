@@ -51,10 +51,11 @@ struct Theme {
     float grain = 0.0f;             // 0..1: the grain's own alpha
     // --- the liquid-glass layers (round 53, the user's "苹果那种液态玻璃") -----------------------
     //
-    // THREE LAYERS, all of them drawn rather than sampled. What Apple's material actually does is refract
-    // the content behind it, and that needs pixels from behind the window -- which this window cannot have
-    // (three APIs measured, see the note on 玻璃 below and HANDOFF 8.163). So the three things that CAN be
-    // drawn are named here, each driven by its own field so a theme opts in and 默认 keeps its pixels.
+    // THE DRAWN LAYERS, for a theme without the lens. What Apple's material does is refract the content
+    // behind it, and 玻璃 now has that for real: platform/BackdropCapture captures the window under the
+    // island and render/LensMaterial bends it (a flat centre, a narrow rim band). These three fields are
+    // what a painted theme can still put on the surface, each driven by its own field so a theme opts in
+    // and 默认 keeps its pixels.
     //
     //   sweep  a specular highlight along the top edge whose centre FOLLOWS THE POINTER across the pill
     //          (the one part of the Apple material that is about the pointer rather than the background);

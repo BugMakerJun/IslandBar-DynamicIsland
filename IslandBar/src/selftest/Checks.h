@@ -14,6 +14,7 @@ void TestGeometryPredicate(float originX, float originY, float monitorWidthDip, 
 void TestWindow(IslandWindow& window, const MonitorGeometry& monitor);
 void TestClickThrough(IslandWindow& window, const MonitorGeometry& monitor);
 void TestRenderer(IslandWindow& window);
+void TestLensProfile();
 void TestMotion(float originX, float originY, float monitorWidthDip);
 void TestClock();
 void TestMiniJson();

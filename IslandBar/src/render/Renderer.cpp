@@ -652,7 +652,8 @@ void Renderer::RenderFrame(const FrameState& frame) {
             island::TintedFill(theme, theme.pillBottom, island::WallpaperTint(), 0.85f);
         // The surface itself: the two-stop tinted fill and its fringe hairline, from the cached material.
         // THE LENS FIRST: with the glass theme's fill at zero, this IS the surface -- the desktop behind
-        // the island, bent at the rim. A light scrim and the washes sit on top of it.
+        // the island, bent at the rim with a flat centre (render/LensProfile.h). Nothing painted sits on
+        // top of it except the pointer's light, when there is one.
         // THE NOTICE/CALL STRIP: the strip is wider than the pill, and a lens sized to the pill cut a
         // visible seam where its refraction ended ("the right side looks cut with a knife"). A call does
         // not go through statusStripOpacity, so the notice line and the call flag are part of the test.
@@ -710,14 +711,14 @@ void Renderer::RenderFrame(const FrameState& frame) {
         island::DrawSmokedBase(d2dContext_, rounded, theme, pillTopFill, pillBottomFill, hoverLift);
 
         // NO WASHES AT ALL on the clear lens: the top ellipse, the blobs and the grain all left a veil
-        // over the background. What is left is the refracted image and the lit contour.
+        // over the background. What is left is the refracted image and its words.
         if (!theme.lens) {
             island::DrawSurfaceLighting(d2dContext_, rounded, theme, 1.0f);
             island::DrawTopSheen(d2dContext_, rounded, theme, frame.pillPointerFraction, 1.0f);
         }
 
-        // The lit contour: thin enough to be an edge rather than a frame, and the one cue that still
-        // reads as glass when the desktop behind is a smooth photograph.
+        // The rim, for a theme that asks for one. 玻璃 sets it to 0: the user rejected the contour, and
+        // the refraction's own edge is the only edge the island has.
         island::DrawThinRim(d2dContext_, rounded, theme, frame.pointerOnIsland ? 1.10f : 1.0f);
 
         // THE LIQUID-GLASS LAYERS (round 53, Theme.h): a specular highlight that follows the pointer along
@@ -729,7 +730,8 @@ void Renderer::RenderFrame(const FrameState& frame) {
             island::DrawSpecularSweep(d2dContext_, rounded, theme, frame.pillPointerFraction, 1.0f);
         }
 
-        // The faint cool tints at the two ends: the colour a thick edge picks up from the room.
+        // The end tints, for a theme that asks for them. 玻璃 sets `tint` to 0: the reference has no
+        // coloured fringe.
         island::DrawEdgeTints(d2dContext_, rounded, theme, 1.0f);
 
         // NO EDGE AT ALL, at the user's request: no outside line, no dark thickness, no inner curvature

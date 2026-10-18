@@ -60,6 +60,7 @@
 #include "shell/SystemToggles.h"
 #include "render/Theme.h"
 #include "render/GlassMaterial.h"
+#include "render/LensProfile.h"   // the lens displacement, asserted without a device or a captured frame
 #include "shell/Weather.h"   // SkyMarkForCode: the word and the mark come from the same WMO code
 #include "domain/Motion.h"
 #include "render/Renderer.h"
@@ -2367,6 +2368,72 @@ void TestWorkerThread() {
     wchar_t detail[96] = {};
     std::swprintf(detail, 96, L"after ~150 prepare/stop cycles: %lu -> %lu handle(s)", before, after);
     Check(after <= before + 8, L"a retried start leaves no handles behind", detail);
+}
+
+// THE LENS PROFILE (2026-10-18). The displacement is a pure function (render/LensProfile.h), so it is
+// asserted here rather than by looking at a screenshot: the flat centre, the inward direction, the
+// absence of the 4.2 px seam the old profile had at the middle line, and the no-fold rule that keeps the
+// refracted image from mirroring at the rim.
+void TestLensProfile() {
+    Section(L"lens profile (render)");
+
+    const float w = 220.0f;
+    const float h = 36.0f;
+    const auto at = [w, h](float x, float y) { return LensOffsetFor(x, y, w, h, 1.0f); };
+
+    // The date and the time sit here: the backdrop must not move at all.
+    const LensOffset centre = at(w * 0.5f, h * 0.5f);
+    Check(Nearly(centre.dx, 0.0f) && Nearly(centre.dy, 0.0f),
+          L"the centre of the lens does not move (the text band is flat)");
+
+    const LensOffset top = at(w * 0.5f, 0.5f);
+    const LensOffset bottom = at(w * 0.5f, h - 0.5f);
+    Check(top.dy > 2.5f && top.dy < 3.5f && Nearly(top.dx, 0.0f),
+          L"the top edge samples 3 DIP inward (down), not outward");
+    Check(bottom.dy < -2.5f && bottom.dy > -3.5f && Nearly(bottom.dx, 0.0f),
+          L"the bottom edge samples 3 DIP inward (up)");
+
+    const LensOffset left = at(0.5f, h * 0.5f);
+    const LensOffset right = at(w - 0.5f, h * 0.5f);
+    Check(left.dx > 7.0f && left.dx < 9.0f && Nearly(left.dy, 0.0f),
+          L"the left end samples 8 DIP inward (right)");
+    Check(right.dx < -7.0f && right.dx > -9.0f && Nearly(right.dy, 0.0f),
+          L"the right end samples 8 DIP inward (left)");
+    Check(Nearly(left.dx, -right.dx, 0.02f) && Nearly(top.dy, -bottom.dy, 0.02f),
+          L"the profile is symmetric left/right and top/bottom");
+
+    // THE OLD SEAM: the normal flipped at the middle line while the shift was still 2.1 px, which moved
+    // the sampled row 4.2 px between py=17 and py=18. The shift is zero there now.
+    Check(Nearly(at(w * 0.5f, h * 0.5f - 1.0f).dy, 0.0f) &&
+              Nearly(at(w * 0.5f, h * 0.5f + 1.0f).dy, 0.0f),
+          L"no jump where the top and bottom normals meet at the middle line");
+
+    // THE NO-FOLD RULE: sampleY = py + dy must increase from the edge to the centre. If it did not, the
+    // image would mirror at the rim (the sample would run backwards).
+    float previous = -1.0f;
+    bool monotonic = true;
+    for (int i = 0; i <= 18; ++i) {
+        const float y = 0.5f + static_cast<float>(i);
+        const float sample = y + at(w * 0.5f, y).dy;
+        if (sample < previous - 0.001f) monotonic = false;
+        previous = sample;
+    }
+    Check(monotonic, L"the vertical mapping never folds (no mirrored rim)");
+
+    previous = -1.0f;
+    monotonic = true;
+    for (int i = 0; i <= 18; ++i) {
+        const float x = 0.5f + static_cast<float>(i);
+        const float sample = x + at(x, h * 0.5f).dx;
+        if (sample < previous - 0.001f) monotonic = false;
+        previous = sample;
+    }
+    Check(monotonic, L"the horizontal mapping never folds at the round end");
+
+    // DPI: the parameters are DIP, so a 1.5x pill gets 1.5x the displacement at the same relative point.
+    const LensOffset top15 = LensOffsetFor(w * 0.75f, 0.75f, w * 1.5f, h * 1.5f, 1.5f);
+    Check(Nearly(top15.dy, top.dy * 1.5f, 0.02f),
+          L"the profile scales with the monitor DPI");
 }
 
 } // namespace island
