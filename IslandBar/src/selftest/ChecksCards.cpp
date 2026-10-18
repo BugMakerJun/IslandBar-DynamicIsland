@@ -3346,6 +3346,8 @@ void TestMusicCardLayout() {
                       L"a clear noon is the clear day");
                 Check(AmbientKindFor(0, set - 10, rise, set) == AmbientKind::Sunset,
                       L"the real sunset window is the sunset");
+                Check(AmbientKindFor(0, set + 40, rise, set) == AmbientKind::Sunset,
+                      L"the afterglow after the sunset is still the sunset");
                 Check(AmbientKindFor(0, 23 * 60, rise, set) == AmbientKind::Night,
                       L"after the sunset it is night");
                 Check(AmbientKindFor(95, 12 * 60, rise, set) == AmbientKind::Thunder,

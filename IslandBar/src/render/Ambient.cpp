@@ -68,7 +68,10 @@ AmbientKind AmbientKindFor(int weatherCode, int nowMinutes, int sunriseMinutes, 
         sunsetMinutes = kAmbientFallbackSunsetMinutes;
     }
     const int sunsetStart = sunsetMinutes - 45;
-    const int sunsetEnd = sunsetMinutes + 30;
+    // The afterglow lasts longer than the sun does: on this machine the real sunset was 16:52 and the
+    // clock said 17:24, so a +30 window had already turned the island to NIGHT while the sky outside was
+    // still orange. +60 keeps the sunset through the afterglow and only then hands over to the stars.
+    const int sunsetEnd = sunsetMinutes + 60;
     if (nowMinutes >= sunsetStart && nowMinutes <= sunsetEnd) return AmbientKind::Sunset;
     if (nowMinutes < sunriseMinutes || nowMinutes > sunsetEnd) return AmbientKind::Night;
     return AmbientKind::ClearDay;
