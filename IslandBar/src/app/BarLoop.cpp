@@ -657,6 +657,9 @@ static void StartNotificationChannels(bool& listening, bool& toastsAvailable, is
 // Declared here because the policy's context asks it long before the call strip's own code below.
 static bool IsCallNotification(const island::BarSystems& systems,
                                const island::Notification* active);
+// ... and the notification click asks for this one long before its definition near the call strip.
+static HWND WindowForNotification(const island::WindowList& windows,
+                                  const island::Notification* active);
 
 // --- the two media sources: the system session, and the player that never publishes one ---
 //
@@ -3027,30 +3030,31 @@ static void ApplyPressesAndClicks(island::BarState& bar, island::BarSystems& sys
                 std::fflush(stdout);
             }
         } else if (systems.window.State() == island::IslandState::NoticeStrip) {
-            // A PRESS WHILE A CALL OR A MESSAGE IS ON THE ISLAND LEAVES IT ALONE.
+            // A CLICK ON A MESSAGE OPENS THE WINDOW THAT SENT IT -- "点击通知能打开当前来通知的窗口".
             //
-            // Asked for in these words: "当通知和通话的时候点击 就通话和通知的样子" -- while the strip
-            // is up, a press on any of the bar's buttons (Start, the panel toggle, the tray button)
-            // must not send the island back to the plain pill, and neither must a press that lands on
-            // the strip's own body.
-            //
-            // It did. The log has the whole sequence: a press at (1420,27) was routed as
-            // "meaning=dismiss", marked one item read, and the strip retracted 157 ms later -- then
-            // came back 226 ms after that, because what had asked for it was still there. Both halves
-            // of that dismissal had to go together, and the reason is one line in the store:
-            // ActiveDisplay answers nullptr for an item that is `read`, so marking it read IS the
-            // retraction. Marking read and retracting cannot be separated; the press therefore no
-            // longer marks anything read.
-            //
-            // Nothing is lost by that: the unread count is not drawn anywhere (it is asserted in the
-            // self-test and read nowhere else), so a message that is left unread has no visible
-            // consequence. What ends the strip is unchanged and decided elsewhere: a message when its
-            // display window runs out, a call when the call does -- which is what the note that used
-            // to stand here said a call's lifetime is.
-            island::LogAndPrint("  click: kept -- a notice is up, so the press changed nothing");
+            // This branch used to KEEP the strip and mark nothing read, after a press on the plain pill
+            // was found to dismiss a message that was still wanted. A click that asks for the sender's
+            // window is a different gesture, and it is the one the notice is for: the message is then
+            // marked read -- which is what retracts the strip, since ActiveDisplay answers null for a
+            // read item -- and the window comes forward. A call never reaches this branch (it is the bar
+            // cluster; see NextShape) and is never marked read.
+            const HWND sender = WindowForNotification(systems.taskWindows, active);
+            if (sender && systems.taskWindows.Activate(sender)) {
+                island::LogAndPrint("  notice click: opened the sender's window %p",
+                                    reinterpret_cast<void*>(sender));
+            } else if (sender) {
+                island::LogAndPrint("  notice click: the sender's window %p refused activation",
+                                    reinterpret_cast<void*>(sender));
+            } else {
+                island::LogAndPrint("  notice click: no window found for the sender");
+            }
+            const int marked =
+                systems.notifications.MarkAllReadExcept(systems.wechat.CallNotificationId());
+            if (marked > 0) {
+                island::LogAndPrint("  notifications: %d marked read (notice click)", marked);
+            }
             std::fflush(stdout);
-        } else {
-            // A CLICK DISMISSES MESSAGES, NOT A CALL.
+        } else {            // A CLICK DISMISSES MESSAGES, NOT A CALL.
             //
             // Every other item on the strip is news: showing it for a few seconds and marking it read
             // when it is clicked is what "read" means. A CALL is a STATE, and the user asked for it to
@@ -3059,6 +3063,15 @@ static void ApplyPressesAndClicks(island::BarState& bar, island::BarSystems& sys
             // disappeared for good: `notifications: 1 marked read (click)` at 13:43:19 with the call
             // still up, after which the island never showed it again. The call is retired by the call
             // ENDING, which the watcher detects and reports.
+            // A CALL IS A STATE AND ITS CLICK OPENS THE CALLER'S WINDOW; it is not marked read, so the
+            // call strip stays up while the window comes forward.
+            if (IsCallNotification(systems, active)) {
+                const HWND caller = WindowForNotification(systems.taskWindows, active);
+                if (caller && systems.taskWindows.Activate(caller)) {
+                    island::LogAndPrint("  call click: opened the caller's window %p",
+                                        reinterpret_cast<void*>(caller));
+                }
+            }
             const int marked = systems.notifications.MarkAllReadExcept(systems.wechat.CallNotificationId());
             if (marked > 0) {
                 island::LogAndPrint("  notifications: %d marked read (click)", marked);
@@ -3239,6 +3252,34 @@ static bool IsCallNotification(const island::BarSystems& systems,
                                const island::Notification* active) {
     return active != nullptr && systems.wechat.CallNotificationId() != 0 &&
            active->id == systems.wechat.CallNotificationId();
+}
+
+// THE WINDOW A NOTIFICATION CAME FROM -- "点击通知能打开当前来通知的窗口".
+//
+// The sender's own process first: the pipe knows who connected, and a tool's own window is the answer.
+// A toast names its app rather than its process, so for those the window titles are the only bridge; the
+// app name is matched inside a title because a title is rarely just the app's name ("微信" beside a
+// conversation). Nothing found returns null, and the caller says so rather than pretending it opened.
+static HWND WindowForNotification(const island::WindowList& windows,
+                                  const island::Notification* active) {
+    if (!active) return nullptr;
+    if (active->senderPid != 0) {
+        for (int i = 0; i < windows.Count(); ++i) {
+            if (windows.At(i).processId == active->senderPid) return windows.At(i).handle;
+        }
+    }
+    if (active->app[0] != '\0') {
+        wchar_t name[island::kAppNameCapacity] = {};
+        if (MultiByteToWideChar(CP_UTF8, 0, active->app, -1, name,
+                                static_cast<int>(island::kAppNameCapacity)) > 0) {
+            for (int i = 0; i < windows.Count(); ++i) {
+                if (std::wcsstr(windows.At(i).title, name) != nullptr) {
+                    return windows.At(i).handle;
+                }
+            }
+        }
+    }
+    return nullptr;
 }
 
 static void PickRestingLyricLine(BarRuntime& runtime, island::BarState& bar, island::BarSystems& systems,
