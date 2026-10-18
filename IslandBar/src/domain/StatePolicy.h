@@ -256,7 +256,16 @@ inline IslandState NextShape(const PointerContext& c) {
     // reached while it is in front, so hovering the island during a game cannot open the media card.
     if (c.fullscreenApp) {
         if (c.notificationActive && c.callActive) return IslandState::Hover;
-        return c.notificationActive ? IslandState::NoticeStrip : IslandState::FullBar;
+        // THE PILL, NOT THE FULL-WIDTH BAND.
+        //
+        // This returned FullBar, and the two rules it was written for contradict each other: FullBar shapes
+        // the island to the whole screen width (box 0..2560), while everything else about a full-screen
+        // application -- the renderer (no decks, no icon row) and the hit test (only the island is the bar)
+        // -- is built for the island ALONE. The result was reported from inside a game with a photograph of
+        // a dark band running to both edges of the screen, taking the lyric line with it: "玩游戏的时候
+        // 现在显示的不对". The resting state is the pill, which is the shape the full-screen rules already
+        // describe, and the band was never asked for.
+        return c.notificationActive ? IslandState::NoticeStrip : c.resting;
     }
 
     // A CALL IS THE BAR CLUSTER, IN EVERY STATE.

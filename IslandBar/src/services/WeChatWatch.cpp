@@ -4,6 +4,7 @@
 #include "services/WeChatWatch.h"
 
 #include <windows.h>
+#include <tlhelp32.h>   // CreateToolhelp32Snapshot: every process's name, in one call
 
 #include <algorithm>
 #include <cmath>     // fabs: how far a window is from the middle of the screen
@@ -45,7 +46,54 @@ struct WindowVisit {
 // old one is "WeChat.exe" and both are the same thing to a user. The PREFIX is matched, not the whole name:
 // this machine runs a dozen WeChatAppEx.exe helpers alongside the client, and a notification raised by one of
 // them would be raised by "not WeChat" under an exact match.
-bool LooksLikeWeChatProcess(unsigned long pid) {
+// The prefix test on a bare file name: "Weixin.exe" and "WeChat.exe" are the same thing to a user, and
+// the helpers (WeChatAppEx.exe) count too.
+bool IsWeChatName(const wchar_t* name) {
+    if (!name) return false;
+    const wchar_t* leaf = std::wcsrchr(name, L'\\');
+    leaf = leaf ? leaf + 1 : name;
+    return _wcsnicmp(leaf, L"Weixin", 6) == 0 || _wcsnicmp(leaf, L"WeChat", 6) == 0;
+}
+
+// EVERY PROCESS'S NAME, IN ONE CALL, kept for a second.
+//
+// WHY THIS EXISTS, with the measurement (2026-10-18): the walks in this file ask "is this pid WeChat?"
+// once per top-level window, and each answer used to be an OpenProcess plus QueryFullProcessImageNameW.
+// This machine has ~343 top-level windows, so the sound channel spent ~40 ms per ask every 200 ms and
+// the window channel ~40 ms every 500 ms -- ON THE FRAME LOOP, as `slow frame: 40.8 ms -- work:
+// wechat-sound`. A Toolhelp snapshot names every process in a single call of about a millisecond, and
+// whether a pid belongs to WeChat cannot change faster than a second, so the table is kept that long.
+struct ProcessNames {
+    std::vector<unsigned long> pids;
+    std::vector<bool> wechat;
+    ULONGLONG builtAt = 0;
+};
+
+const ProcessNames& NamesNow() {
+    static ProcessNames table;
+    const ULONGLONG now = GetTickCount64();
+    if (table.builtAt != 0 && now - table.builtAt < 1000) return table;
+
+    table.pids.clear();
+    table.wechat.clear();
+    table.builtAt = now;
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) return table;
+    PROCESSENTRY32W entry = {};
+    entry.dwSize = sizeof(entry);
+    if (Process32FirstW(snapshot, &entry)) {
+        do {
+            table.pids.push_back(entry.th32ProcessID);
+            table.wechat.push_back(IsWeChatName(entry.szExeFile));
+        } while (Process32NextW(snapshot, &entry));
+    }
+    CloseHandle(snapshot);
+    return table;
+}
+
+// The slow, always-correct answer: ask the process itself. Used for a pid that started after the table
+// was built, which is the one case the table cannot answer.
+bool AskTheProcess(unsigned long pid) {
     HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
     if (!process) return false;
     wchar_t path[260] = {};
@@ -53,20 +101,15 @@ bool LooksLikeWeChatProcess(unsigned long pid) {
     const bool ok = QueryFullProcessImageNameW(process, 0, path, &length) != 0;
     CloseHandle(process);
     if (!ok) return false;
-
-    const wchar_t* name = std::wcsrchr(path, L'\\');
-    name = name ? name + 1 : path;
-    return _wcsnicmp(name, L"Weixin", 6) == 0 || _wcsnicmp(name, L"WeChat", 6) == 0;
+    return IsWeChatName(path);
 }
 
-BOOL CALLBACK CountProcessWindow(HWND window, LPARAM param) {
-    DWORD pid = 0;
-    GetWindowThreadProcessId(window, &pid);
-    if (pid != 0 && LooksLikeWeChatProcess(pid)) {
-        *reinterpret_cast<bool*>(param) = true;
-        return FALSE;   // one is enough
+bool LooksLikeWeChatProcess(unsigned long pid) {
+    const ProcessNames& table = NamesNow();
+    for (size_t i = 0; i < table.pids.size(); ++i) {
+        if (table.pids[i] == pid) return table.wechat[i];
     }
-    return TRUE;
+    return AskTheProcess(pid);
 }
 
 // The windows of every WeChat process, top level AND their children.
@@ -107,12 +150,19 @@ bool IsWeChatProcess(unsigned long pid) {
 }
 
 bool AnyWeChatProcessRunning() {
-    // Asked of the WINDOW list rather than of a process snapshot, and that is deliberate: it is the same walk
-    // the rest of this file does, it needs no PROCESS_QUERY rights on anything, and a WeChat that owns no
-    // window at all is a WeChat whose sound could not be attributed anyway.
-    bool found = false;
-    EnumWindows(&CountProcessWindow, reinterpret_cast<LPARAM>(&found));
-    return found;
+    // ASKED OF THE PROCESS TABLE, not of the window list.
+    //
+    // It used to walk every top-level window and ask each one's process, which cost ~16 ms here (438
+    // windows) and ran five times a second from the sound channel: 80 ms of every second on the frame
+    // loop, and a dropped frame each time. The table NamesNow() keeps answers the same question in a
+    // few microseconds, and the question is the one that matters for a SOUND: a WeChat that makes noise
+    // is a WeChat process, whether or not it has a window on screen. `IsWeChatProcess(session.pid)` on
+    // the audio session is still what decides which sound is WeChat's.
+    const ProcessNames& table = NamesNow();
+    for (size_t i = 0; i < table.wechat.size(); ++i) {
+        if (table.wechat[i]) return true;
+    }
+    return false;
 }
 
 bool LooksLikeWeChatToast(const wchar_t* className, const wchar_t* title, bool visible, int width,
@@ -208,6 +258,18 @@ int WeChatWatcher::PollSound(NotificationStore* store, bool wechatRunning, bool 
 
 int WeChatWatcher::Poll(NotificationStore* store, unsigned long long nowMs) {
     if (!store) return 0;
+
+    // NOTHING TO COUNT WHEN THERE IS NO WECHAT. The walk below asks every top-level window whether it
+    // belongs to WeChat, and on a machine with 400 windows that is ~16 ms -- 32 ms a second on the frame
+    // loop for a client that is not even running. The process table answers "is any WeChat process
+    // alive" for free, and a WeChat window cannot exist without one.
+    if (!AnyWeChatProcessRunning()) {
+        // Cleared rather than kept: the list describes windows that were last seen, and a client that
+        // has gone and come back owns different handles. Keeping them would suppress the "appeared"
+        // line for the first popup after a restart.
+        seen_.clear();
+        return 0;
+    }
 
     WindowVisit visit;
     EnumWindows(&CollectWindow, reinterpret_cast<LPARAM>(&visit));

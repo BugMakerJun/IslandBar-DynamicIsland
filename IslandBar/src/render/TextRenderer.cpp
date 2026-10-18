@@ -1055,6 +1055,19 @@ void TextRenderer::DrawTrayPage(ID2D1DeviceContext2* context, const RoundedBox& 
     FillCardSurface(context, card, opacity, moving);
 
     const TrayPageLayout layout = TrayPageFor(card, count);
+    {
+        static int lastCount = -1;
+        if (count != lastCount) {
+            lastCount = count;
+            int withPng = 0;
+            for (int i = 0; i < count; ++i) {
+                if (icons && icons[i].png && icons[i].pngSize) ++withPng;
+            }
+            island::LogLine(L"  tray page: %d icon(s) in %d column(s), %d with a picture, card %.0fx%.0f",
+                            count, layout.columns, withPng, card.rect.right - card.rect.left,
+                            card.rect.bottom - card.rect.top);
+        }
+    }
 
     if (title && title[0] != L'\0' && appRowFormat_) {
         // The title in the THEME's ink, like every other word on the card: it was a hard-coded near-white,

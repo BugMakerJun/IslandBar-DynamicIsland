@@ -62,9 +62,16 @@ UINT DipToSurfacePixels(LONG pixels, float scale) {
 // card's own rectangle IS the composite the words are read against -- the app behind plus our glass --
 // so it is sampled at four inset corners and the median taken, which survives a tile or a glyph sitting
 // in one corner.
-float SampleUnderCard(const RECT& area, float scale) {
+//
+// THE READING ITSELF NO LONGER HAPPENS HERE. It is a BitBlt from the desktop DC, which costs ~6 ms per
+// call on this machine, and twenty of them a frame was the 120 ms that made every animation stutter.
+// This function only says WHERE to look; platform/ScreenInk reads those patches on a worker and the
+// frame loop asks for the last answer. See the note at the top of that file for the measurement.
+//
 // The patch size adapts to the area: a thin band (the bar's own 8 DIP edge strip) has to be sampleable
 // too, or the bar's ink silently falls back to the lens exactly where the words sit on the application.
+// Returns the number of patches written (0 or 4).
+int CornerPatches(const RECT& area, float scale, RECT out[4]) {
     const int smallest = std::min(area.right - area.left, area.bottom - area.top) / 3;
     const int wanted = static_cast<int>(std::lround(16.0f * scale));
     const int side = std::max(2, std::min(wanted, smallest));
@@ -76,72 +83,26 @@ float SampleUnderCard(const RECT& area, float scale) {
             LogLine(L"  ink sample: area %ldx%ld too small for four corners", area.right - area.left,
                     area.bottom - area.top);
         }
-        return -1.0f;
+        return 0;
     }
-    // THE GDI SURFACE IS MADE ONCE AND REUSED.
-    //
-    // This runs four times per frame (the bar's two edge bands and the two patches beside it). Creating
-    // a screen DC, a compatible DC and a DIB section 240 times a second was pure allocation churn in the
-    // frame; one 16x16 surface, a blit and a scan is all the reading needs.
-    constexpr int kSampleSide = 16;
-    static HDC screenDc = nullptr;
-    static HDC memoryDc = nullptr;
-    static void* dibPixels = nullptr;
-    if (!screenDc) {
-        screenDc = GetDC(nullptr);
-        if (screenDc) memoryDc = CreateCompatibleDC(screenDc);
-        if (screenDc && memoryDc) {
-            BITMAPINFO info = {};
-            info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-            info.bmiHeader.biWidth = kSampleSide;
-            info.bmiHeader.biHeight = -kSampleSide;   // top-down: row n of the DIB is screen y + n
-            info.bmiHeader.biPlanes = 1;
-            info.bmiHeader.biBitCount = 32;
-            info.bmiHeader.biCompression = BI_RGB;
-            HBITMAP dib = CreateDIBSection(screenDc, &info, DIB_RGB_COLORS, &dibPixels, nullptr, 0);
-            if (dib) {
-                SelectObject(memoryDc, dib);
-            } else {
-                dibPixels = nullptr;
-            }
-        }
-        if (!screenDc || !memoryDc || !dibPixels) {
-            LogLine(L"  ink sample: no reusable GDI surface");
-            return -1.0f;
-        }
-    }
-    HDC screen = screenDc;
-    HDC memory = memoryDc;
     const int xs[2] = {area.left + inset, area.right - inset - side};
     const int ys[2] = {area.top + inset, area.bottom - inset - side};
-    float samples[4] = {};
     int count = 0;
-    DWORD lastError = 0;
     for (int column = 0; column < 2; ++column) {
         for (int row = 0; row < 2; ++row) {
-            // No CAPTUREBLT: the corner is read off the composited screen, which is what the words sit
-            // on, and the flag is not needed for a normal window. It was there for layered windows and
-            // its one observed effect was a BitBlt that failed and left the ink on the desktop's reading.
-            if (!BitBlt(memory, 0, 0, side, side, screen, xs[column], ys[row], SRCCOPY)) {
-                lastError = GetLastError();
-                continue;
-            }
-            const auto* bytes = static_cast<const unsigned char*>(dibPixels);
-            double sum = 0.0;
-            for (int y = 0; y < side; ++y) {
-                for (int x = 0; x < side; ++x) {
-                    const unsigned char* p = bytes + (y * kSampleSide + x) * 4;
-                    sum += 0.0722 * p[0] + 0.7152 * p[1] + 0.2126 * p[2];
-                }
-            }
-            samples[count++] = static_cast<float>(sum / (side * side) / 255.0);
+            out[count].left = xs[column];
+            out[count].top = ys[row];
+            out[count].right = xs[column] + side;
+            out[count].bottom = ys[row] + side;
+            ++count;
         }
     }
-    // The surface is process-lifetime and deliberately not released here: see the creation above.
-    if (count == 0) {
-        LogLine(L"  ink sample: every corner's BitBlt failed (error %lu)", lastError);
-        return -1.0f;
-    }
+    return count;
+}
+
+// The median of the readings that came back, or -1 when none did.
+float MedianOf(float samples[], int count) {
+    if (count <= 0) return -1.0f;
     for (int i = 0; i < count; ++i) {
         for (int j = i + 1; j < count; ++j) {
             if (samples[j] < samples[i]) {
@@ -716,7 +677,12 @@ void Renderer::RenderFrame(const FrameState& frame) {
         // A wide notice/call strip is drawn beside the island, and the glass surface has to reach its
         // ends: the film and the rim otherwise stop at the pill's edge, which read as a vertical knife
         // cut through the right-hand end of the strip.
-        if (!frame.callUp && frame.statusStripOpacity > 0.01f && CurrentTheme().lens) {
+        // ... AND NOT WHILE A FULL-SCREEN APPLICATION IS IN FRONT. Its line is suppressed there (see the
+        // status line's own branch), but the strip's GLASS was not: the island surface was extended to the
+        // strip's rectangle and drew an empty pane to the left of the pill -- reported from inside a game as
+        // "是不是多出来了啊" with a red box round that pane. Only the island is the bar then.
+        if (!frame.callUp && !frame.fullscreenApp && frame.statusStripOpacity > 0.01f &&
+            CurrentTheme().lens) {
             // Same anchor the strip itself is measured from, so the two cannot drift apart.
             const RoundedBox anchor =
                 (frame.restingPill.rect.right > frame.restingPill.rect.left)
@@ -801,22 +767,27 @@ void Renderer::RenderFrame(const FrameState& frame) {
                                         islandLeft - 8, islandBottom + 10};
                 const RECT rightPatch = {islandRight + 8, std::max<LONG>(0, islandTop - 10),
                                          islandRight + 72, islandBottom + 10};
+                const RECT areas[4] = {topStrip, bottomStrip, leftPatch, rightPatch};
+                for (int i = 0; i < 4; ++i) {
+                    CornerPatches(areas[i], scale_, &inkPatches_[i * 4]);
+                }
+                // All twenty slots are posted, not just the bar's sixteen: the card's four keep their
+                // last geometry (a card that is down is not read), and a list whose length changed
+                // between frames would make the sampler drop the card's reading every so often -- the
+                // card's ink would then flip between its own backdrop and the lens's.
+                ink_.Request(inkPatches_, 20);
                 float samples[4] = {};
                 int count = 0;
-                for (const RECT* area : {&topStrip, &bottomStrip, &leftPatch, &rightPatch}) {
-                    const float value = SampleUnderCard(*area, scale_);
-                    if (value >= 0.0f) samples[count++] = value;
-                }
-                for (int i = 0; i < count; ++i) {
-                    for (int j = i + 1; j < count; ++j) {
-                        if (samples[j] < samples[i]) {
-                            const float swap = samples[i];
-                            samples[i] = samples[j];
-                            samples[j] = swap;
-                        }
+                for (int i = 0; i < 4; ++i) {
+                    float got[4] = {};
+                    int gotCount = 0;
+                    for (int j = 0; j < 4; ++j) {
+                        const float value = ink_.Grey(i * 4 + j);
+                        if (value >= 0.0f) got[gotCount++] = value;
                     }
+                    if (gotCount > 0) samples[count++] = MedianOf(got, gotCount);
                 }
-                if (count > 0) sampled = samples[count / 2];
+                sampled = MedianOf(samples, count);
             }
         }
         // Fed every frame from the cached reading, so the crossover finishes even when the window behind
@@ -1296,7 +1267,15 @@ void Renderer::RenderFrame(const FrameState& frame) {
                     origin.y + static_cast<LONG>(std::lround(panelCard.rect.top * scale_)),
                     origin.x + static_cast<LONG>(std::lround(panelCard.rect.right * scale_)),
                     origin.y + static_cast<LONG>(std::lround(panelCard.rect.bottom * scale_))};
-                const float cardSampled = SampleUnderCard(area, scale_);
+                CornerPatches(area, scale_, &inkPatches_[16]);
+                ink_.Request(inkPatches_, 20);
+                float got[4] = {};
+                int gotCount = 0;
+                for (int i = 16; i < 20; ++i) {
+                    const float value = ink_.Grey(i);
+                    if (value >= 0.0f) got[gotCount++] = value;
+                }
+                const float cardSampled = MedianOf(got, gotCount);
                 if (cardSampled >= 0.0f) cardLuminance = cardSampled;
                 island::SetCardInkBackdrop(cardLuminance);
 

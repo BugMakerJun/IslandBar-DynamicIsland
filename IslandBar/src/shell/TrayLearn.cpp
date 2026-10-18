@@ -741,6 +741,10 @@ TrayLearnResult LearnTrayCallbacks(const TrayIcons& icons, bool broadcast) {
         } else {
             tried.push_back(pid);
             ++result.appsTried;
+            // A shell that already holds this exact module keeps observing without handing anything over
+            // again (the handshake is written once per module load), so it is recorded rather than retried:
+            // the wait below must not call that state a failure, and the summary line must not either.
+            result.observerResident = AlreadyHasThisModule(pid, StagedLeaf());
         }
         if (procedure && pid != 0 && !AlreadyHasThisModule(pid, StagedLeaf())) {
 
@@ -822,6 +826,12 @@ TrayLearnResult LearnTrayCallbacks(const TrayIcons& icons, bool broadcast) {
                     L"%d of %d hooked thread(s) took the message, %lld ms)\n",
                     result.observerTid, result.observerHooks, result.observerAttempts, poked,
                     static_cast<int>(hookThreads.size()), result.observerMs);
+    } else if (result.observerResident) {
+        // Not a failure: this shell has been watching since an earlier session, and it says so by
+        // delivering registrations rather than by repeating its handshake.
+        LogAndPrint(L"  tray hook: the shell has carried this module since an earlier session -- it observes "
+                    L"without a fresh handshake; %d registration(s) arrived so far\n",
+                    result.captured);
     } else {
         LogAndPrint(L"  tray hook: the observer did NOT report ready in %lld ms (tray thread %u, %u hook(s), "
                     L"attempt %u, last error %u) -- the registrations asked for below may go unread\n",
@@ -1255,6 +1265,11 @@ std::wstring ObserverClause(const TrayLearnResult& learned) {
         _snwprintf_s(text, 320, _TRUNCATE,
                      L"observer up on the tray thread (tid %u, %u hook(s), %lld ms)",
                      learned.observerTid, learned.observerHooks, learned.observerMs);
+    } else if (learned.observerResident) {
+        _snwprintf_s(text, 320, _TRUNCATE,
+                     L"observer resident since an earlier session (this shell pins it; %d registration(s) "
+                     L"arrived)",
+                     learned.captured);
     } else if (learned.observerAttempts > 0) {
         _snwprintf_s(text, 320, _TRUNCATE,
                      L"observer NOT up -- the hook was refused (tray thread %u, %u hook(s), attempt %u, "

@@ -64,6 +64,13 @@ struct TrayLearnResult {
     // kObserverWaitMs, before broadcasting TaskbarCreated. A pass whose wait runs out still asks -- an
     // application that registers late is better than one that is never asked -- and records that it did.
     bool observerReady = false;
+    // The shell was ALREADY carrying this exact module when the pass started, because the module pins
+    // itself in the process it lands in (TrayHook.cpp). Such a shell observes without publishing a fresh
+    // handshake -- the handshake is written once per module load -- so "no handshake this pass" says
+    // nothing about whether registrations are being read. Measured 2026-10-18: every pass reported
+    // "the observer did NOT report ready" while 40 registrations arrived "read in the shell, over the
+    // ring" during that same pass.
+    bool observerResident = false;
     unsigned observerTid = 0;        // the thread the registrations are delivered to
     unsigned observerHooks = 0;
     unsigned observerAttempts = 0;

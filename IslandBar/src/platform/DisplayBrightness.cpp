@@ -4,6 +4,7 @@
 #include "platform/DisplayBrightness.h"
 
 #include "core/Log.h"
+#include "platform/WorkerThread.h"
 
 #include <mutex>
 
@@ -175,6 +176,105 @@ bool SetBrightnessPercent(HMONITOR monitor, int percent, int* landedPercent) {
     // percentage, and a monitor with a 0..10 range must not be judged on a scale it does not have.
     const DWORD readBack = ToRaw(landed, minimum, maximum);
     return readBack == wanted;
+}
+
+// --- the asynchronous read -------------------------------------------------------------------------
+//
+// One worker for the whole process, made on the first request. It waits on two events -- its stop and
+// its own wake-up -- and does nothing else, so a bar that never opens the panel never pays for it.
+namespace {
+
+struct AsyncRead {
+    WorkerThread worker;
+    HANDLE wake = nullptr;
+    std::mutex mutex;
+    HMONITOR monitor = nullptr;
+    bool pending = false;
+    bool finished = false;
+    bool ok = false;
+    int percent = 0;
+
+    ~AsyncRead() {
+        worker.Stop();
+        if (wake) CloseHandle(wake);
+    }
+};
+
+AsyncRead& Reader() {
+    static AsyncRead reader;
+    return reader;
+}
+
+unsigned long __stdcall ReadThread(void* self) {
+    auto& state = *static_cast<AsyncRead*>(self);
+    const HANDLE events[2] = {state.worker.StopEvent(), state.wake};
+    while (true) {
+        if (WaitForMultipleObjects(2, events, FALSE, INFINITE) != WAIT_OBJECT_0 + 1) break;
+        HMONITOR monitor = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(state.mutex);
+            monitor = state.monitor;
+        }
+        int percent = 0;
+        const bool ok = ReadBrightnessPercent(monitor, &percent);
+        if (!ok) LogLine(L"  brightness: the monitor did not answer the reading");
+        std::lock_guard<std::mutex> lock(state.mutex);
+        state.ok = ok;
+        state.percent = percent;
+        state.finished = true;
+        state.pending = false;
+    }
+    return 0;
+}
+
+bool StartReader(AsyncRead& state) {
+    if (state.worker.Started()) return true;
+    if (!state.worker.Prepare()) return false;
+    state.wake = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    if (!state.wake) {
+        state.worker.Stop();
+        return false;
+    }
+    DWORD threadId = 0;
+    HANDLE thread = CreateThread(nullptr, 0, &ReadThread, &state, 0, &threadId);
+    if (!thread) {
+        state.worker.Stop();
+        CloseHandle(state.wake);
+        state.wake = nullptr;
+        return false;
+    }
+    state.worker.Attach(thread);
+    return true;
+}
+
+}  // namespace
+
+bool RequestBrightnessPercent(HMONITOR monitor) {
+    AsyncRead& state = Reader();
+    {
+        std::lock_guard<std::mutex> lock(state.mutex);
+        if (state.pending) return false;
+        state.pending = true;
+        state.finished = false;
+        state.monitor = monitor;
+    }
+    if (!StartReader(state)) {
+        std::lock_guard<std::mutex> lock(state.mutex);
+        state.pending = false;
+        return false;
+    }
+    SetEvent(state.wake);
+    return true;
+}
+
+bool TakeBrightnessPercent(bool* ok, int* percent) {
+    AsyncRead& state = Reader();
+    std::lock_guard<std::mutex> lock(state.mutex);
+    if (!state.finished) return false;
+    state.finished = false;
+    if (ok) *ok = state.ok;
+    if (percent) *percent = state.percent;
+    return true;
 }
 
 } // namespace island

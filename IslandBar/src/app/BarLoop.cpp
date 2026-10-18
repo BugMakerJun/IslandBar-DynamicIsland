@@ -1931,7 +1931,16 @@ static void PollNotificationChannels(bool listening, bool toastsAvailable, bool 
     if (toastsAvailable && GetTickCount64() - bar.lastToastPoll >= 2000) {
         bar.lastToastPoll = GetTickCount64();
         frameWork |= toastPollBit;
+        const unsigned long long pollStartedAt = GetTickCount64();
         const int arrived = systems.toasts.Poll(&systems.notifications);
+        // Said out loud when it is slow, because this is a database query on the frame loop: the one
+        // thing that must not happen here is silently costing a frame. Measured 2026-10-18: a normal
+        // poll is under a millisecond, and the slow one that was seen took 57 ms.
+        const unsigned long long pollTook = GetTickCount64() - pollStartedAt;
+        if (pollTook >= 10) {
+            island::LogAndPrint("  toasts: the poll took %llu ms", pollTook);
+            std::fflush(stdout);
+        }
         if (arrived > 0) {
             island::LogAndPrint("  toasts: %d new system toast(s), %d taken in total", arrived,
                                 systems.toasts.Taken());
@@ -1946,7 +1955,16 @@ static void PollNotificationChannels(bool listening, bool toastsAvailable, bool 
     if (GetTickCount64() - bar.lastWeChatPoll >= 500) {
         bar.lastWeChatPoll = GetTickCount64();
         frameWork |= wechatScanBit;
-        if (systems.wechat.Poll(&systems.notifications, GetTickCount64()) > 0) {
+        const unsigned long long scanStartedAt = GetTickCount64();
+        const int announced = systems.wechat.Poll(&systems.notifications, GetTickCount64());
+        const unsigned long long scanTook = GetTickCount64() - scanStartedAt;
+        // 25 ms, not 10: the walk over ~440 top-level windows costs ~16 ms here with the process-name
+        // table, which is the normal price rather than a defect. This line is for the abnormal one.
+        if (scanTook >= 25) {
+            island::LogAndPrint("  wechat: the window scan took %llu ms", scanTook);
+            std::fflush(stdout);
+        }
+        if (announced > 0) {
             island::LogAndPrint("  wechat: %d message announcement(s) so far", systems.wechat.Announced());
             std::fflush(stdout);
             systems.window.SetState(island::IslandState::NoticeStrip);
@@ -3993,7 +4011,12 @@ static void FillHoverPreview(BarRuntime& runtime, island::FrameState& frame, isl
         bool shown = false;
         // The preview path registers a DWM thumbnail on the window and can redraw the live
         // content every frame, so it is one of the things a slow frame may turn out to be.
-        frameWork |= thumbnailBit;
+        //
+        // SET WHERE THE WORK IS, not here: this used to run whenever the preview was merely
+        // AVAILABLE, so every slow frame in the log carried "thumbnail draw" whether or not a
+        // thumbnail was touched -- and for three rounds of measuring the 120 ms frame that made the
+        // real owner unreadable. It is set below, around the Begin/Place pair that actually talks to
+        // the compositor.
         // ALREADY PLACED: the compositor keeps drawing the live picture itself, so a frame in which
         // neither the target nor the box changed has nothing to tell it. Doing the SetStyle/Begin/Place
         // dance anyway was the 120-180 ms per frame that made every animation stutter.
@@ -4031,6 +4054,7 @@ static void FillHoverPreview(BarRuntime& runtime, island::FrameState& frame, isl
             // The card takes the active theme's colours each time it comes up; the acrylic is applied
             // once (SetStyle only re-applies it when it was off).
             systems.preview.SetStyle(PreviewStyleFor(island::CurrentTheme(), systems.renderer.GlassColour()));
+            frameWork |= thumbnailBit;
             const SIZE sourceSize = systems.preview.Begin(wanted);
             const island::ThumbnailPlacement placement = island::ThumbnailBoxFor(
                 sourceSize.cx, sourceSize.cy, iconPx, monitorPx, scale);
@@ -4147,7 +4171,9 @@ static void FillHoverPreview(BarRuntime& runtime, island::FrameState& frame, isl
     // region DECIDES which pixels belong to this window, so a strip outside it is clipped --
     // see SetStatusStripWidth. Keyed on the FADE rather than on the placement flag, because
     // the strip is still on screen for the length of its exit.
-    systems.window.SetStatusStripWidth(bar.statusStripOpacity > 0.001f
+    // Zero while a full-screen application is in front: only the island is the bar there, and the strip's
+    // width is what the window's region and the island's surface are widened by.
+    systems.window.SetStatusStripWidth(bar.statusStripOpacity > 0.001f && !bar.fullscreenAppInFront
                                    ? island::kStatusStripWidthDip
                                    : 0.0f);
 
@@ -5943,12 +5969,19 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                         systems.statusReader.Sample(&systems.systemStatus);
 
                         // The brightness, on the same clock. It is a DDC/CI read -- an I2C transaction over
-                        // the video cable -- which is why it is not read per frame, and why the panel's row is
-                        // only offered when the display actually answers: a monitor with DDC/CI switched off
-                        // reports nothing, and a row drawn at a made-up level would be a lie about the screen.
-                        {
-                            int percent = 0;
-                            const bool read = island::ReadBrightnessPercent(monitor.monitor, &percent);
+                        // the video cable -- and it is ASKED FOR here and collected below: measured on this
+                        // machine a read costs 52-63 ms (and 1.8 s for the first one after the monitor has
+                        // been asleep), which the frame loop used to pay twice a second. See
+                        // RequestBrightnessPercent.
+                        island::RequestBrightnessPercent(monitor.monitor);
+                    }
+                    // The answer, whenever it is ready. The panel's row is only offered when the display
+                    // actually answers: a monitor with DDC/CI switched off reports nothing, and a row drawn
+                    // at a made-up level would be a lie about the screen.
+                    {
+                        bool read = false;
+                        int percent = 0;
+                        if (island::TakeBrightnessPercent(&read, &percent)) {
                             if (read) {
                                 bar.brightnessPercent = percent;
                                 if (!bar.brightnessAvailable) {

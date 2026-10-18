@@ -2652,10 +2652,16 @@ void TestMusicCardLayout() {
             // The state is reachable through the policy, and left again.
             PointerContext fullState;
             fullState.shape = IslandState::Collapsed;
-            fullState.resting = IslandState::Collapsed;
+            fullState.resting = IslandState::MusicStrip;
             fullState.fullscreenApp = true;
-            Check(NextShape(fullState) == IslandState::FullBar,
-                  L"a full-screen application produces the full bar", dt);
+            // THE PILL, NOT THE FULL-WIDTH BAR -- changed 2026-10-18 on the report "玩游戏的时候 现在显示
+            // 的不对" with a photograph of a dark band running to both screen edges inside a game. The bar
+            // state and everything built for a full-screen application contradict each other: the renderer
+            // draws no decks and no icon row, and the hit test accepts only the island, while FullBar shaped
+            // the island to the whole monitor width. What a full-screen application gets is the pill it
+            // always described, and the resting state is what decides which pill.
+            Check(NextShape(fullState) == IslandState::MusicStrip,
+                  L"a full-screen application leaves the resting pill, not a full-width bar", dt);
 
             PointerContext leaveState;
             leaveState.shape = IslandState::FullBar;

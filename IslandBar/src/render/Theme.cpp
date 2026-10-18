@@ -216,26 +216,36 @@ D2D1_COLOR_F ThemeInk(float alpha) {
 namespace {
 // 1 = light backdrop, so the ink is the theme's dark colour; 0 = dark backdrop, so it is the highlight.
 float g_pillInkMix = 1.0f;
+float g_pillInkTarget = 1.0f;
 ULONGLONG g_pillInkAt = 0;
+
+// The smoothing advances on READ, not on Set: the test (and any caller) sets the backdrop, waits, then
+// asks for the colour; moving the mix only inside the setter froze it at the value it had when the
+// backdrop last changed, which left white words on a bright card.
+void AdvancePillInk() {
+    const ULONGLONG now = GetTickCount64();
+    if (g_pillInkAt == 0) {
+        g_pillInkAt = now;
+        return;
+    }
+    const float dt = static_cast<float>(now - g_pillInkAt) / 1000.0f;
+    if (dt <= 0.0f) return;
+    g_pillInkAt = now;
+    g_pillInkMix += (g_pillInkTarget - g_pillInkMix) * Clamp01(dt * 4.0f);
+}
 }
 
 void SetPillInkBackdrop(float luminance) {
     // The crossover sits low on purpose: a mid-tone desktop (a blue sky, a photograph) still takes the
     // theme's dark ink, which is the light-glass look; only genuinely dark content switches to the light
     // ink. White text on a mid-blue sky reads as washed out, not as contrast.
-    const float target = Clamp01((luminance - 0.20f) / 0.15f);
-    // TIME-based, not call-based: the lens only updates while the backdrop changes, so a per-call step
-    // would freeze halfway on a window that has just gone dark and then gone quiet.
-    const ULONGLONG now = GetTickCount64();
-    const float dt = (g_pillInkAt == 0) ? 1.0f : static_cast<float>(now - g_pillInkAt) / 1000.0f;
-    g_pillInkAt = now;
-    const float step = Clamp01(dt * 4.0f);
-    g_pillInkMix += (target - g_pillInkMix) * step;
+    g_pillInkTarget = Clamp01((luminance - 0.20f) / 0.15f);
 }
 
 D2D1_COLOR_F PillInk(float alpha) {
     const Theme& theme = CurrentTheme();
     if (!theme.lens) return ThemeInk(alpha);
+    AdvancePillInk();
     // A theme with a substantial body (above ~0.15 alpha) has its own surface: the ink is the theme's
     // dark ink, not the adaptive one. The adaptive crossover exists for the clear lens, where the
     // backdrop IS the surface and a mixed dark/light photo can make a single ink wrong on half the text.
@@ -248,23 +258,32 @@ D2D1_COLOR_F PillInk(float alpha) {
 
 namespace {
 float g_cardInkMix = 1.0f;
+float g_cardInkTarget = 1.0f;
 ULONGLONG g_cardInkAt = 0;
+
+void AdvanceCardInk() {
+    const ULONGLONG now = GetTickCount64();
+    if (g_cardInkAt == 0) {
+        g_cardInkAt = now;
+        return;
+    }
+    const float dt = static_cast<float>(now - g_cardInkAt) / 1000.0f;
+    if (dt <= 0.0f) return;
+    g_cardInkAt = now;
+    g_cardInkMix += (g_cardInkTarget - g_cardInkMix) * Clamp01(dt * 4.0f);
+}
 }
 
 void SetCardInkBackdrop(float luminance) {
     // The same crossover the pill uses -- a mid-tone desktop keeps the theme's dark ink -- but fed from
     // the CARD's own sample: the cards hang below the bar, over a different part of the desktop.
-    const float target = Clamp01((luminance - 0.20f) / 0.15f);
-    const ULONGLONG now = GetTickCount64();
-    const float dt = (g_cardInkAt == 0) ? 0.25f : static_cast<float>(now - g_cardInkAt) / 1000.0f;
-    g_cardInkAt = now;
-    const float step = Clamp01(dt * 4.0f);
-    g_cardInkMix += (target - g_cardInkMix) * step;
+    g_cardInkTarget = Clamp01((luminance - 0.20f) / 0.15f);
 }
 
 D2D1_COLOR_F CardInk(float alpha) {
     const Theme& theme = CurrentTheme();
     if (!theme.lens) return ThemeInk(alpha);
+    AdvanceCardInk();
     if (theme.pillTop.a > 0.15f || theme.pillBottom.a > 0.15f) return ThemeInk(alpha);
     const float m = Clamp01(g_cardInkMix);
     return D2D1::ColorF(theme.ink.r * m + theme.highlight.r * (1.0f - m),

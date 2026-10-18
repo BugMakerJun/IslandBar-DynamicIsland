@@ -233,8 +233,27 @@ int TrayIcons::Refresh() {
         if (liveFilter_) {
             // The guid goes over as its 16 BYTES: that is what the registration carried across the ring, and
             // the registry's "{...}" string was parsed back into the same layout (see TrayLearn.cpp).
-            if (!LiveTrayFind(wanted.c_str(), entry.icon.uid, entry.icon.hasGuid,
-                              reinterpret_cast<const unsigned char*>(&entry.icon.guid), &liveTip)) {
+            const bool live = LiveTrayFind(wanted.c_str(), entry.icon.uid, entry.icon.hasGuid,
+                                           reinterpret_cast<const unsigned char*>(&entry.icon.guid),
+                                           &liveTip);
+            // ... OR IT IS SIMPLY RUNNING. The ledger is the better answer when it is complete, but it is
+            // only as complete as the ring that feeds it, and the ring is only fed while the shell hook is
+            // installed. Measured 2026-10-18: the hook did not load on this machine
+            // ("the observer did NOT report ready"), the ledger held 43 registrations captured during the
+            // learning pass, and the filter matched 8 of the 14 entries the registry lists -- so the tray
+            // card drew eight icons where the tray itself showed fourteen. Reported as "托盘卡片里面的应用
+            // 显示的不全".
+            //
+            // The union is the right bias: a process that is running may legitimately have registered an
+            // icon the ledger has not seen, while an entry whose process is gone cannot be showing anything.
+            //
+            // IDENTITY IS REQUIRED AS WELL, and that is not a detail: a press is sent to what the
+            // application registered (see TrayPress), so an entry with neither a UID nor a GUID is a tile
+            // that could only open this bar's own menu. The self-test states the rule as "every icon in the
+            // card carries the identity an application registers it with", and an entry that cannot be
+            // pressed must not be drawn as if it could.
+            const bool identified = entry.icon.hasUid || entry.icon.hasGuid;
+            if (!live && (!identified || !IsRunning(running, entry.exePath))) {
                 notLive_.push_back(leaf);
                 continue;
             }

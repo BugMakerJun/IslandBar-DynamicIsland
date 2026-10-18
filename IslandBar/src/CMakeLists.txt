@@ -60,6 +60,7 @@ add_library(island_platform STATIC
     platform/Monitor.cpp
     platform/NativeTaskbar.cpp
     platform/BackdropCapture.cpp
+    platform/ScreenInk.cpp
     platform/ThumbnailPreview.cpp
     platform/WindowList.cpp
 )

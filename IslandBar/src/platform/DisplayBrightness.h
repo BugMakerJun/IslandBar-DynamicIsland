@@ -31,6 +31,20 @@ bool BrightnessAvailable(HMONITOR monitor);
 // cannot be read.
 bool ReadBrightnessPercent(HMONITOR monitor, int* percent);
 
+// --- the same reading, off the frame loop ----------------------------------------------------------
+//
+// A DDC/CI read is an I2C transaction over the video cable. Measured on this machine (2026-10-18): 52-63
+// ms per read, and 1.8 seconds for the first one after the monitor had been asleep. It was being taken
+// on the frame loop every two seconds, so every animation froze for ~60 ms twice a second and for two
+// whole seconds once a run -- part of what "所有的动画都卡卡的" was.
+//
+// Request once per status tick and collect whenever the answer is ready; the loop never waits.
+bool RequestBrightnessPercent(HMONITOR monitor);
+
+// Collects a finished request. False when nothing has finished since the last call; when it returns
+// true, `ok` says whether the monitor answered and `percent` carries the reading.
+bool TakeBrightnessPercent(bool* ok, int* percent);
+
 // Sets the brightness, as a percentage of the monitor's own range. The value is read back before this
 // reports success, because DDC/CI silently drops a write the monitor does not accept and "the call
 // returned" has never been evidence in this project.

@@ -27,6 +27,7 @@
 #include "domain/Motion.h"
 #include "media/MusicSession.h"
 #include "platform/BackdropCapture.h"
+#include "platform/ScreenInk.h"
 #include "services/Notification.h"
 #include "render/LensMaterial.h"
 #include "render/TextRenderer.h"
@@ -695,6 +696,11 @@ private:
     // --- device chain ---
     ID3D11Device*            d3dDevice_   = nullptr;
     BackdropCapture          capture_;
+    // The screen behind the bar and the card, sampled on a worker: see platform/ScreenInk.h for the
+    // measurement that moved it off this thread. The first sixteen patches are the bar's, the last four
+    // the card's, and the list is posted as one so a reading covers both.
+    ScreenInk                ink_;
+    RECT                     inkPatches_[20] = {};
     LensMaterial             lens_;
     bool                     lensActive_  = false;
     HWND                     lensWindow_  = nullptr;
