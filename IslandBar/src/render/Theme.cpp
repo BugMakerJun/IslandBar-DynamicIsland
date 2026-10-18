@@ -69,8 +69,12 @@ const Theme kThemes[] = {
     // `tint` is 0: the reference has no coloured fringe, and the old cool/violet end tints were a
     // painted-material cue. `sweep` is the pointer's light: a small glint on the top rim plus a faint
     // pool, not the old full-height band (that read as a torch/bar following the pointer).
+    // THE CARDS ARE THE SAME SURFACE (2026-10-18): the system panel, the Start card, the tray page and the
+    // media card draw FillCardSurface, which for this theme is a 0.10 body + the 2.5 DIP rim band + the
+    // bottom caustic -- the island's material at card size, not the frosted 0.55 white they used to be.
+    // `cardEdge` is 0 because the rim band IS the edge; a 1px stroke on top of it is the line the user saw.
     {L"\u73BB\u7483", {0.88f, 0.94f, 1.00f, 0.08f}, {0.78f, 0.89f, 1.00f, 0.05f}, 0.20f,
-     {0.90f, 0.94f, 1.00f, 0.55f}, 0.30f, {0.15f, 0.45f, 0.85f, 0.95f}, {0.03f, 0.04f, 0.06f, 1.0f},
+     {0.90f, 0.94f, 1.00f, 0.10f}, 0.00f, {0.15f, 0.45f, 0.85f, 0.95f}, {0.03f, 0.04f, 0.06f, 1.0f},
      0.0f, 0.03f, 0.55f, 0.00f, 0.00f, {1.0f, 1.0f, 1.0f, 1.0f}, true},
 };
 constexpr int kThemeCount = static_cast<int>(sizeof(kThemes) / sizeof(kThemes[0]));

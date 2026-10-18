@@ -2900,16 +2900,21 @@ wchar_t DeviceGlyphFor(int formFactor) {
 // (the cover's wash plus a scrim)" is true only when there IS a cover, and a track with `Thumbnail: none`
 // got a card with nothing but a scrim over the desktop -- "背景色 不显示了".
 //
-// The alpha is high rather than translucent because these are settings surfaces: they
-// have to stay readable over whatever is behind them, which is why the shell's own flyout is opaque too.
+// The alpha is high for the PAINTED themes: those are settings surfaces that have to stay readable over
+// whatever is behind them, which is why the shell's own flyout is opaque too. The glass theme instead uses
+// the island's own material -- a 0.10 body, the 2.5 DIP rim band and the bottom caustic, and none of the
+// 1px edge, the narrow specular or the grain (see the branch below). Its ink stays the theme's black: on a
+// bright desktop the 0.10 light body reads as a lit pane, and the text is readable; on a dark one that is
+// the next thing to tune, not something this fill can solve on its own.
 //
 // The notification card did NOT call it, and this comment used to SAY it did -- which is how a card with
 // no background survived review: the only thing that would have caught it is a screenshot of the real bar,
 // because the test frames gave the pill a card-sized box (and so a card-sized fill) that the frame loop
 // never gives it.
 //
-// A hairline in the same colour covers the antialiased fringe, for the reason the island itself has one:
-// a rounded fill alone leaves a pale seam along the curve.
+// A hairline in the same colour covers the antialiased fringe for the painted themes, for the reason the
+// island itself has one: a rounded fill alone leaves a pale seam along the curve. The glass theme uses the
+// rim band instead.
 void FillCardSurface(ID2D1DeviceContext2* context, const RoundedBox& box, float opacity,
                      bool moving) {
     if (!context) return;
@@ -2950,6 +2955,16 @@ void FillCardSurface(ID2D1DeviceContext2* context, const RoundedBox& box, float 
         context->FillRoundedRectangle(&rounded, fill);
         fill->Release();
     }
+
+    // THE GLASS CARD IS THE ISLAND AT CARD SIZE (2026-10-18): the same 2.5 DIP rim band and the same bottom
+    // caustic, over the 0.10 body. No 1px edge (the band is the edge), no surface lighting's narrow
+    // specular, no grain: those are what made a card look like frosted plastic beside the lens.
+    if (theme.lens) {
+        island::DrawLensRimBand(context, rounded, theme, opacity);
+        island::DrawLensBottomCaustic(context, rounded, theme, opacity * 0.80f);
+        return;
+    }
+
     ID2D1SolidColorBrush* edge = nullptr;
     if (SUCCEEDED(context->CreateSolidColorBrush(edgeColour, &edge)) && edge) {
         context->DrawRoundedRectangle(&rounded, edge, 1.0f);
