@@ -576,6 +576,20 @@ void DrawSpecularSweep(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& sh
     context->FillRoundedRectangle(&shape, g_cache.sweepBand);
 }
 
+void DrawLensBottomCaustic(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
+                           float opacity) {
+    if (!context || opacity <= 0.01f) return;
+    const float width = shape.rect.right - shape.rect.left;
+    const float height = shape.rect.bottom - shape.rect.top;
+    if (width < 24.0f || height < 6.0f) return;
+    if (!EnsureMaterial(context, theme) || !g_cache.sheen) return;
+    // Just inside the bottom edge, centred. The inner shade is already in the refracted image; this is the
+    // light gathered above it, which is what makes the pane look thick rather than tinted.
+    PlaceRadial(g_cache.sheen, (shape.rect.left + shape.rect.right) * 0.5f, shape.rect.bottom - 2.0f,
+                width * 0.35f, 5.5f, opacity * 0.55f);
+    context->FillRoundedRectangle(&shape, g_cache.sheen);
+}
+
 void DrawGlassRim(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
                   float opacity) {
     if (!context || opacity <= 0.01f || theme.rim <= 0.001f) return;

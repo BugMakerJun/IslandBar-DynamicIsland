@@ -98,6 +98,11 @@ inline float SpecularCentreX(float left, float right, float fraction) {
 void DrawSpecularSweep(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
                        float pointerFraction, float opacity);
 
+// THE LENS BOTTOM CAUSTIC (2026-10-18): the light a thick piece of glass gathers just inside its bottom
+// edge. A centred, soft ellipse that fades out well before the caps -- a local highlight, not a second rim.
+void DrawLensBottomCaustic(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, const Theme& theme,
+                           float opacity);
+
 // The double edge: a faint dark line on the outside of the shape and a bright one just inside it, which
 // together are what read as the THICKNESS of a piece of glass. It complements DrawSurfaceLighting's own
 // directional hairline (inset 1 DIP) rather than replacing it: that one is the light on the face, this is

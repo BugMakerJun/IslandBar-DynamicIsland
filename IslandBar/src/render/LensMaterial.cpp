@@ -39,6 +39,10 @@ constexpr float kLensSaturation = 1.10f;
 constexpr float kLensInnerShade = 0.14f;
 constexpr float kLensInnerShadeBand = 0.30f;
 
+// The lens's own edge fades into the wallpaper over this many DIP. A hard bitmap edge is the seam the
+// user photographed as "a line" along the top, even after the drawn strokes were gone.
+constexpr float kLensEdgeFeatherDip = 1.5f;
+
 ULONGLONG g_lastLensLog = 0;
 void LensFail(const wchar_t* why) {
     const ULONGLONG now = GetTickCount64();
@@ -118,12 +122,15 @@ void Warp(const std::vector<unsigned char>& src, int srcW, int srcH, int pillW, 
             g *= 1.0f - shade;
             b *= 1.0f - shade;
 
-            out[2] = ClampByte(r);
-            out[1] = ClampByte(g);
-            out[0] = ClampByte(b);
-            // The captured frame is opaque; forcing alpha avoids a premultiplied bitmap that draws
-            // nothing when a window's capture comes back with alpha 0.
-            out[3] = 255;
+            // THE EDGE FEATHER: the refracted image fades into the wallpaper over the last 1.5 DIP, so
+            // its edge is not a hard seam where it meets the desktop. The bitmap is PREMULTIPLIED, so the
+            // colour is scaled by the same alpha.
+            const float feather = kLensEdgeFeatherDip * scale;
+            const float edge = std::clamp(offset.inside / feather, 0.0f, 1.0f);
+            out[2] = ClampByte(r * edge);
+            out[1] = ClampByte(g * edge);
+            out[0] = ClampByte(b * edge);
+            out[3] = static_cast<unsigned char>(edge * 255.0f + 0.5f);
         }
     }
 }

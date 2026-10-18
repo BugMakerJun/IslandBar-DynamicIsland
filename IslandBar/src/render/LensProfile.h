@@ -31,6 +31,9 @@ namespace island {
 struct LensOffset {
     float dx = 0.0f;
     float dy = 0.0f;
+    // How far the pixel is from the pill's edge, in physical pixels. The renderer uses it to feather the
+    // lens's own alpha into the wallpaper over the last DIP; a hard bitmap edge is the seam the user saw.
+    float inside = 0.0f;
 };
 
 // In DIP; `scale` converts them to physical pixels at the current DPI. The band grows on the ends,
@@ -86,7 +89,7 @@ inline LensOffset LensOffsetFor(float px, float py, float pillW, float pillH, fl
     // centre, and no fold at the edge (the peak slope is 1.5 * maxShift / band < 1).
     const float weight = w * w * (3.0f - 2.0f * w);
     const float shift = maxShift * weight;
-    return {nx * shift, ny * shift};
+    return {nx * shift, ny * shift, inside};
 }
 
 }  // namespace island

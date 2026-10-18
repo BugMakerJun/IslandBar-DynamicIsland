@@ -719,6 +719,8 @@ void Renderer::RenderFrame(const FrameState& frame) {
             // The lens theme's top light is the single TALL core DrawTopSheen keeps for it, not a thin
             // ellipse: a 4.5 DIP-high highlight read as a line across the top. The pointer still shifts it.
             island::DrawTopSheen(d2dContext_, rounded, theme, frame.pillPointerFraction, 1.0f);
+            // ... and the light the glass gathers just inside its bottom edge, which is the thickness.
+            island::DrawLensBottomCaustic(d2dContext_, rounded, theme, 1.0f);
         }
 
         // The rim: 0 in 玻璃 -- the drawn 1 DIP line read as a ring around the pill. The painted themes
