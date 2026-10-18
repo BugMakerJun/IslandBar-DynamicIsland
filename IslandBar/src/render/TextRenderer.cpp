@@ -600,12 +600,10 @@ float TextWidthIn(IDWriteFactory3* factory, IDWriteTextFormat* format, const wch
 int BuildStatusRun(IDWriteFactory3* factory, const StatusRunFormats& formats, const wchar_t* weekday,
                    const wchar_t* day, const wchar_t* time, const wchar_t* sky,
                    const wchar_t* temperature, int weatherCode, StatusPiece* pieces, int capacity) {
-    // "10.18   16:03   14°": the compact date, the clock, the temperature -- the three values alone.
-    // The weekday, the sky word and the sun mark are deliberately not part of this line any more; the
-    // reference the user drew is exactly three values.
-    (void)weekday;
+    // "周日 10.18   16:03   ☀ 14°": the weekday and the compact date on the left, the temperature and
+    // its sun on the right, the clock alone in the middle. The sun is back -- the icon, not the "晴"
+    // word: the word is what made the old right-hand group long.
     (void)sky;
-    (void)weatherCode;
 
     int count = 0;
     const auto push = [&](const StatusPiece& piece) {
@@ -623,8 +621,15 @@ int BuildStatusRun(IDWriteFactory3* factory, const StatusRunFormats& formats, co
         piece.luminance = luminance;
         push(piece);
     };
-    pushText(day, formats.day, kStatusRun.groupSpaceDip, 0.92f);
-    pushText(time, formats.time, kStatusRun.groupSpaceDip, 1.0f);
+    pushText(weekday, formats.weekday, kStatusRun.groupGapDip, 0.88f);
+    pushText(day, formats.day, 0.0f, 0.92f);
+    pushText(time, formats.time, 0.0f, 1.0f);
+    StatusPiece sun;
+    sun.kind = StatusPiece::Kind::SkyMark;
+    sun.mark = island::SkyMarkForCode(weatherCode);
+    sun.widthDip = kStatusRun.glyphDip;
+    sun.afterDip = kStatusRun.glyphGapDip;
+    if (sun.mark != island::SkyMark::None) push(sun);
     pushText(temperature, formats.weather, 0.0f, 0.88f);
     return count;
 }
