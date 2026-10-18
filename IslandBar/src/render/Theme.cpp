@@ -56,8 +56,8 @@ const Theme kThemes[] = {
     //
     // THE LENS (2026-10-18): the real desktop behind the island, captured by platform/BackdropCapture and
     // bent by render/LensMaterial. The lens is the surface; a whisper of a 0.08/0.05 body keeps the pane
-    // from reading as a hole, and the 1 DIP rim (0.45) is the lit edge that makes the glass an object on a
-    // dark wallpaper. The body is not a film: the refraction still shows through 92%.
+    // from reading as a hole. There is NO drawn rim: the user saw the 1 DIP 0.45 line as a ring around the
+    // pill, and the body's own boundary plus the refraction are the edge the glass gets for free.
     //
     // THE NUMBERS come from the reference the user chose (shuding/liquid-glass): a flat centre, a narrow
     // band at the edge, and the round ends bending more than the straight top and bottom. On a 36 DIP
@@ -71,7 +71,7 @@ const Theme kThemes[] = {
     // the island.
     {L"\u73BB\u7483", {0.88f, 0.94f, 1.00f, 0.08f}, {0.78f, 0.89f, 1.00f, 0.05f}, 0.20f,
      {0.90f, 0.94f, 1.00f, 0.55f}, 0.30f, {0.15f, 0.45f, 0.85f, 0.95f}, {0.03f, 0.04f, 0.06f, 1.0f},
-     0.0f, 0.03f, 0.55f, 0.45f, 0.00f, {1.0f, 1.0f, 1.0f, 1.0f}, true},
+     0.0f, 0.03f, 0.55f, 0.00f, 0.00f, {1.0f, 1.0f, 1.0f, 1.0f}, true},
 };
 constexpr int kThemeCount = static_cast<int>(sizeof(kThemes) / sizeof(kThemes[0]));
 
