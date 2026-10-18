@@ -3024,11 +3024,12 @@ void TextRenderer::DrawTaskIcons(ID2D1DeviceContext2* context, const RoundedBox&
         IDWriteTextFormat* format = button.active ? appRowFormat_ : appFormat_;
         if (!format || !factory_) continue;
 
-        IDWriteTextLayout* layout = nullptr;
-        if (FAILED(factory_->CreateTextLayout(
-                button.title, static_cast<UINT32>(std::wcslen(button.title)), format,
-                titleBox.right - titleBox.left, lineHeight, &layout)) ||
-            !layout) {
+        // ONE LAYOUT PER DISTINCT TITLE, not one per icon per frame: the row is drawn sixty times a
+        // second and its titles change only when the windows do. The trimming is re-applied to the
+        // cached layout because the sign belongs to the call, not to the text.
+        IDWriteTextLayout* layout =
+            LayoutFor(button.title, format, titleBox.right - titleBox.left, lineHeight);
+        if (!layout) {
             continue;
         }
 
@@ -3050,7 +3051,7 @@ void TextRenderer::DrawTaskIcons(ID2D1DeviceContext2* context, const RoundedBox&
         if (brush) {
             context->DrawTextLayout(origin, layout, brush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
         }
-        layout->Release();
+        // No Release: the layout cache owns it (see TextRenderer::LayoutFor).
     }
 
     SafeRelease(&hoverBrush);
