@@ -286,7 +286,7 @@ bool TextRenderer::Initialize() {
         DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
         24.0f, L"zh-CN", &musicTitleFormat_);
     if (SUCCEEDED(hr)) {
-        musicTitleFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        musicTitleFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
         musicTitleFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         musicTitleFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
         trimWithEllipsis(musicTitleFormat_);
@@ -297,7 +297,7 @@ bool TextRenderer::Initialize() {
         DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
         14.0f, L"zh-CN", &musicSubtitleFormat_);
     if (SUCCEEDED(hr)) {
-        musicSubtitleFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        musicSubtitleFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
         musicSubtitleFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         musicSubtitleFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
         trimWithEllipsis(musicSubtitleFormat_);
@@ -310,7 +310,7 @@ bool TextRenderer::Initialize() {
         DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
         16.5f, L"zh-CN", &musicLyricFormat_);
     if (SUCCEEDED(hr)) {
-        musicLyricFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        musicLyricFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
         musicLyricFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         musicLyricFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
         trimWithEllipsis(musicLyricFormat_);
@@ -320,7 +320,7 @@ bool TextRenderer::Initialize() {
         DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
         14.0f, L"zh-CN", &musicLyricNextFormat_);
     if (SUCCEEDED(hr)) {
-        musicLyricNextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        musicLyricNextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
         musicLyricNextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         musicLyricNextFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
         trimWithEllipsis(musicLyricNextFormat_);
@@ -1937,9 +1937,8 @@ void TextRenderer::DrawMusicCard(ID2D1DeviceContext2* context, const RoundedBox&
                 if (secondaryBrush) context->DrawTextLayout(origin, layoutLine, secondaryBrush);
                 const float fraction = text.lyricProgress > 1.0f ? 1.0f : text.lyricProgress;
                 const float filled = metrics.widthIncludingTrailingWhitespace * fraction;
-                // The text is CENTRED in its rect, so the karaoke starts at the TEXT's left edge -- which
-                // the layout reports in `metrics.left` -- rather than at the rect's.
-                const float textLeft = layout.lyricCurrent.left + metrics.left;
+                // The line is left-aligned, so the karaoke starts at the rect's left edge.
+                const float textLeft = layout.lyricCurrent.left;
                 if (primaryBrush && fraction > 0.0f) {
                     context->PushAxisAlignedClip(
                         D2D1::RectF(textLeft, layout.lyricCurrent.top, textLeft + filled,
@@ -1961,13 +1960,13 @@ void TextRenderer::DrawMusicCard(ID2D1DeviceContext2* context, const RoundedBox&
         }
     } else if (secondaryBrush && musicLyricFormat_) {
         DrawTextIn(context, musicLyricFormat_, L"暂无歌词", layout.lyricCurrent, secondaryBrush,
-                   DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                   DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     }
     if (text.lyricNext && text.lyricNext[0] != '\0' && musicLyricNextFormat_) {
         wchar_t wideNext[512] = {};
         if (MultiByteToWideChar(CP_UTF8, 0, text.lyricNext, -1, wideNext, 512) > 0) {
             DrawTextIn(context, musicLyricNextFormat_, wideNext, layout.lyricNext, secondaryBrush,
-                       DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                       DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         }
     }
 
@@ -2005,6 +2004,40 @@ void TextRenderer::DrawMusicCard(ID2D1DeviceContext2* context, const RoundedBox&
         if (dark) dark->Release();
         if (dim) dim->Release();
         if (bright) bright->Release();
+    }
+
+    // --- 5d. the vertical lyric progress, beside the level meter --------
+    //
+    // Where the song is in the SHEET: the current line's index plus how far through that line it is,
+    // over the number of lines. A thin bar beside the meter -- the two read as one instrument panel at
+    // the card's right edge -- filled from the top, because this is a reading position, not a level.
+    if (layout.lyricProgress.right > layout.lyricProgress.left) {
+        const D2D1_ROUNDED_RECT track = {
+            D2D1::RectF(layout.lyricProgress.left, layout.lyricProgress.top,
+                        layout.lyricProgress.right, layout.lyricProgress.bottom),
+            1.5f, 1.5f};
+        ID2D1SolidColorBrush* progressTrack = nullptr;
+        if (SUCCEEDED(context->CreateSolidColorBrush(
+                D2D1::ColorF(primary.r, primary.g, primary.b, 0.08f * opacity), &progressTrack)) &&
+            progressTrack) {
+            context->FillRoundedRectangle(&track, progressTrack);
+            progressTrack->Release();
+        }
+        if (text.lyricCount > 0 && text.lyricIndex >= 0 && accentBrush) {
+            float fraction = (static_cast<float>(text.lyricIndex) + text.lyricProgress) /
+                             static_cast<float>(text.lyricCount);
+            if (fraction < 0.0f) fraction = 0.0f;
+            if (fraction > 1.0f) fraction = 1.0f;
+            if (fraction > 0.0f) {
+                const float height =
+                    (layout.lyricProgress.bottom - layout.lyricProgress.top) * fraction;
+                const D2D1_ROUNDED_RECT filled = {
+                    D2D1::RectF(layout.lyricProgress.left, layout.lyricProgress.top,
+                                layout.lyricProgress.right, layout.lyricProgress.top + height),
+                    1.5f, 1.5f};
+                context->FillRoundedRectangle(&filled, accentBrush);
+            }
+        }
     }
 
     // --- 6. times and progress ------------------------------------------

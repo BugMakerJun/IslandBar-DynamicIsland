@@ -281,6 +281,10 @@ public:
         // no peak yet, and the card draws only the bar's track.
         float level = 0.0f;
         bool levelKnown = false;
+        // The whole-sheet reading position for the thin vertical lyric progress bar: the current line's
+        // index and the sheet's line count. Count 0 draws only the track.
+        int lyricIndex = -1;
+        int lyricCount = 0;
     };
 
     // Draws the now-playing card, laid out like the Windows 11 media flyout: blurred

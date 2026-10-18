@@ -4199,11 +4199,15 @@ static void FillHoverPreview(BarRuntime& runtime, island::FrameState& frame, isl
     // two cannot disagree; the current line itself is `lyricLine`, already set above.
     frame.lyricLineNext = nullptr;
     frame.lyricProgress = 0.0f;
+    frame.lyricIndex = -1;
+    frame.lyricCount = 0;
     if (runtime.currentLyrics && !runtime.currentLyrics->Empty() &&
         runtime.lastLyricIndex >= 0) {
+        frame.lyricCount = runtime.currentLyrics->count;
         const island::LyricLine* current = runtime.currentLyrics->At(runtime.lastLyricIndex);
         const island::LyricLine* next = runtime.currentLyrics->At(runtime.lastLyricIndex + 1);
         if (current) {
+            frame.lyricIndex = runtime.lastLyricIndex;
             frame.lyricLineNext = next ? next->text : nullptr;
             const long long start = current->timeMs;
             const long long end =

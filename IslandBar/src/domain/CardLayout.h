@@ -553,6 +553,7 @@ struct MusicCardLayout {
     RectF lyricCurrent;    // the current lyric line, beside the cover
     RectF lyricNext;       // the line after it
     RectF levelBar;        // the thin output-level bar at the card's right edge
+    RectF lyricProgress;   // the thin vertical reading position beside it
     RectF elapsed;         // "01:33", left of the bar
     RectF remaining;       // "05:40", right of the bar
     RectF progress;        // the bar itself
@@ -1642,7 +1643,14 @@ inline MusicCardLayout MusicCardFor(const RoundedBox& box) {
     layout.levelBar.left = layout.levelBar.right - 6.0f;
     layout.levelBar.top = layout.artwork.top;
     layout.levelBar.bottom = layout.artwork.bottom;
-    layout.title.right = layout.levelBar.left - 10.0f;
+
+    // A second, thinner vertical bar beside it: the reading position in the SHEET. Two thin bars read as
+    // one instrument panel at the card's right edge, and the text now stops before both of them.
+    layout.lyricProgress.right = layout.levelBar.left - 8.0f;
+    layout.lyricProgress.left = layout.lyricProgress.right - 3.0f;
+    layout.lyricProgress.top = layout.levelBar.top;
+    layout.lyricProgress.bottom = layout.levelBar.bottom;
+    layout.title.right = layout.lyricProgress.left - 10.0f;
     layout.subtitle.right = layout.title.right;
     layout.lyricCurrent.right = layout.title.right;
     layout.lyricNext.right = layout.title.right;

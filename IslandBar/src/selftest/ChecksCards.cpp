@@ -968,6 +968,10 @@ void TestMusicCardLayout() {
           L"the level bar is inside the right padding");
     Check(layout.title.right <= layout.levelBar.left,
           L"the title stops before the level bar");
+    Check(insideCard(layout.lyricProgress) && layout.lyricProgress.right > layout.lyricProgress.left,
+          L"the lyric progress bar is inside the card");
+    Check(layout.title.right <= layout.lyricProgress.left,
+          L"the title stops before the lyric progress bar");
 
     // The vertical order is the reference image's, and it is what broke before: the
     // time row used to overlap the cover.

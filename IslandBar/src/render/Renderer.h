@@ -471,6 +471,10 @@ struct FrameState {
     // itself; a null next line and a zero progress mean "no lyrics", which the card prints as 暂无歌词.
     const char* lyricLineNext = nullptr;
     float lyricProgress = 0.0f;
+    // The reading position in the SHEET, for the thin vertical lyric progress bar beside the level
+    // meter: the current line's index and the sheet's line count. Count 0 means no lyrics (track only).
+    int lyricIndex = -1;
+    int lyricCount = 0;
     // The line the NOTICE STRIP shows: the sender and the message, in the one line the strip has room for.
     //
     // A separate field rather than a reuse of `lyricLine`, because the two say different things and the
