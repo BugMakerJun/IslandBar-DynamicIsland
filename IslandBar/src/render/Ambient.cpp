@@ -161,10 +161,13 @@ void DrawAmbient(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, A
         }
 
         case AmbientKind::Sunset: {
+            // FROM THE TOP, and across the whole pill: the sky's light comes from above, so the warm
+            // band starts at the top edge and fades towards the bottom. It used to rise from the
+            // bottom edge, which read as a coloured strip under the island rather than as light in it.
             const D2D1_GRADIENT_STOP stops[3] = {
-                {0.0f, D2D1::ColorF(1.0f, 0.45f, 0.20f, 0.0f)},
-                {0.55f, D2D1::ColorF(1.0f, 0.48f, 0.22f, 0.16f * opacity)},
-                {1.0f, D2D1::ColorF(1.0f, 0.60f, 0.26f, 0.32f * opacity)},
+                {0.0f, D2D1::ColorF(1.0f, 0.55f, 0.28f, 0.30f * opacity)},
+                {0.45f, D2D1::ColorF(1.0f, 0.46f, 0.28f, 0.14f * opacity)},
+                {1.0f, D2D1::ColorF(1.0f, 0.40f, 0.25f, 0.0f)},
             };
             ID2D1GradientStopCollection* collection = nullptr;
             if (SUCCEEDED(context->CreateGradientStopCollection(stops, 3, &collection)) && collection) {
@@ -179,8 +182,9 @@ void DrawAmbient(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape, A
                     brush->Release();
                 }
             }
-            DrawGlow(context, shape, 0.5f, 0.98f, 0.55f,
-                     D2D1::ColorF(1.0f, 0.72f, 0.38f, 0.26f * opacity));
+            // The sun itself, low in the top-right corner.
+            DrawGlow(context, shape, 0.74f, 0.02f, 0.52f,
+                     D2D1::ColorF(1.0f, 0.72f, 0.38f, 0.22f * opacity));
             break;
         }
 
