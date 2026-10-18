@@ -3554,7 +3554,7 @@ void TestMusicCardLayout() {
                 // icons, and the old list stopped at ten -- exactly the number five columns and two rows
                 // hold -- so the grid could overflow the card and nothing said so until a photograph did
                 // ("托盘卡片里没有显示全啊").
-                for (int count : {1, 3, 6, 10, 16, kMaxTrayIcons}) {
+                for (int count : {1, 3, 6, 7, 10, 16, kMaxTrayIcons}) {
                     const TrayPageLayout page = TrayPageFor(trayCard, count);
                     bool inside = page.count == count && page.columns > 0 &&
                                   page.columns <= kTrayPageMaxColumns;
@@ -3588,6 +3588,18 @@ void TestMusicCardLayout() {
 
                     Check(page.cells[0].top > trayCard.rect.top + 30.0f,
                           L"the grid starts below the page's heading", trayDetail);
+
+                    // 7 icons on this card is 5+2, and the incomplete row must be CENTRED. Left-aligning
+                    // it put two cells against the left, three empty columns on the right, and read as a
+                    // row that had lost icons. The two gaps either side of the short row have to match.
+                    if (count == 7 && page.columns == 5) {
+                        const float rowLeft = page.cells[5].left;
+                        const float rowRight = page.cells[6].right;
+                        const float fullLeft = page.cells[0].left;
+                        const float fullRight = page.cells[4].right;
+                        Check(std::abs((rowLeft - fullLeft) - (fullRight - rowRight)) <= 0.51f,
+                              L"the tray grid's incomplete last row is centred", trayDetail);
+                    }
                 }
             }
 
