@@ -2369,7 +2369,7 @@ void TextRenderer::DrawTaskIcons(ID2D1DeviceContext2* context, const RoundedBox&
     ID2D1SolidColorBrush* hoverBrush = nullptr;
     ID2D1SolidColorBrush* textBrush = nullptr;
     ID2D1SolidColorBrush* activeTextBrush = nullptr;
-    const D2D1_COLOR_F hoverColour = PillInk(0.16f * opacity);
+    const D2D1_COLOR_F hoverColour = D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.18f * opacity);
     const D2D1_COLOR_F textColour = PillInk(0.84f * opacity);
     const D2D1_COLOR_F activeColour = PillInk(0.98f * opacity);
     context->CreateSolidColorBrush(hoverColour, &hoverBrush);
@@ -2458,8 +2458,10 @@ void TextRenderer::DrawTaskIcons(ID2D1DeviceContext2* context, const RoundedBox&
             island::DrawLensRimBand(context, rounded, island::CurrentTheme(), opacity * appear);
         }
 
-        // The window in front is marked by a lighter wash ON TOP of the background, so the mark is
-        // visible whatever the island's own colour happens to be.
+        // The window in front is marked by a LIGHTER wash ON TOP of the glass, so the mark is visible
+        // whatever the island's own colour happens to be. White, not the ink: on a light glass PillInk is
+        // black, and a black wash turned the active button into the black plate the user saw -- with the
+        // black title on it.
         if (button.active && hoverBrush) {
             const float radius = (box.bottom - box.top) * 0.5f;
             const D2D1_ROUNDED_RECT pill = {
