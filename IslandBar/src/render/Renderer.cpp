@@ -1198,6 +1198,19 @@ void Renderer::RenderFrame(const FrameState& frame) {
                 const float sampled = SampleUnderCard(area, scale_);
                 if (sampled >= 0.0f) cardLuminance = sampled;
                 island::SetCardInkBackdrop(cardLuminance);
+
+                // ... AND THE CARD'S OWN SKY. The cards are the same glass as the island, so they get
+                // the same weather and the same time of day: one kind and one phase, decided exactly
+                // as the island's ambient is (see the status-line block above).
+                SYSTEMTIME localNow = {};
+                GetLocalTime(&localNow);
+                const int nowMinutes = static_cast<int>(localNow.wHour) * 60 +
+                                       static_cast<int>(localNow.wMinute);
+                const float phase = static_cast<float>(GetTickCount64() % 3600000ull) / 1000.0f;
+                island::SetCardAmbient(
+                    island::AmbientKindFor(frame.statusCode, nowMinutes, frame.sunriseMinutes,
+                                           frame.sunsetMinutes),
+                    phase);
             }
 
             // ONE CARD AT A TIME, WHICHEVER OWNS IT -- and every one of the three is drawn the same way.

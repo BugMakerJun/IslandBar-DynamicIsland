@@ -1,4 +1,4 @@
-﻿// =====================================================================
+// =====================================================================
 //  Ambient.cpp
 //  The island's sky. See Ambient.h for why it exists and what decides it.
 // =====================================================================
@@ -18,6 +18,11 @@ float Fract(float value) {
 D2D1_COLOR_F WithAlpha(const D2D1_COLOR_F& colour, float alpha) {
     return D2D1::ColorF(colour.r, colour.g, colour.b, alpha);
 }
+
+// The card's sky, set once per frame by the renderer (see Ambient.h): the same kind and phase as the
+// island's, so the two surfaces cannot show different weather.
+AmbientKind g_cardAmbientKind = AmbientKind::ClearDay;
+float g_cardAmbientPhase = 0.0f;
 
 // A soft radial pool, clipped to the pill. Used for the sun, the afterglow's horizon, the moon and the
 // cloud shadows: one brush, one fill, no particles.
@@ -260,6 +265,16 @@ void DrawAmbient(ID2D1DeviceContext* context, const D2D1_ROUNDED_RECT& shape, Am
         context->PopLayer();
         clip->Release();
     }
+}
+
+void SetCardAmbient(AmbientKind kind, float phaseSeconds) {
+    g_cardAmbientKind = kind;
+    g_cardAmbientPhase = phaseSeconds;
+}
+
+void DrawCardAmbient(ID2D1DeviceContext* context, const D2D1_ROUNDED_RECT& shape, float opacity,
+                     const Theme& theme) {
+    DrawAmbient(context, shape, g_cardAmbientKind, g_cardAmbientPhase, opacity, theme);
 }
 
 }  // namespace island

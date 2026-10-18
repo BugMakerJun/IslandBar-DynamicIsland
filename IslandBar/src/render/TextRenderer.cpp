@@ -2,6 +2,7 @@
 //  TextRenderer.cpp
 // =====================================================================
 #include "render/TextRenderer.h"
+#include "render/Ambient.h"   // the card's sky: the same weather the island is showing
 #include "render/Theme.h"   // the material: the card's surface, the edge, the accent and the ink
 #include "render/GlassMaterial.h"   // the shadow under a card and the grain over it
 #include "shell/Weather.h"   // SkyMark: the weather mark the status line draws, per WMO code
@@ -3047,6 +3048,7 @@ void FillCardSurface(ID2D1DeviceContext2* context, const RoundedBox& box, float 
     // rim band and caustic are NOT used here any more: they are the pill's material, and at 320x320 they
     // read as a coloured strip rather than as glass.
     if (theme.lens) {
+        island::DrawCardAmbient(context, rounded, opacity, theme);
         island::DrawCardCrystal(context, rounded, opacity);
         return;
     }

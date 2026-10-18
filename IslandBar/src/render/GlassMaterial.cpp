@@ -766,21 +766,8 @@ void DrawCardCrystal(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shap
                      D2D1::Point2F(shape.rect.left, shape.rect.bottom - 6.0f));
     }
 
-    // 3. THE DIAGONAL SHEEN -- the reference's one sharp band: transparent until 40%, a 22% shoulder,
-    //    a 60% core at the middle, the shoulder again, transparent by 60%. Corner to corner, so the
-    //    band lies on the diagonal without a transform.
-    {
-        const D2D1_GRADIENT_STOP stops[6] = {
-            {0.00f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.0f)},
-            {0.40f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.0f)},
-            {0.48f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.22f * opacity)},
-            {0.50f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.60f * opacity)},
-            {0.52f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.22f * opacity)},
-            {0.60f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.0f)},
-        };
-        fillGradient(stops, 6, D2D1::Point2F(shape.rect.left, shape.rect.top),
-                     D2D1::Point2F(shape.rect.right, shape.rect.bottom));
-    }
+    // 3. NOTHING ELSE: the reference's diagonal sheen was drawn here first and removed at the user's
+    //    request -- on a 320 DIP card it read as a beam lying across the icons, not as glass.
 
     if (clip) {
         context->PopLayer();

@@ -1,12 +1,12 @@
-﻿// =====================================================================
+// =====================================================================
 //  Ambient.h
 //  The island's sky: rain that falls across the glass, a sunset that
 //  glows from the bottom, stars at night, a slow sun in the afternoon.
 //
-//  WHY. The is land has a real weather code and the site's real sunrise and
+//  WHY. The island has a real weather code and the site's real sunrise and
 //  sunset, and a glass surface that shows nothing of either. The request was
-//  "鑳戒笉鑳芥牴鎹ぉ姘斿拰鏃堕棿鍘诲彉鍖栵紝渚嬪涓嬮洦 鐏靛姩宀涗笂涔熶笅灏忛洦锛屾櫞澶╂牴鎹椂闂村嚭鏅氶湠涔嬬被".
-//
+//  "can it change with the weather and the time -- rain on the island when it rains, an afterglow at
+//  dusk when it is clear".
 //  WHAT DECIDES THE LOOK, in one pure function so it can be asserted:
 //  the WMO code first (precipitation wins over the sky -- rain at night is
 //  still rain), then the clear sky is split by the REAL sunset window into
@@ -48,6 +48,14 @@ AmbientKind AmbientKindFor(int weatherCode, int nowMinutes, int sunriseMinutes, 
 // content strength (0 hides the layer). Drawn clipped to `shape`.
 void DrawAmbient(ID2D1DeviceContext* context, const D2D1_ROUNDED_RECT& shape, AmbientKind kind,
                  float phaseSeconds, float opacity, const Theme& theme);
+
+// The card's sky: the SAME kind and phase as the island's, set once per frame by the renderer. The cards
+// are the same glass and the user asked for the same weather in them -- "改成和灵动岛一样根据天气 时间
+// 变化" -- so the effect is drawn inside the card's shape, under its facets and words, instead of a fixed
+// decoration that would disagree with the bar two inches above it.
+void SetCardAmbient(AmbientKind kind, float phaseSeconds);
+void DrawCardAmbient(ID2D1DeviceContext* context, const D2D1_ROUNDED_RECT& shape, float opacity,
+                     const Theme& theme);
 
 }  // namespace island
 
