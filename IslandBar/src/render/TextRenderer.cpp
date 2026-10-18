@@ -804,8 +804,9 @@ float TextRenderer::MeasureStatusLine(const wchar_t* weekday, const wchar_t* day
     StatusPiece pieces[12] = {};
     const int count = BuildStatusRun(factory_, formats, weekday, day, time, sky, temperature,
                                      weatherCode, pieces, 12);
-    // TWO ROWS: the date and the weather across the top corners, the time in the middle. The box has to
-    // hold the wider of the two, plus the 4 DIP corner padding on each side.
+    // ONE ROW, THREE ZONES: the date on the left, the time in the CENTRE, the weather on the right, all
+    // vertically centred. The box has to hold all three and the 12 DIP gaps between them, plus the 4 DIP
+    // corner padding on each side.
     int timeIndex = -1;
     for (int i = 0; i < count; ++i) {
         if (pieces[i].format == formats.time) {
@@ -818,9 +819,7 @@ float TextRenderer::MeasureStatusLine(const wchar_t* weekday, const wchar_t* day
     for (int i = 0; i < timeIndex; ++i) dateWidth += pieces[i].widthDip + pieces[i].afterDip;
     float weatherWidth = 0.0f;
     for (int i = timeIndex + 1; i < count; ++i) weatherWidth += pieces[i].widthDip + pieces[i].afterDip;
-    const float topRow = dateWidth + weatherWidth + 8.0f;
-    const float timeRow = pieces[timeIndex].widthDip + 8.0f;
-    return topRow > timeRow ? topRow : timeRow;
+    return dateWidth + 12.0f + pieces[timeIndex].widthDip + 12.0f + weatherWidth + 8.0f;
 }
 
 // The decoded bitmap for one tray icon, cached until the list's revision changes.
@@ -1162,8 +1161,10 @@ void TextRenderer::DrawStatusLine(ID2D1DeviceContext2* context, const RoundedBox
     };
 
     if (kStatusExtrasVisible) {
-        const float topY = box.rect.top + 1.0f;
-        const float topHeight = 12.0f;
+        // The date and the reading sit on the SAME horizontal line as the time now -- small and quiet at
+        // the two ends, all vertically centred. They used to be in the top corners; "要上下居中".
+        const float sideY = centreY - 6.0f;
+        const float sideHeight = 12.0f;
 
         float dateWidth = 0.0f;
         for (int i = 0; i < timeIndex; ++i) dateWidth += pieces[i].widthDip + pieces[i].afterDip;
@@ -1172,12 +1173,12 @@ void TextRenderer::DrawStatusLine(ID2D1DeviceContext2* context, const RoundedBox
 
         float x = box.rect.left + 4.0f;
         for (int i = 0; i < timeIndex; ++i) {
-            drawPiece(pieces[i], x, topY, topHeight);
+            drawPiece(pieces[i], x, sideY, sideHeight);
             x += pieces[i].widthDip + pieces[i].afterDip;
         }
         x = box.rect.right - 4.0f - weatherWidth;
         for (int i = timeIndex + 1; i < count; ++i) {
-            drawPiece(pieces[i], x, topY, topHeight);
+            drawPiece(pieces[i], x, sideY, sideHeight);
             x += pieces[i].widthDip + pieces[i].afterDip;
         }
     }
