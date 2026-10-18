@@ -315,12 +315,13 @@ bool IslandWindow::TakeRightClick() {
 }
 
 void IslandWindow::SetStartState(bool pageOpen, int page, int pinCount, int listCount,
-                                 int pickerScrollRow) {
+                                 int pickerScrollRow, bool allAppsMode) {
     startPageOpen_ = pageOpen;
     startPage_ = page;
     startPinCount_ = pinCount > 0 ? pinCount : 0;
     startListCount_ = listCount > 0 ? listCount : 0;
     startPickerScroll_ = pickerScrollRow > 0 ? pickerScrollRow : 0;
+    startAllApps_ = allAppsMode;
 }
 
 void IslandWindow::ScrollStartPicker(int notches) {
@@ -331,7 +332,15 @@ void IslandWindow::ScrollStartPicker(int notches) {
     // How many rows fit: the same layout the drawing and the hit test use, from the card this window is
     // told the position of.
     int rowsOnScreen = 1;
-    if (cardLeftDip_ > 0.0f) {
+    int lastFirstRow = 0;
+    if (startAllApps_) {
+        // The 全部 grid scrolls in whole ROWS of `kStartColumns`: its visible height is the layout's own
+        // `kStartRows` rows, and the last first-row is the one whose final row is still on screen.
+        const int totalRows =
+            (startListCount_ + island::kStartColumns - 1) / island::kStartColumns;
+        rowsOnScreen = island::kStartRows;
+        lastFirstRow = totalRows - rowsOnScreen;
+    } else if (cardLeftDip_ > 0.0f) {
         const RoundedBox card =
             PlacedCardFor(BoxForState(IslandState::Collapsed, CurrentAnchor()), cardLeftDip_);
         const island::StartPageLayout layout = island::StartPageFor(card);
@@ -339,10 +348,12 @@ void IslandWindow::ScrollStartPicker(int notches) {
             rowsOnScreen =
                 static_cast<int>((layout.grid.bottom - layout.grid.top) / island::kStartRowHeight);
         }
+        lastFirstRow = startListCount_ - (rowsOnScreen + 1);
+    } else {
+        lastFirstRow = startListCount_ - (rowsOnScreen + 1);
     }
-    const int lastFirstRow = startListCount_ - (rowsOnScreen + 1);
     if (lastFirstRow > 0 && moved > lastFirstRow) moved = lastFirstRow;
-    if (startListCount_ <= rowsOnScreen + 1) moved = 0;
+    if (lastFirstRow <= 0) moved = 0;
     startPickerScroll_ = moved;
 
     // ... and the answer to "which row is under the pointer" is recomputed HERE rather than left for the
@@ -1348,8 +1359,12 @@ void IslandWindow::UpdatePointerState() {
                     startHit_.index = row;
                 }
             } else if (startPage_ == 1) {
-                const int row = island::StartPickerRowAt(card, startPickerScroll_, startListCount_,
-                                                         localX, localY);
+                const int row =
+                    startAllApps_
+                        ? island::StartPickerCellAt(card, startPickerScroll_, startListCount_, localX,
+                                                    localY)
+                        : island::StartPickerRowAt(card, startPickerScroll_, startListCount_, localX,
+                                                   localY);
                 if (row >= 0) {
                     startHit_.target = StartHitTarget::PickerRow;
                     startHit_.index = row;

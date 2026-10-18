@@ -3538,10 +3538,25 @@ static void FillStartCardFrame(island::FrameState& frame, island::BarState& bar,
         }
         card.pinIcons = bar.startIconPointers.empty() ? nullptr : bar.startIconPointers.data();
         card.pinIconSizes = bar.startIconSizes.empty() ? nullptr : bar.startIconSizes.data();
+
+        // ... and the same for the all-applications grid, which draws every entry of the list as a tile.
+        // Rebuilt per frame for the same reason: the frame carries pointers, and the storage is here.
+        bar.startListIconPointers.clear();
+        bar.startListIconSizes.clear();
+        for (int i = 0; i < bar.startAppCount; ++i) {
+            size_t size = 0;
+            const uint8_t* png = systems.startApps.ListIconPng(i, &size);
+            bar.startListIconPointers.push_back(png);
+            bar.startListIconSizes.push_back(size);
+        }
+        card.listIcons =
+            bar.startListIconPointers.empty() ? nullptr : bar.startListIconPointers.data();
+        card.listIconSizes =
+            bar.startListIconSizes.empty() ? nullptr : bar.startListIconSizes.data();
     }
     // ... and the window, which answers "what is the pointer on" with the same geometry.
     systems.window.SetStartState(startPageShown, bar.startPageState, bar.startPinCount, bar.startAppCount,
-                         bar.startPickerScroll);
+                         bar.startPickerScroll, bar.startAllApps);
 }
 
 // --- the panel content, level by level ---

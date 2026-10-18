@@ -280,6 +280,11 @@ int StartApps::RefreshList() {
     std::sort(list_.begin(), list_.end(), NameBefore);
     ++revision_;
     LogLine(L"  start: %d application(s) in shell:AppsFolder", static_cast<int>(list_.size()));
+    // THE ALL-APPLICATIONS GRID IS ICONS TOO, so the list's own images are resolved on a worker right
+    // after the list: 121 shell images is about a second, and each one is published as it arrives (the
+    // first screenful is on screen long before the last). This is the same trade the pins make.
+    listIcons_.assign(list_.size(), std::vector<uint8_t>());
+    ResolveListIconsAsync();
     return static_cast<int>(list_.size());
 }
 
@@ -412,6 +417,28 @@ const uint8_t* StartApps::PinIconPng(int index, size_t* sizeOut) const {
     if (icon.empty()) return nullptr;
     if (sizeOut) *sizeOut = icon.size();
     return icon.data();
+}
+
+const uint8_t* StartApps::ListIconPng(int index, size_t* sizeOut) const {
+    if (sizeOut) *sizeOut = 0;
+    if (index < 0 || index >= static_cast<int>(list_.size())) return nullptr;
+    if (index >= static_cast<int>(listIcons_.size())) return nullptr;
+    const std::vector<uint8_t>& icon = listIcons_[static_cast<size_t>(index)];
+    if (icon.empty()) return nullptr;
+    if (sizeOut) *sizeOut = icon.size();
+    return icon.data();
+}
+
+void StartApps::ResolveListIconsAsync() {
+    std::thread([this]() {
+        for (size_t i = 0; i < list_.size(); ++i) {
+            std::vector<uint8_t> png;
+            if (!StartAppIconPng(list_[i].target, 32, &png)) continue;
+            if (i >= listIcons_.size()) return;   // the list was replaced under us
+            listIcons_[i] = std::move(png);
+            ++iconRevision_;                      // the grid re-decodes as each cell arrives
+        }
+    }).detach();
 }
 
 void StartApps::ResolveIconAsync(const wchar_t* target) {

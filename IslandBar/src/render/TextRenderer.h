@@ -140,6 +140,9 @@ public:
         const StartApp* list = nullptr;
         int listCount = 0;
         int pickerScrollRow = 0;
+        // One PNG per entry of `list`, for the all-applications grid (the text picker ignores them).
+        const uint8_t* const* listIcons = nullptr;
+        const size_t* listIconSizes = nullptr;
 
         // 0 = the pins, 1 = the picker, 2 = the power list. A page rather than three flags, because only
         // one of them can be showing and the hit tests have to ask the same question the drawing did.
@@ -788,6 +791,7 @@ private:
     ID2D1SolidColorBrush* BrushFor(ID2D1DeviceContext2* context, const D2D1_COLOR_F& colour);
     std::unordered_map<unsigned, ID2D1SolidColorBrush*> brushCache_;
     StartBitmap startPinBitmaps_[24];   // as many as can be on screen at once, and then some
+    StartBitmap startListBitmaps_[24];  // the same, for the all-applications grid
     StartBitmap startAvatarBitmap_;
 
     IDWriteTextFormat*   dateFormat_  = nullptr;

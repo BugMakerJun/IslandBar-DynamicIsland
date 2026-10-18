@@ -3860,11 +3860,14 @@ void TextRenderer::DrawStartPage(ID2D1DeviceContext2* context, const RoundedBox&
     ID2D1SolidColorBrush* warmBrush = nullptr;
     ID2D1SolidColorBrush* washBrush = nullptr;
     ID2D1SolidColorBrush* lineBrush = nullptr;
+    ID2D1SolidColorBrush* borderBrush = nullptr;
     context->CreateSolidColorBrush(ink, &inkBrush);
     context->CreateSolidColorBrush(dim, &dimBrush);
     context->CreateSolidColorBrush(warm, &warmBrush);
     context->CreateSolidColorBrush(CardInk(0.10f * opacity), &washBrush);
     context->CreateSolidColorBrush(CardInk(0.07f * opacity), &lineBrush);
+    // The power button's edge: a touch stronger than the hairlines, because it outlines a BUTTON.
+    context->CreateSolidColorBrush(CardInk(0.22f * opacity), &borderBrush);
 
     const auto fillRounded = [&](const RectF& rect, float radius, ID2D1SolidColorBrush* brush) {
         if (!brush) return;
@@ -3920,6 +3923,61 @@ void TextRenderer::DrawStartPage(ID2D1DeviceContext2* context, const RoundedBox&
             }
         }
     } else if (text.page == 1) {
+        if (text.allAppsMode) {
+            // --- THE ALL-APPLICATIONS GRID: every application as an icon and a name, the same 6-column
+            // grid the pins use. The list's own images are resolved on a worker (StartApps); a cell whose
+            // image has not arrived draws the same quiet square a pin does. The scroll is in ROWS.
+            const int columns = island::kStartColumns;
+            const int visibleRows = island::kStartRows;
+            for (int visible = 0; visible < visibleRows * columns; ++visible) {
+                const int index = text.pickerScrollRow * columns + visible;
+                if (index < 0 || index >= text.listCount) break;
+                const RectF cell = island::StartPinCellFor(layout, visible);
+                if (cell.right <= cell.left) continue;
+                fillWash(cell, 10.0f, washAt(text.rowWashes, index, text.hoveredPickerRow));
+                const uint8_t* png = text.listIcons ? text.listIcons[index] : nullptr;
+                const size_t pngSize = text.listIconSizes ? text.listIconSizes[index] : 0;
+                ID2D1Bitmap1* icon =
+                    StartBitmapFor(context, &startListBitmaps_[visible], png, pngSize);
+                const float iconSide = 28.0f;
+                const float centreX = (cell.left + cell.right) * 0.5f;
+                const float iconTop = cell.top + 5.0f;
+                if (icon) {
+                    const D2D1_RECT_F target =
+                        D2D1::RectF(centreX - iconSide * 0.5f, iconTop, centreX + iconSide * 0.5f,
+                                    iconTop + iconSide);
+                    context->DrawBitmap(icon, &target, opacity,
+                                        D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
+                } else if (lineBrush) {
+                    const RectF placeholder = {centreX - iconSide * 0.5f, iconTop,
+                                               centreX + iconSide * 0.5f, iconTop + iconSide};
+                    fillRounded(placeholder, 6.0f, lineBrush);
+                }
+                if (startLabelFormat_ && inkBrush && text.list) {
+                    const D2D1_RECT_F target =
+                        D2D1::RectF(cell.left + 2.0f, iconTop + iconSide + 1.0f, cell.right - 2.0f,
+                                    cell.bottom);
+                    context->DrawTextW(text.list[index].name,
+                                       static_cast<UINT32>(std::wcslen(text.list[index].name)),
+                                       startLabelFormat_, target, inkBrush);
+                }
+            }
+            // The scroll bar, sized in whole grid rows rather than in the text list's rows.
+            if (text.listCount > 0 && lineBrush) {
+                const int totalRows = (text.listCount + columns - 1) / columns;
+                const float gridHeight = layout.grid.bottom - layout.grid.top;
+                const float visibleFraction =
+                    static_cast<float>(visibleRows) / static_cast<float>(totalRows > 0 ? totalRows : 1);
+                const float barHeight = std::max(24.0f, gridHeight * visibleFraction);
+                const float maxRow = static_cast<float>(std::max(1, totalRows - visibleRows));
+                const float travelled =
+                    layout.grid.top + (gridHeight - barHeight) *
+                                          (static_cast<float>(text.pickerScrollRow) / maxRow);
+                const RectF bar = {layout.grid.right + 6.0f, travelled, layout.grid.right + 9.0f,
+                                   travelled + barHeight};
+                fillRounded(bar, 1.5f, lineBrush);
+            }
+        } else {
         // --- the picker: every application the shell offers, one per row ---------------------------
         const int rowsOnScreen =
             static_cast<int>((layout.grid.bottom - layout.grid.top) / island::kStartRowHeight);
@@ -3967,6 +4025,7 @@ void TextRenderer::DrawStartPage(ID2D1DeviceContext2* context, const RoundedBox&
             const RectF bar = {layout.grid.right + 6.0f, travelled, layout.grid.right + 9.0f,
                                travelled + barHeight};
             fillRounded(bar, 1.5f, lineBrush);
+        }
         }
     } else {
         // --- the pins, which start empty -----------------------------------------------------------
@@ -4123,13 +4182,19 @@ void TextRenderer::DrawStartPage(ID2D1DeviceContext2* context, const RoundedBox&
         }
     }
 
-    // The power button: a wash while the pointer is on it (or while its own list is up), and the power
-    // rune -- the glyph the shell's own Start uses, from the icon font the bar already draws with. With the
-    // picker up the same slot is the way out, so it draws a multiplication sign instead.
+    // The power button: the reference's circular action button -- a faint body with a 1px edge, brighter
+    // while the pointer is on it (or while its own list is up) -- and the power rune, drawn as geometry.
     {
-        if (washBrush && (text.powerButtonHovered || text.page == 2)) {
-            fillRounded(layout.powerButton, 8.0f, washBrush);
+        const float cx = (layout.powerButton.left + layout.powerButton.right) * 0.5f;
+        const float cy = (layout.powerButton.top + layout.powerButton.bottom) * 0.5f;
+        const D2D1_ELLIPSE circle = D2D1::Ellipse(
+            D2D1::Point2F(cx, cy), (layout.powerButton.right - layout.powerButton.left) * 0.5f,
+            (layout.powerButton.bottom - layout.powerButton.top) * 0.5f);
+        if (washBrush) context->FillEllipse(&circle, washBrush);
+        if ((text.powerButtonHovered || text.page == 2) && borderBrush) {
+            context->FillEllipse(&circle, borderBrush);
         }
+        if (borderBrush) context->DrawEllipse(&circle, borderBrush, 1.0f);
         if (text.page == 1) {
             // The way out of the picker: a multiplication sign, in the text font, where the power button
             // is. Two marks in one place, chosen by the page -- which is what the slot means.
@@ -4138,45 +4203,35 @@ void TextRenderer::DrawStartPage(ID2D1DeviceContext2* context, const RoundedBox&
             // THE POWER MARK, DRAWN AS GEOMETRY, for the reason the Start button's mark is: no glyph to get
             // wrong and nothing to fail to load. That rule was earned here again -- the icon font's power
             // codepoint (E7E8) came out as an empty box on this machine, photographed, and a symbol that is
-            // the whole meaning of a button cannot be a thing that might not be there.
-            const float cx = (layout.powerButton.left + layout.powerButton.right) * 0.5f;
-            const float cy = (layout.powerButton.top + layout.powerButton.bottom) * 0.5f;
+            // the whole meaning of a button cannot be a thing that might not be there. The bright ink, not
+            // the dim one, for the same reason.
             const float radius = 6.5f;
             ID2D1Factory* factory = nullptr;
             context->GetFactory(&factory);
-            if (factory && dimBrush) {
-                ID2D1EllipseGeometry* ring = nullptr;
-                factory->CreateEllipseGeometry(D2D1::Ellipse(D2D1::Point2F(cx, cy), radius, radius),
-                                               &ring);
-                if (ring) {
-                    // A ring with a gap at the top, and a stem through the gap: the power symbol. Drawn as
-                    // an arc rather than a full circle so the gap is real rather than a second stroke in the
-                    // card's own colour.
-                    ID2D1PathGeometry* arc = nullptr;
-                    ID2D1GeometrySink* sink = nullptr;
-                    if (SUCCEEDED(factory->CreatePathGeometry(&arc)) && arc &&
-                        SUCCEEDED(arc->Open(&sink)) && sink) {
-                        const float start = -1.15f;   // radians, just right of the top
-                        const float end = start + 5.42f;   // all the way round, back to just left of it
-                        sink->BeginFigure(D2D1::Point2F(cx + radius * std::sin(start),
-                                                        cy - radius * std::cos(start)),
-                                          D2D1_FIGURE_BEGIN_HOLLOW);
-                        const int steps = 24;
-                        for (int i = 1; i <= steps; ++i) {
-                            const float t = start + (end - start) * static_cast<float>(i) / steps;
-                            sink->AddLine(D2D1::Point2F(cx + radius * std::sin(t),
-                                                        cy - radius * std::cos(t)));
-                        }
-                        sink->EndFigure(D2D1_FIGURE_END_OPEN);
-                        sink->Close();
-                        sink->Release();
-                        context->DrawGeometry(arc, dimBrush, 1.6f);
+            if (factory && inkBrush) {
+                ID2D1PathGeometry* arc = nullptr;
+                ID2D1GeometrySink* sink = nullptr;
+                if (SUCCEEDED(factory->CreatePathGeometry(&arc)) && arc &&
+                    SUCCEEDED(arc->Open(&sink)) && sink) {
+                    const float start = -1.15f;   // radians, just right of the top
+                    const float end = start + 5.42f;   // all the way round, back to just left of it
+                    sink->BeginFigure(D2D1::Point2F(cx + radius * std::sin(start),
+                                                    cy - radius * std::cos(start)),
+                                      D2D1_FIGURE_BEGIN_HOLLOW);
+                    const int steps = 24;
+                    for (int i = 1; i <= steps; ++i) {
+                        const float t = start + (end - start) * static_cast<float>(i) / steps;
+                        sink->AddLine(D2D1::Point2F(cx + radius * std::sin(t),
+                                                    cy - radius * std::cos(t)));
                     }
-                    if (arc) arc->Release();
-                    ring->Release();
+                    sink->EndFigure(D2D1_FIGURE_END_OPEN);
+                    sink->Close();
+                    sink->Release();
+                    context->DrawGeometry(arc, inkBrush, 1.6f);
                 }
+                if (arc) arc->Release();
                 context->DrawLine(D2D1::Point2F(cx, cy - radius - 1.5f), D2D1::Point2F(cx, cy - 1.0f),
-                                  dimBrush, 1.8f);
+                                  inkBrush, 1.8f);
             }
             if (factory) factory->Release();
         }
@@ -4187,6 +4242,7 @@ void TextRenderer::DrawStartPage(ID2D1DeviceContext2* context, const RoundedBox&
     if (warmBrush) warmBrush->Release();
     if (washBrush) washBrush->Release();
     if (lineBrush) lineBrush->Release();
+    if (borderBrush) borderBrush->Release();
 }
 
 } // namespace island

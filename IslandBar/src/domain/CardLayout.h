@@ -856,6 +856,21 @@ inline int StartPickerRowAt(const RoundedBox& card, int scrollRow, int count, fl
     return -1;
 }
 
+// One cell of the ALL-APPLICATIONS grid: the same 6-column cells the pins use, scrolled by whole rows.
+// Returns the LIST index (scrollRow * kStartColumns + the cell), not the cell index, because that is what
+// the drawing and the click need; -1 off the grid or past the end of the list.
+inline int StartPickerCellAt(const RoundedBox& card, int scrollRow, int count, float x, float y) {
+    const StartPageLayout layout = StartPageFor(card);
+    if (!layout.valid || !StartRectHasPoint(layout.grid, x, y)) return -1;
+    const float pitchX = kStartCellWidth + kStartCellGap;
+    const float pitchY = kStartCellHeight + kStartCellGap;
+    const int column = static_cast<int>((x - layout.grid.left) / pitchX);
+    const int row = static_cast<int>((y - layout.grid.top) / pitchY);
+    if (column < 0 || column >= kStartColumns || row < 0 || row >= kStartRows) return -1;
+    const int index = (scrollRow + row) * kStartColumns + column;
+    return index < count ? index : -1;
+}
+
 inline int StartPowerRowAt(const RoundedBox& card, float x, float y) {
     for (int i = 0; i < 5; ++i) {
         if (StartRectHasPoint(StartPowerRowFor(card, i), x, y)) return i;

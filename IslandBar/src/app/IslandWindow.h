@@ -234,7 +234,8 @@ public:
     };
 
     // `pageOpen` false means the Start card is not the level that is up, and every hit test answers None.
-    void SetStartState(bool pageOpen, int page, int pinCount, int listCount, int pickerScrollRow);
+    void SetStartState(bool pageOpen, int page, int pinCount, int listCount, int pickerScrollRow,
+                       bool allAppsMode);
     // Moves the picker's first visible row by `notches` and CLAMPS it, which is the window's job for the
     // same reason the sound page's scroll is: it is the one that knows the card's geometry, so the offset
     // the frame loop reads back cannot leave the list.
@@ -603,6 +604,9 @@ private:
     int  startPinCount_ = 0;
     int  startListCount_ = 0;
     int  startPickerScroll_ = 0;
+    // True while the picker is the 全部 grid: its rows are the 6-column cells, and the scroll is in grid
+    // rows, so the hit test and the wheel's clamp must ask the same question the drawing did.
+    bool startAllApps_ = false;
     StartHit startHit_ = {};
     // The last hit reported to the log, so the card's hover trace reports changes rather than every poll.
     // A separate pair from the icon row's: the two answers are about different things and one moving must

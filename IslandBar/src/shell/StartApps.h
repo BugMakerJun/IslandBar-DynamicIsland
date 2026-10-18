@@ -86,6 +86,8 @@ public:
     // worker when the pin is added, because getting a shell item's image takes a few milliseconds and the
     // frame loop cannot spend them.
     const uint8_t* PinIconPng(int index, size_t* sizeOut) const;
+    // The same for one entry of the ALL-APPLICATIONS list, which the 全部 grid draws as icons too.
+    const uint8_t* ListIconPng(int index, size_t* sizeOut) const;
 
     // Bumped whenever the list or the pins change, so the renderer can re-decode what it has cached.
     unsigned long long Revision() const { return revision_; }
@@ -98,6 +100,7 @@ public:
 
 private:
     void ResolveIconAsync(const wchar_t* target);
+    void ResolveListIconsAsync();
     // Reads the folder into the pins, without touching the shell's application list.
     void ReadPinsFolder(const wchar_t* folder);
 
@@ -108,6 +111,7 @@ private:
     // a wstring, and the renderer read the middle of the first entry as the second icon.
     std::vector<StartApp> pins_;
     std::vector<std::vector<uint8_t>> pinIcons_;   // one PNG per pin, in the same order
+    std::vector<std::vector<uint8_t>> listIcons_;  // one PNG per list entry, in the same order
     // The folder the pins were read from, so a later Pin/Unpin knows where to write.
     std::wstring pinsFolder_;
     unsigned long long revision_ = 1;

@@ -74,6 +74,9 @@ struct BarState {
     // the frame that points into it.
     std::vector<const uint8_t*> startIconPointers;
     std::vector<size_t> startIconSizes;
+    // The same for the ALL-APPLICATIONS grid, one entry per application (the 121-entry list).
+    std::vector<const uint8_t*> startListIconPointers;
+    std::vector<size_t> startListIconSizes;
     // One spring per item of the Start card's three lists, so a highlight fades in and out instead of
     // switching: see FrameState::pinWashes. Sized to the list, which is a handful of tiles, up to 121
     // picker rows and five power rows.
