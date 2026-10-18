@@ -654,6 +654,10 @@ static void StartNotificationChannels(bool& listening, bool& toastsAvailable, is
     }
 }
 
+// Declared here because the policy's context asks it long before the call strip's own code below.
+static bool IsCallNotification(const island::BarSystems& systems,
+                               const island::Notification* active);
+
 // --- the two media sources: the system session, and the player that never publishes one ---
 //
 // Moved out of RunBar verbatim, with the two results coming back by reference (the frame loop reads them).
@@ -2056,6 +2060,7 @@ static void ApplyPointerShapePolicy(island::BarState& bar, island::BarSystems& s
         context.resting = resting;
         context.pointerInside = systems.window.IsPointerInside();
         context.notificationActive = active != nullptr;
+        context.callActive = IsCallNotification(systems, active);
         // ... and whether there is a player at all: a PAUSED session still opens the card, which
         // is how the play button is reached after a pause (see ShouldPromoteToCard).
         //
@@ -3224,6 +3229,18 @@ static void PollRedrawReasons(BarRuntime& runtime, island::BarSystems& systems,
 // because it is the loop's own clock rather than state the drawing reads, and it is advanced here because
 // this is where the strip's frames are decided. `musicResting`, and not the state, is the question -- see the
 // note at the call site.
+// --- WHAT A NOTIFICATION IS, where the shape depends on it ---------------------
+//
+// A CALL is a WeChat call announcement: the notice strip is the wrong shape for it (see
+// PointerContext::callActive), and the two decisions that used to be "any notification" -- the notice
+// strip being up and the resting pill being the wide one -- have to ask the same question the policy
+// does, or the drawing, the window region and the state disagree about one box.
+static bool IsCallNotification(const island::BarSystems& systems,
+                               const island::Notification* active) {
+    return active != nullptr && systems.wechat.CallNotificationId() != 0 &&
+           active->id == systems.wechat.CallNotificationId();
+}
+
 static void PickRestingLyricLine(BarRuntime& runtime, island::BarState& bar, island::BarSystems& systems,
                                   bool musicResting, float lyricScrollDipPerSec, float dt,
                                   const char*& lyricLine, const char*& fallbackLine, bool& lyricsScrolling,
@@ -5283,7 +5300,8 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
             // card is open its state is Expanded, and a notice is not a state -- it is something the bar is
             // saying. Everything that lays out the bar's own controls asks the window for this (see
             // SetNoticeStripUp), so the drawing, the hit test and the window region agree about one box.
-            systems.window.SetNoticeStripUp(active != nullptr);
+            systems.window.SetNoticeStripUp(active != nullptr &&
+                                            !IsCallNotification(systems, active));
 
             // What is playing, from whichever source has it: the media session, that player's own window
             // title, or the lyric provider's answer. The phase lives above RunBar; the reading it keeps
@@ -5686,8 +5704,10 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                 // the line inside it -- was measured from a 220 DIP pill while the bar was announcing. The same
                 // answer the window is given below (SetNoticeStripUp), from the same frame.
                 frame.restingPill =
-                    island::BoxForState(active != nullptr ? island::IslandState::NoticeStrip
-                                                          : island::IslandState::Collapsed,
+                    island::BoxForState(active != nullptr &&
+                                                !IsCallNotification(systems, active)
+                                            ? island::IslandState::NoticeStrip
+                                            : island::IslandState::Collapsed,
                                         systems.window.CurrentAnchor());
                 // ... and WHAT the bar shows at rest, which is what the pill's own line is chosen by
                 // (see FrameState::restingState). A card does not change this, which is the point.

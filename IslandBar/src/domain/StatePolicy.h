@@ -35,6 +35,14 @@ struct PointerContext {
     IslandState resting = IslandState::Collapsed;
     bool pointerInside = false;
     bool notificationActive = false;
+    // ... and whether that notification is a CALL rather than a message.
+    //
+    // The two want different widths. A message is a line of text and needs the 420 DIP notice strip; a
+    // call is an icon, a timer and a meter -- about 150 DIP -- and putting it in the strip left 200 DIP of
+    // empty glass on the left of the icon. A call therefore takes the bar cluster, which is what it looked
+    // like full screen and what it has to look like everywhere ("玩游戏的时候是右边的这个图，但是不玩
+    // 游戏的时候 左边还是之前的那样").
+    bool callActive = false;
     // A media session exists -- PLAYING OR PAUSED. The two questions are different: `resting == MusicStrip`
     // means "the pill has something to say right now", while this means "there is a player to TALK TO".
     //
@@ -247,7 +255,17 @@ inline IslandState NextShape(const PointerContext& c) {
     // "如果音乐的时候也显示那就鼠标放灵动岛的时候 不要 显示出音乐卡片". Nothing below this point is
     // reached while it is in front, so hovering the island during a game cannot open the media card.
     if (c.fullscreenApp) {
+        if (c.notificationActive && c.callActive) return IslandState::Hover;
         return c.notificationActive ? IslandState::NoticeStrip : IslandState::FullBar;
+    }
+
+    // A CALL IS THE BAR CLUSTER, IN EVERY STATE.
+    //
+    // Its content is an icon, a timer and a level meter; the 420 DIP notice strip was built for a line of
+    // text and left 200 DIP of empty glass beside the call. Placed before the notification rule so the call
+    // never reaches the strip, and before the card rules so a call is not swallowed by a hover.
+    if (c.notificationActive && c.callActive) {
+        return IslandState::Hover;
     }
 
     // Leaving it: the full-width bar is not a shape any other rule knows about, so the state has to

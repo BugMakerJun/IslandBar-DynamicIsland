@@ -2680,6 +2680,25 @@ void TestMusicCardLayout() {
                               StateName(NextShape(hovered)));
                 Check(NextShape(hovered) != IslandState::Expanded,
                       L"a full-screen application never opens the details card", dt);
+
+                // A CALL IS THE BAR CLUSTER, full screen or not: its content is an icon, a timer and a
+                // meter, and the 420 DIP strip left 200 DIP of empty glass beside them.
+                PointerContext callFullScreen = notified;
+                callFullScreen.callActive = true;
+                std::swprintf(dt, 224, L"full-screen + call -> %ls",
+                              StateName(NextShape(callFullScreen)));
+                Check(NextShape(callFullScreen) == IslandState::Hover,
+                      L"a call takes the bar cluster even over a full-screen application", dt);
+
+                PointerContext callWindowed;
+                callWindowed.shape = IslandState::Collapsed;
+                callWindowed.resting = IslandState::Collapsed;
+                callWindowed.notificationActive = true;
+                callWindowed.callActive = true;
+                std::swprintf(dt, 224, L"windowed + call -> %ls",
+                              StateName(NextShape(callWindowed)));
+                Check(NextShape(callWindowed) == IslandState::Hover,
+                      L"and it takes the bar cluster out of full screen too", dt);
             }
 
             // AND THE BAR IS NOT THERE TO POINT AT in that state: every point is refused, including the
