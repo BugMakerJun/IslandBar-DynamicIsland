@@ -460,6 +460,52 @@ ID2D1SolidColorBrush* TextRenderer::BrushFor(ID2D1DeviceContext2* context,
 void TextRenderer::ClearBrushCache() {
     for (auto& entry : brushCache_) SafeRelease(&entry.second);
     brushCache_.clear();
+    // The layouts are shaped against the formats, not the theme, but a theme switch is exactly the
+    // moment this cache is cold anyway; dropping it here means there is one place that frees them.
+    for (auto& entry : layoutCache_) {
+        if (entry.layout) {
+            entry.layout->Release();
+            entry.layout = nullptr;
+        }
+        entry.text.clear();
+    }
+}
+
+// See the header: the cache owns the layout, and callers must not release what this returns.
+IDWriteTextLayout* TextRenderer::LayoutFor(const wchar_t* text, IDWriteTextFormat* format,
+                                           float width, float height) {
+    if (!factory_ || !text || !format) return nullptr;
+    ++layoutCacheTick_;
+    for (auto& entry : layoutCache_) {
+        if (entry.layout && entry.format == format && entry.width == width &&
+            entry.height == height && entry.text == text) {
+            entry.used = layoutCacheTick_;
+            return entry.layout;
+        }
+    }
+    IDWriteTextLayout* created = nullptr;
+    if (FAILED(factory_->CreateTextLayout(text, static_cast<UINT32>(std::wcslen(text)), format, width,
+                                          height, &created)) ||
+        !created) {
+        return nullptr;
+    }
+    // Evict the least recently used slot, or use an empty one.
+    LayoutEntry* victim = &layoutCache_[0];
+    for (auto& entry : layoutCache_) {
+        if (!entry.layout) {
+            victim = &entry;
+            break;
+        }
+        if (entry.used < victim->used) victim = &entry;
+    }
+    if (victim->layout) victim->layout->Release();
+    victim->layout = created;
+    victim->text = text;
+    victim->format = format;
+    victim->width = width;
+    victim->height = height;
+    victim->used = layoutCacheTick_;
+    return created;
 }
 
 void TextRenderer::Refresh() {
@@ -1933,18 +1979,15 @@ void TextRenderer::DrawMusicCard(ID2D1DeviceContext2* context, const RoundedBox&
         factory_ && secondaryBrush) {
         wchar_t widePrev[512] = {};
         if (MultiByteToWideChar(CP_UTF8, 0, text.lyricPrev, -1, widePrev, 512) > 0) {
-            IDWriteTextLayout* layoutPrev = nullptr;
-            if (SUCCEEDED(factory_->CreateTextLayout(
-                    widePrev, static_cast<UINT32>(std::wcslen(widePrev)), musicLyricFormat_,
-                    layout.lyricCurrent.right - layout.lyricCurrent.left,
-                    layout.lyricCurrent.bottom - layout.lyricCurrent.top, &layoutPrev)) &&
-                layoutPrev) {
+            IDWriteTextLayout* layoutPrev = LayoutFor(
+                widePrev, musicLyricFormat_, layout.lyricCurrent.right - layout.lyricCurrent.left,
+                layout.lyricCurrent.bottom - layout.lyricCurrent.top);
+            if (layoutPrev) {
                 secondaryBrush->SetOpacity(1.0f - lyricRoll);
                 context->DrawTextLayout(
                     D2D1::Point2F(layout.lyricCurrent.left, layout.lyricCurrent.top), layoutPrev,
                     secondaryBrush);
                 secondaryBrush->SetOpacity(1.0f);
-                layoutPrev->Release();
             }
         }
     }
@@ -1952,11 +1995,10 @@ void TextRenderer::DrawMusicCard(ID2D1DeviceContext2* context, const RoundedBox&
         wchar_t wideLine[512] = {};
         if (MultiByteToWideChar(CP_UTF8, 0, text.lyricLine, -1, wideLine, 512) > 0) {
             const float width = layout.lyricCurrent.right - layout.lyricCurrent.left;
-            IDWriteTextLayout* layoutLine = nullptr;
-            if (SUCCEEDED(factory_->CreateTextLayout(
-                    wideLine, static_cast<UINT32>(std::wcslen(wideLine)), musicLyricFormat_, width,
-                    layout.lyricCurrent.bottom - layout.lyricCurrent.top, &layoutLine)) &&
-                layoutLine) {
+            IDWriteTextLayout* layoutLine =
+                LayoutFor(wideLine, musicLyricFormat_, width,
+                          layout.lyricCurrent.bottom - layout.lyricCurrent.top);
+            if (layoutLine) {
                 DWRITE_TEXT_METRICS metrics = {};
                 layoutLine->GetMetrics(&metrics);
                 const D2D1_POINT_2F origin =
@@ -1993,7 +2035,7 @@ void TextRenderer::DrawMusicCard(ID2D1DeviceContext2* context, const RoundedBox&
                     context->FillRoundedRectangle(&sung, accentBrush);
                     accentBrush->SetOpacity(1.0f);
                 }
-                layoutLine->Release();
+                // No Release: the layout cache owns it (see TextRenderer::LayoutFor).
             }
         }
     } else if (secondaryBrush && musicLyricFormat_) {

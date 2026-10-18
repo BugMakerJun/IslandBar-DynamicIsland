@@ -810,6 +810,25 @@ private:
     // for the same colour.
     ID2D1SolidColorBrush* BrushFor(ID2D1DeviceContext2* context, const D2D1_COLOR_F& colour);
     std::unordered_map<unsigned, ID2D1SolidColorBrush*> brushCache_;
+    // TEXTS ARE SHAPED ONCE, not sixty times a second.
+    //
+    // DWrite's shaping is the frame's most repeated CPU cost: the music card builds its lyric lines, the
+    // status line its date and time, and the icon row its titles, all with the same text and format every
+    // frame. Same contract as BrushFor: the cache owns the layout, and callers must NOT release what this
+    // returns.
+    IDWriteTextLayout* LayoutFor(const wchar_t* text, IDWriteTextFormat* format, float width,
+                                 float height);
+    struct LayoutEntry {
+        IDWriteTextLayout* layout = nullptr;
+        std::wstring       text;
+        IDWriteTextFormat* format = nullptr;
+        float              width = 0.0f;
+        float              height = 0.0f;
+        unsigned long long used = 0;
+    };
+    static constexpr int kLayoutCacheSize = 32;
+    LayoutEntry layoutCache_[kLayoutCacheSize];
+    unsigned long long layoutCacheTick_ = 0;
     StartBitmap startPinBitmaps_[24];   // as many as can be on screen at once, and then some
     StartBitmap startListBitmaps_[24];  // the same, for the all-applications grid
     StartBitmap startAvatarBitmap_;
