@@ -1582,18 +1582,17 @@ if (FAILED(hr)) {
 d2dContext_->SetTarget(nullptr);
 SafeRelease(&d2dTarget_);
 
-// Present with NO sync interval -- interval 0, and that is now what the argument says.
+// Present WITH vsync, and let the VSync be the animation's clock.
 //
-// This line read Present(1, 0) with this same comment above it for as long as it has existed: the
-// parameter and the sentence disagreed, and the effect was to wait twice for every frame -- once in the
-// loop (on the compositor clock, or on a 4 ms timer) and once here, on vsync. Two waits where one is
-// intended is at least a frame of latency, and on this machine it showed up as the ~100 ms tails in the
-// loop's own interval report and as "slow frame" lines whose work was "none logged".
+// The line before this read Present(0, 0): the loop blocked on the swap chain's frame-latency waitable
+// and the present never waited. Measured here that produced ~85 fps on a 60 Hz display -- the extra
+// frames are torn or dropped by the compositor, and every animation (the tray icons' hover wash, the
+// cards growing open) visibly juddered: "右侧图标 鼠标移入 和 所有弹出卡片都卡卡的". The interval log
+// also carried 50-100 ms tails whose work was "none logged", which is a frame that missed the compositor.
 //
-// The wait is now the swap chain's frame-latency waitable object, which the loop blocks on before
-// drawing (see IslandWindow/main.cpp). Presenting without waiting again is what makes that the ONLY
-// throttle, which is the property the throttle line in the log is there to demonstrate.
-swapChain_->Present(0, 0);
+// A present that waits for vsync paces the animation at the refresh rate and drops the tails. It costs
+// at most one frame of input latency, which a bar can afford; judder is what cannot be afforded.
+swapChain_->Present(1, 0);
 framesPresented_ += 1;
 
 if (compDevice_) {
