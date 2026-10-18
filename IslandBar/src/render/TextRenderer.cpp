@@ -1351,7 +1351,7 @@ void TextRenderer::DrawCallStrip(ID2D1DeviceContext2* context, const RoundedBox&
             const DWRITE_PARAGRAPH_ALIGNMENT previousVertical = bodyFormat_->GetParagraphAlignment();
             bodyFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
             bodyFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            const float width = 90.0f;
+            const float width = 80.0f;
             context->DrawTextW(timer, static_cast<UINT32>(std::wcslen(timer)), bodyFormat_,
                                D2D1::RectF(cursorX, box.rect.top, cursorX + width, box.rect.bottom),
                                green, D2D1_DRAW_TEXT_OPTIONS_CLIP);

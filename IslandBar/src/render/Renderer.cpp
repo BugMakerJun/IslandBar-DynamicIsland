@@ -684,7 +684,7 @@ void Renderer::RenderFrame(const FrameState& frame) {
         // A wide notice/call strip is drawn beside the island, and the glass surface has to reach its
         // ends: the film and the rim otherwise stop at the pill's edge, which read as a vertical knife
         // cut through the right-hand end of the strip.
-        if (frame.statusStripOpacity > 0.01f && CurrentTheme().lens) {
+        if (!frame.callUp && frame.statusStripOpacity > 0.01f && CurrentTheme().lens) {
             // Same anchor the strip itself is measured from, so the two cannot drift apart.
             const RoundedBox anchor =
                 (frame.restingPill.rect.right > frame.restingPill.rect.left)
@@ -954,9 +954,9 @@ void Renderer::RenderFrame(const FrameState& frame) {
                 const RoundedBox& noticeBox = intoPill ? lineBox : box;
                 if (frame.callUp) {
                     // A CALL first: same strip, different thing to say -- and it says it with a timer and a
-                    // level meter rather than with words, because that is what the reference does.
-                    text_->DrawCallStrip(d2dContext_, noticeBox, frame.callStrip, frame.contentOpacity,
-                                     !frame.fullscreenApp);
+                    // level meter rather than with words, because that is what the reference does. The
+                    // timer is the point of the strip, so it is drawn in every state, full screen included.
+                    text_->DrawCallStrip(d2dContext_, noticeBox, frame.callStrip, frame.contentOpacity);
                 } else {
                     // The message, in place of the clock -- the same trade the lyric strip makes, and for the
                     // same reason: while the strip is up, the time is the less useful of the two things the
