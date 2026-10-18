@@ -90,25 +90,37 @@ void Warp(const std::vector<unsigned char>& src, int srcW, int srcH, int pillW, 
                 }
                 inside = radius - length;
             }
+            unsigned char* out = &dst[(static_cast<size_t>(y) * pillW + x) * 4];
+            // THE RIM BAND: samples a little further out, strongest at the rim. A stadium bends more
+            // where it is more curved, so the round ends take a stronger pull.
             float shift = 0.0f;
             const float t = inside / kLensBandPx;
             if (t < 1.0f) {
                 const float falloff = 1.0f - std::max(0.0f, t);
                 shift = falloff * falloff * kLensShiftPx;
             }
-            // A stadium bends more where it is more curved: the round ends take a stronger pull than
-            // the flat top and bottom.
             shift *= 1.0f + 0.35f * std::fabs(nx);
-            // THE BODY OF THE LENS, not just its rim. A barrel term pulls the sample towards the middle
-            // line across the WHOLE height (zero on the centre line and at the extreme rim), so stripes
-            // and text behind the glass curve through it the way they do through the reference's thick
-            // lens. Without this the interior was a 1:1 copy and read as plain transparency.
+            // THE BODY: a barrel term pulls towards the middle line across the whole height, so stripes
+            // and text behind the glass curve through it instead of lying flat.
             const float nyN = (py - cy) / radius;
             const float barrel = 1.50f * (1.0f - nyN * nyN);
             const float lensY = -(py - cy) * barrel;
-            unsigned char* out = &dst[(static_cast<size_t>(y) * pillW + x) * 4];
             Sample(src, srcW, srcH, static_cast<float>(kMarginPx) + px + nx * shift,
                    static_cast<float>(kMarginPx) + py + ny * shift + lensY, out);
+            // THE MATERIAL GRADE, from the same reference: a little contrast, a little saturation and
+            // 2% more light. It is what makes the refracted image read as glass rather than as a hole;
+            // it adds no veil, because it works on the pixels themselves.
+            {
+                const float luma = 0.2126f * out[2] + 0.7152f * out[1] + 0.0722f * out[0];
+                for (int c = 0; c < 3; ++c) {
+                    float value = out[c] / 255.0f;
+                    value = (value - 0.5f) * 1.08f + 0.5f;
+                    value *= 1.02f;
+                    const float channel = luma + (value * 255.0f - luma) * 1.08f;
+                    const int rounded = static_cast<int>(channel + 0.5f);
+                    out[c] = static_cast<unsigned char>(rounded < 0 ? 0 : (rounded > 255 ? 255 : rounded));
+                }
+            }
             // The captured frame is opaque; forcing alpha avoids a premultiplied bitmap that draws
             // nothing when a window's capture comes back with alpha 0.
             out[3] = 255;
@@ -121,11 +133,12 @@ void Warp(const std::vector<unsigned char>& src, int srcW, int srcH, int pillW, 
 struct LensMaterial::Cache {
     Microsoft::WRL::ComPtr<ID2D1DeviceContext> context;
     Microsoft::WRL::ComPtr<ID3D11Texture2D> cropGpu;
-    // Two readback targets, used one frame apart: mapping the copy made THIS frame would wait for the
-    // GPU, and on a live wallpaper that wait was most of the lens's cost.
-    Microsoft::WRL::ComPtr<ID3D11Texture2D> staging[2];
-    int writeIndex = 0;
-    bool haveStaged = false;
+    // ONE readback target, mapped on the frame it was copied to. The two-target version used to read the
+    // PREVIOUS copy, which deadlocked the lens on a static window: WGC sends one frame and then stops,
+    // so the second update that would have consumed it never came, and the pill kept the old window's
+    // picture. The stall that buffering avoided was under half a millisecond -- the stale image was far
+    // more expensive.
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> staging;
     Microsoft::WRL::ComPtr<ID2D1Bitmap> warped;
     Microsoft::WRL::ComPtr<ID2D1BitmapBrush> brush;
     Microsoft::WRL::ComPtr<ID2D1DeviceContext> brushContext;
@@ -193,19 +206,16 @@ bool LensMaterial::Update(ID3D11Texture2D* texture, const RECT& source, const D2
             return false;
         }
         cache_->cropGpu.Reset();
-        cache_->staging[0].Reset();
-        cache_->staging[1].Reset();
+        cache_->staging.Reset();
         const HRESULT createdGpu = device->CreateTexture2D(&gpu, nullptr, &cache_->cropGpu);
-        const HRESULT createdRead = device->CreateTexture2D(&readback, nullptr, &cache_->staging[0]);
-        const HRESULT createdRead2 = device->CreateTexture2D(&readback, nullptr, &cache_->staging[1]);
+        const HRESULT createdRead = device->CreateTexture2D(&readback, nullptr, &cache_->staging);
         device->Release();
-        if (FAILED(createdGpu) || FAILED(createdRead) || FAILED(createdRead2)) {
+        if (FAILED(createdGpu) || FAILED(createdRead)) {
             LensFail(L"creating the readback textures failed");
             return false;
         }
         cache_->cropW = cropW;
         cache_->cropH = cropH;
-        cache_->haveStaged = false;
     }
     Microsoft::WRL::ComPtr<ID3D11DeviceContext> d3d;
     {
@@ -242,16 +252,9 @@ bool LensMaterial::Update(ID3D11Texture2D* texture, const RECT& source, const D2
     const D3D11_BOX box = {static_cast<UINT>(srcX), static_cast<UINT>(srcY), 0,
                            static_cast<UINT>(srcX + takeW), static_cast<UINT>(srcY + takeH), 1};
     d3d->CopySubresourceRegion(cache_->cropGpu.Get(), 0, 0, 0, 0, texture, 0, &box);
-    const int write = cache_->writeIndex;
-    cache_->writeIndex ^= 1;
-    d3d->CopyResource(cache_->staging[write].Get(), cache_->cropGpu.Get());
-    if (!cache_->haveStaged) {
-        // The first captured frame is staged now; the next call reads it back without waiting.
-        cache_->haveStaged = true;
-        return false;
-    }
+    d3d->CopyResource(cache_->staging.Get(), cache_->cropGpu.Get());
     D3D11_MAPPED_SUBRESOURCE mapped = {};
-    if (FAILED(d3d->Map(cache_->staging[write ^ 1].Get(), 0, D3D11_MAP_READ, 0, &mapped))) {
+    if (FAILED(d3d->Map(cache_->staging.Get(), 0, D3D11_MAP_READ, 0, &mapped))) {
         LensFail(L"mapping the readback failed");
         return false;
     }
@@ -261,7 +264,7 @@ bool LensMaterial::Update(ID3D11Texture2D* texture, const RECT& source, const D2
                     rows + static_cast<size_t>(y) * mapped.RowPitch,
                     static_cast<size_t>(takeW) * 4);
     }
-    d3d->Unmap(cache_->staging[write ^ 1].Get(), 0);
+    d3d->Unmap(cache_->staging.Get(), 0);
 
     // The crop's margin can fall outside the captured frame (the bar sits on the screen's top edge).
     // Those rows were never written and stay black, which the rim's outward sampling then paints as a
