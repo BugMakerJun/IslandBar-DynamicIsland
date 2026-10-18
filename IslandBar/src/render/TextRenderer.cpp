@@ -148,7 +148,7 @@ bool TextRenderer::Initialize() {
     // sentence rather than the thing the island is read for.
     makeStatusFormat(9.5f, DWRITE_FONT_WEIGHT_NORMAL, &statusWeekdayFormat_);
     makeStatusFormat(9.5f, DWRITE_FONT_WEIGHT_NORMAL, &statusDayFormat_);
-    makeStatusFormat(18.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD, &statusTimeFormat_);
+    makeStatusFormat(18.0f, DWRITE_FONT_WEIGHT_BOLD, &statusTimeFormat_);
     makeStatusFormat(9.5f, DWRITE_FONT_WEIGHT_NORMAL, &statusWeatherFormat_);
 
     // The music card's top row: the source name and the volume readout.
