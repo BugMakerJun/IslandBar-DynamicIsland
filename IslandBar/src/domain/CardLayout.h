@@ -206,8 +206,16 @@ inline TrayPageLayout TrayPageFor(const RoundedBox& card, int iconCount) {
     for (int i = 0; i < iconCount; ++i) {
         const int column = i % columns;
         const int row = i / columns;
+        // THE INCOMPLETE LAST ROW IS CENTRED under the full rows. Left-aligning it made a 5+2 page read as
+        // a row that had lost three icons -- the empty columns all on the right, where the eye expects the
+        // grid to continue -- and on this machine the tray page is 5+2 more often than not.
+        const int firstInRow = row * columns;
+        const int remaining = iconCount - firstInRow;
+        const int rowCount = remaining < columns ? remaining : columns;
+        const float rowWidth = rowCount * cell + (rowCount - 1) * kTrayPageCellGapDip;
+        const float rowLeft = left + (gridWidth - rowWidth) * 0.5f;
         RectF placed;
-        placed.left = left + column * (cell + kTrayPageCellGapDip);
+        placed.left = rowLeft + column * (cell + kTrayPageCellGapDip);
         placed.top = top + row * (cell + kTrayPageCellGapDip);
         placed.right = placed.left + cell;
         placed.bottom = placed.top + cell;
