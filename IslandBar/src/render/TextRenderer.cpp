@@ -4104,12 +4104,24 @@ void TextRenderer::DrawStartPage(ID2D1DeviceContext2* context, const RoundedBox&
                         D2D1::RectF(button.left, button.top, button.right, button.bottom), radius, radius};
                     context->DrawRoundedRectangle(&pill, lineBrush, 1.0f);
                 }
-                if (startLabelFormat_ && inkBrush) {
-                    const wchar_t* label = L"全部";
-                    context->DrawTextW(label, static_cast<UINT32>(std::wcslen(label)),
-                                       startLabelFormat_,
-                                       D2D1::RectF(button.left, button.top, button.right, button.bottom),
-                                       inkBrush);
+                if (inkBrush) {
+                    // THE ICON, not the word: three rows of three dots -- the "all applications" mark,
+                    // drawn rather than taken from the icon font (the icon font's power codepoint came
+                    // out as an empty box on this machine; a mark that is the whole meaning of a button
+                    // cannot be a thing that might not be there).
+                    const float centreX = (button.left + button.right) * 0.5f;
+                    const float centreY = (button.top + button.bottom) * 0.5f;
+                    const float step = 4.4f;
+                    const float dot = 1.15f;
+                    for (int row = -1; row <= 1; ++row) {
+                        for (int column = -1; column <= 1; ++column) {
+                            const D2D1_ELLIPSE shape = D2D1::Ellipse(
+                                D2D1::Point2F(centreX + static_cast<float>(column) * step,
+                                              centreY + static_cast<float>(row) * step),
+                                dot, dot);
+                            context->FillEllipse(&shape, inkBrush);
+                        }
+                    }
                 }
             }
         }

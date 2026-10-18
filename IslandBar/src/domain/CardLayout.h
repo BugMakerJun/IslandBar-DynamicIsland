@@ -696,7 +696,7 @@ inline constexpr float kStartAvatarDip  = 28.0f;
 inline constexpr float kStartPowerDip   = 30.0f;   // the power button's square
 inline constexpr float kStartRowHeight  = 34.0f;   // one line of the picker or the power list
 inline constexpr float kStartHeaderDip  = 30.0f;   // the row the 全部 button sits in, above the grid
-inline constexpr float kStartAllAppsWidth = 64.0f;
+inline constexpr float kStartAllAppsWidth = 30.0f;   // an icon button, not a word
 inline constexpr float kStartAllAppsHeight = 22.0f;
 
 struct StartPageLayout {
