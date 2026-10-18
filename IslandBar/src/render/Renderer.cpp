@@ -63,8 +63,12 @@ UINT DipToSurfacePixels(LONG pixels, float scale) {
 // so it is sampled at four inset corners and the median taken, which survives a tile or a glyph sitting
 // in one corner.
 float SampleUnderCard(const RECT& area, float scale) {
-    const int inset = std::max(2, static_cast<int>(std::lround(16.0f * scale)));
-    const int side = std::max(4, static_cast<int>(std::lround(16.0f * scale)));
+// The patch size adapts to the area: a thin band (the bar's own 8 DIP edge strip) has to be sampleable
+// too, or the bar's ink silently falls back to the lens exactly where the words sit on the application.
+    const int smallest = std::min(area.right - area.left, area.bottom - area.top) / 3;
+    const int wanted = static_cast<int>(std::lround(16.0f * scale));
+    const int side = std::max(2, std::min(wanted, smallest));
+    const int inset = std::max(1, side / 2);
     if (area.right - area.left < inset * 2 + side || area.bottom - area.top < inset * 2 + side) {
         static bool logged = false;
         if (!logged) {
@@ -765,36 +769,44 @@ void Renderer::RenderFrame(const FrameState& frame) {
         {
             POINT inkOrigin = {0, 0};
             if (ClientToScreen(window_, &inkOrigin)) {
-                // THE SCREEN BESIDE THE BAR, AT THE BAR'S OWN ROW.
-                //
-                // Not below it: a maximised window's top band is at the bar's row, while 20-120 DIP
-                // further down can be a different thing entirely -- the measured four-corner median of
-                // that mix was 0.30 on a light desktop, which is the grey words reported as "在桌面上的
-                // 文字 不是黑的了". Two patches to the left and right of the island are the same backdrop
-                // the glass refracts, and being beside the island they stay clear of its own shadow.
-                const LONG barTop = std::max<LONG>(
-                    0, static_cast<LONG>(std::lround(rounded.rect.top * scale_)) - 10);
-                const LONG barBottom =
-                    static_cast<LONG>(std::lround(rounded.rect.bottom * scale_)) + 10;
-                const RECT leftPatch = {
-                    inkOrigin.x + static_cast<LONG>(std::lround(rounded.rect.left * scale_)) - 72,
-                    inkOrigin.y + barTop,
-                    inkOrigin.x + static_cast<LONG>(std::lround(rounded.rect.left * scale_)) - 8,
-                    inkOrigin.y + barBottom};
-                const RECT rightPatch = {
-                    inkOrigin.x + static_cast<LONG>(std::lround(rounded.rect.right * scale_)) + 8,
-                    inkOrigin.y + barTop,
-                    inkOrigin.x + static_cast<LONG>(std::lround(rounded.rect.right * scale_)) + 72,
-                    inkOrigin.y + barBottom};
-                const float leftLuma = SampleUnderCard(leftPatch, scale_);
-                const float rightLuma = SampleUnderCard(rightPatch, scale_);
-                if (leftLuma >= 0.0f && rightLuma >= 0.0f) {
-                    sampled = (leftLuma + rightLuma) * 0.5f;
-                } else if (leftLuma >= 0.0f) {
-                    sampled = leftLuma;
-                } else if (rightLuma >= 0.0f) {
-                    sampled = rightLuma;
+                const LONG islandLeft =
+                    inkOrigin.x + static_cast<LONG>(std::lround(rounded.rect.left * scale_));
+                const LONG islandRight =
+                    inkOrigin.x + static_cast<LONG>(std::lround(rounded.rect.right * scale_));
+                const LONG islandTop =
+                    inkOrigin.y + static_cast<LONG>(std::lround(rounded.rect.top * scale_));
+                const LONG islandBottom =
+                    inkOrigin.y + static_cast<LONG>(std::lround(rounded.rect.bottom * scale_));
+                // THE BAR'S OWN ROW, IN ITS GLASS-ONLY BANDS. The content is vertically centred, so the
+                // 8 DIP at the island's top and bottom edges is the backdrop the words actually sit on.
+                // This is the case that was still wrong: "应用只有上面一行是黑的时候 就不会变了" -- the
+                // application's dark band is behind the BAR, and a sample taken beside the island misses
+                // it entirely.
+                const RECT topStrip = {islandLeft + 30, islandTop + 4, islandRight - 30, islandTop + 12};
+                const RECT bottomStrip = {islandLeft + 30, islandBottom - 12, islandRight - 30,
+                                          islandBottom - 4};
+                // ... plus the screen beside the island, for when a window's own edges make the strips
+                // unrepresentative (a bar sitting on a maximised window's light title, say).
+                const RECT leftPatch = {islandLeft - 72, std::max<LONG>(0, islandTop - 10),
+                                        islandLeft - 8, islandBottom + 10};
+                const RECT rightPatch = {islandRight + 8, std::max<LONG>(0, islandTop - 10),
+                                         islandRight + 72, islandBottom + 10};
+                float samples[4] = {};
+                int count = 0;
+                for (const RECT* area : {&topStrip, &bottomStrip, &leftPatch, &rightPatch}) {
+                    const float value = SampleUnderCard(*area, scale_);
+                    if (value >= 0.0f) samples[count++] = value;
                 }
+                for (int i = 0; i < count; ++i) {
+                    for (int j = i + 1; j < count; ++j) {
+                        if (samples[j] < samples[i]) {
+                            const float swap = samples[i];
+                            samples[i] = samples[j];
+                            samples[j] = swap;
+                        }
+                    }
+                }
+                if (count > 0) sampled = samples[count / 2];
             }
         }
         // Fed every frame from the cached reading, so the crossover finishes even when the window behind
