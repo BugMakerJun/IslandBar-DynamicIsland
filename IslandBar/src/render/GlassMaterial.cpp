@@ -399,8 +399,10 @@ void DrawSmokedBase(ID2D1DeviceContext2* context, const D2D1_ROUNDED_RECT& shape
     }
 
     // The hairline in the fill colour covers the antialiased fringe a plain fill leaves along the curve,
-    // which otherwise shows as a pale seam against the desktop.
-    if (g_cache.solid) {
+    // which otherwise shows as a pale seam against the desktop. It is a 1px STROKE, though, and on the
+    // clear lens it read as a line along the top edge (the user's screenshot); the lens skips it and lets
+    // the fill's own antialiasing carry the fringe.
+    if (g_cache.solid && !theme.lens) {
         g_cache.solid->SetColor(top);
         g_cache.solid->SetOpacity(opacity);
         context->DrawRoundedRectangle(&shape, g_cache.solid, 1.0f);
