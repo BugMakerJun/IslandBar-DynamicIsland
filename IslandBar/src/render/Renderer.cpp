@@ -772,17 +772,35 @@ void Renderer::RenderFrame(const FrameState& frame) {
             {
                 POINT inkOrigin = {0, 0};
                 if (ClientToScreen(window_, &inkOrigin)) {
+                    // 100 DIP below the bar, not 48: the four-corner sample needs the corners to be
+                    // DISTINCT points, and at 48 DIP the top and bottom insets landed on the same row --
+                    // so one strip of the application (often its lighter title band) decided the ink for
+                    // the whole bar. Deeper samples reach the content the words actually sit over.
                     const RECT below = {
                         inkOrigin.x + static_cast<LONG>(std::lround(rounded.rect.left * scale_)),
                         inkOrigin.y + static_cast<LONG>(std::lround(rounded.rect.bottom * scale_)) + 2,
                         inkOrigin.x + static_cast<LONG>(std::lround(rounded.rect.right * scale_)),
-                        inkOrigin.y + static_cast<LONG>(std::lround(rounded.rect.bottom * scale_)) + 50};
+                        inkOrigin.y + static_cast<LONG>(std::lround(rounded.rect.bottom * scale_)) + 102};
                     sampled = SampleUnderCard(below, scale_);
                 }
             }
             // Fed every frame from the cached reading, so the crossover finishes even when the window
             // behind has gone still and WGC is sending nothing.
             island::SetPillInkBackdrop(sampled >= 0.0f ? sampled : lens_.BackdropLuminance());
+            // Reported on change, so "the words did not change colour" and "the screen never said
+            // anything dark" can be told apart from the log without a photograph.
+            {
+                static float lastInkLog = -2.0f;
+                static int lastInkFullscreen = -1;
+                if (sampled >= 0.0f &&
+                    (std::fabs(sampled - lastInkLog) > 0.02f ||
+                     static_cast<int>(frame.fullscreenApp) != lastInkFullscreen)) {
+                    lastInkLog = sampled;
+                    lastInkFullscreen = static_cast<int>(frame.fullscreenApp);
+                    LogLine(L"  ink: screen below the bar %.2f (full screen %d)", sampled,
+                            lastInkFullscreen);
+                }
+            }
 
             if (capture_.Running() && ClientToScreen(window_, &origin)) {
                 // A new captured frame re-warps the lens; without one the last warp is still the right
