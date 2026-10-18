@@ -66,12 +66,22 @@ float SampleUnderCard(const RECT& area, float scale) {
     const int inset = std::max(2, static_cast<int>(std::lround(16.0f * scale)));
     const int side = std::max(4, static_cast<int>(std::lround(16.0f * scale)));
     if (area.right - area.left < inset * 2 + side || area.bottom - area.top < inset * 2 + side) {
+        static bool logged = false;
+        if (!logged) {
+            logged = true;
+            LogLine(L"  ink sample: area %ldx%ld too small for four corners", area.right - area.left,
+                    area.bottom - area.top);
+        }
         return -1.0f;
     }
     HDC screen = GetDC(nullptr);
-    if (!screen) return -1.0f;
+    if (!screen) {
+        LogLine(L"  ink sample: no screen DC");
+        return -1.0f;
+    }
     HDC memory = CreateCompatibleDC(screen);
     if (!memory) {
+        LogLine(L"  ink sample: no compatible DC");
         ReleaseDC(nullptr, screen);
         return -1.0f;
     }
@@ -85,6 +95,7 @@ float SampleUnderCard(const RECT& area, float scale) {
     void* pixels = nullptr;
     HBITMAP bitmap = CreateDIBSection(screen, &info, DIB_RGB_COLORS, &pixels, nullptr, 0);
     if (!bitmap || !pixels) {
+        LogLine(L"  ink sample: no DIB section");
         if (bitmap) DeleteObject(bitmap);
         DeleteDC(memory);
         ReleaseDC(nullptr, screen);
@@ -95,10 +106,14 @@ float SampleUnderCard(const RECT& area, float scale) {
     const int ys[2] = {area.top + inset, area.bottom - inset - side};
     float samples[4] = {};
     int count = 0;
+    DWORD lastError = 0;
     for (int column = 0; column < 2; ++column) {
         for (int row = 0; row < 2; ++row) {
-            if (!BitBlt(memory, 0, 0, side, side, screen, xs[column], ys[row],
-                        SRCCOPY | CAPTUREBLT)) {
+            // No CAPTUREBLT: the corner is read off the composited screen, which is what the words sit
+            // on, and the flag is not needed for a normal window. It was there for layered windows and
+            // its one observed effect was a BitBlt that failed and left the ink on the desktop's reading.
+            if (!BitBlt(memory, 0, 0, side, side, screen, xs[column], ys[row], SRCCOPY)) {
+                lastError = GetLastError();
                 continue;
             }
             const auto* bytes = static_cast<const unsigned char*>(pixels);
@@ -114,7 +129,10 @@ float SampleUnderCard(const RECT& area, float scale) {
     DeleteObject(bitmap);
     DeleteDC(memory);
     ReleaseDC(nullptr, screen);
-    if (count == 0) return -1.0f;
+    if (count == 0) {
+        LogLine(L"  ink sample: every corner's BitBlt failed (error %lu)", lastError);
+        return -1.0f;
+    }
     for (int i = 0; i < count; ++i) {
         for (int j = i + 1; j < count; ++j) {
             if (samples[j] < samples[i]) {
