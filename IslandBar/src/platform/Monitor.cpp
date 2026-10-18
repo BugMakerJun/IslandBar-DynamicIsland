@@ -4,9 +4,12 @@
 #include "platform/Monitor.h"
 
 #include <dwmapi.h>
+#include <shellapi.h>
 #include <shellscalingapi.h>
+#include <shlobj.h>
 
 #pragma comment(lib, "dwmapi.lib")
+#pragma comment(lib, "shell32.lib")
 
 #include <cwchar>
 #include <vector>
@@ -79,6 +82,20 @@ MonitorGeometry QueryMonitor(HMONITOR monitor) {
 }
 
 bool FullScreenAppInFront(const RECT& monitor) {
+    // THE SHELL'S OWN ANSWER FIRST, because the geometry below cannot see an APPLICATION's full screen.
+    //
+    // A game's exclusive full screen is a window that covers the monitor and is not maximised, which is
+    // what this function has always tested -- and it is why the bar stood down only "when playing a game
+    // full-screen". A video in a browser, or a player that goes full screen by hiding its own chrome, is
+    // still a MAXIMISED window, and the maximised test below deliberately answers "no" for those. The
+    // shell hides its own taskbar in exactly those cases and publishes the answer here: QUNS_BUSY for a
+    // general full-screen application, QUNS_RUNNING_D3D_FULL_SCREEN for an exclusive one. The geometry
+    // below stays as the fallback for a borderless full screen the shell does not consider one.
+    QUERY_USER_NOTIFICATION_STATE state = QUNS_ACCEPTS_NOTIFICATIONS;
+    if (SUCCEEDED(SHQueryUserNotificationState(&state))) {
+        if (state == QUNS_RUNNING_D3D_FULL_SCREEN || state == QUNS_BUSY) return true;
+    }
+
     const HWND foreground = GetForegroundWindow();
     if (!foreground) return false;
 
