@@ -53,7 +53,7 @@ D2D1_COLOR_F TextColour(float opacity) {
     // the surfaces. The luminance above is the built-in default's own value, so 默认 draws exactly what
     // the bar drew before themes existed.
     const float a = (opacity < 0.0f) ? 0.0f : (opacity > 1.0f ? 1.0f : opacity);
-    return island::PillInk(a);
+    return island::CardInk(a);
 }
 
 // Chinese weekday and month names for the card's date line.
@@ -936,7 +936,7 @@ void TextRenderer::DrawTrayPage(ID2D1DeviceContext2* context, const RoundedBox& 
     if (title && title[0] != L'\0' && appRowFormat_) {
         // The title in the THEME's ink, like every other word on the card: it was a hard-coded near-white,
         // which is the one colour that shows up as a grey patch in a theme with a coloured ink.
-        if (ID2D1SolidColorBrush* ink = BrushFor(context, island::PillInk(0.88f * opacity))) {
+        if (ID2D1SolidColorBrush* ink = BrushFor(context, island::CardInk(0.88f * opacity))) {
             context->DrawTextW(title, static_cast<UINT32>(std::wcslen(title)), appRowFormat_,
                                D2D1::RectF(layout.title.left, layout.title.top, layout.title.right,
                                            layout.title.bottom),
@@ -978,12 +978,12 @@ void TextRenderer::DrawTrayPage(ID2D1DeviceContext2* context, const RoundedBox& 
                 context->FillRoundedRectangle(&tile, tileFill);
             }
             if (ID2D1SolidColorBrush* tileEdge =
-                    BrushFor(context, island::PillInk(0.13f * opacity))) {
+                    BrushFor(context, island::CardInk(0.13f * opacity))) {
                 context->DrawRoundedRectangle(&tile, tileEdge, 1.0f);
             }
             if (i == hoveredIndex) {
                 ID2D1SolidColorBrush* wash = nullptr;
-                if ((wash = BrushFor(context, island::PillInk(0.16f * opacity))) != nullptr) {
+                if ((wash = BrushFor(context, island::CardInk(0.16f * opacity))) != nullptr) {
                     context->FillRoundedRectangle(&tile, wash);
                 }
             }
@@ -1035,7 +1035,7 @@ void TextRenderer::DrawTrayMenu(ID2D1DeviceContext2* context, const island::Rect
         }
         ID2D1SolidColorBrush* edge = nullptr;
         if (SUCCEEDED(context->CreateSolidColorBrush(
-                PillInk(0.12f * opacity), &edge)) &&
+                CardInk(0.12f * opacity), &edge)) &&
             edge) {
             context->DrawRoundedRectangle(&box, edge, 1.0f);
             edge->Release();
@@ -1051,7 +1051,7 @@ void TextRenderer::DrawTrayMenu(ID2D1DeviceContext2* context, const island::Rect
             // hovered row into a black bar on a light theme, which is the same defect the task buttons had.
             const D2D1_COLOR_F hover = theme.lens
                                            ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.12f * opacity)
-                                           : PillInk(0.16f * opacity);
+                                           : CardInk(0.16f * opacity);
             ID2D1SolidColorBrush* wash = nullptr;
             if (SUCCEEDED(context->CreateSolidColorBrush(hover, &wash)) && wash) {
                 context->FillRoundedRectangle(&rowBox, wash);
@@ -1061,7 +1061,7 @@ void TextRenderer::DrawTrayMenu(ID2D1DeviceContext2* context, const island::Rect
         const wchar_t* label = labels[i] ? labels[i] : L"";
         if (label[0] == L'\0') continue;
         ID2D1SolidColorBrush* ink = nullptr;
-        if (SUCCEEDED(context->CreateSolidColorBrush(PillInk(0.94f * opacity), &ink)) && ink) {
+        if (SUCCEEDED(context->CreateSolidColorBrush(CardInk(0.94f * opacity), &ink)) && ink) {
             if (appRowFormat_) {
                 // Left-aligned inside the row, vertically centred by the format's own paragraph alignment.
                 context->DrawTextW(label, static_cast<UINT32>(std::wcslen(label)), appRowFormat_,
@@ -1638,11 +1638,11 @@ void TextRenderer::DrawMusicCard(ID2D1DeviceContext2* context, const RoundedBox&
     const bool albumKnown = text.backgroundLuminance > 0.0f;
     const bool darkAlbum = albumKnown && text.backgroundLuminance < 0.52f;
     const D2D1_COLOR_F primary =
-        !albumKnown ? PillInk(opacity)
+        !albumKnown ? CardInk(opacity)
                     : (darkAlbum ? D2D1::ColorF(0.96f, 0.97f, 1.00f, opacity)
                                  : D2D1::ColorF(0.04f, 0.05f, 0.08f, opacity));
     const D2D1_COLOR_F secondary =
-        !albumKnown ? PillInk(0.80f * opacity)
+        !albumKnown ? CardInk(0.80f * opacity)
                     : (darkAlbum ? D2D1::ColorF(0.90f, 0.92f, 0.96f, 0.85f * opacity)
                                  : D2D1::ColorF(0.18f, 0.20f, 0.26f, 0.86f * opacity));
     // The accent follows the cover; the fixed blue is only for a cover with no colour and for the
@@ -1800,7 +1800,7 @@ void TextRenderer::DrawMusicCard(ID2D1DeviceContext2* context, const RoundedBox&
     const float barRight = layout.remaining.left - 6.0f;
     if (barRight > barLeft + 8.0f) {
         ID2D1SolidColorBrush* trackBrush = nullptr;
-        const D2D1_COLOR_F trackColour = PillInk(0.22f * opacity);
+        const D2D1_COLOR_F trackColour = CardInk(0.22f * opacity);
         if (SUCCEEDED(context->CreateSolidColorBrush(trackColour, &trackBrush)) &&
             trackBrush) {
             const D2D1_ROUNDED_RECT track = {
@@ -2827,7 +2827,7 @@ void DrawIndicatorGlyph(ID2D1DeviceContext2* context, TextRenderer::IndicatorIco
     if (!context || !glyphFormat) return;
 
     ID2D1SolidColorBrush* brush = nullptr;
-    const D2D1_COLOR_F ink = D2D1::ColorF(0.94f, 0.95f, 0.98f, 0.95f * opacity);
+    const D2D1_COLOR_F ink = island::CardInk(0.95f * opacity);
     if (FAILED(context->CreateSolidColorBrush(ink, &brush)) || !brush) return;
 
     const float cx = (box.left + box.right) * 0.5f;
@@ -2861,7 +2861,7 @@ void DrawOutputDeviceMark(ID2D1DeviceContext2* context, const RectF& box, float 
     if (box.right <= box.left || box.bottom <= box.top) return;
 
     ID2D1SolidColorBrush* brush = nullptr;
-    const D2D1_COLOR_F ink = D2D1::ColorF(0.94f, 0.95f, 0.98f, 0.90f * opacity);
+    const D2D1_COLOR_F ink = island::CardInk(0.90f * opacity);
     if (FAILED(context->CreateSolidColorBrush(ink, &brush)) || !brush) return;
 
     ID2D1Factory* factory = nullptr;
@@ -3031,7 +3031,7 @@ void FillCardSurface(ID2D1DeviceContext2* context, const RoundedBox& box, float 
     }
     const D2D1_COLOR_F fillColour = D2D1::ColorF(theme.cardFill.r, theme.cardFill.g, theme.cardFill.b,
                                                 theme.cardFill.a * opacity);
-    const D2D1_COLOR_F edgeColour = island::PillInk(theme.cardEdge * opacity);
+    const D2D1_COLOR_F edgeColour = island::CardInk(theme.cardEdge * opacity);
     // Created here rather than borrowed from the text renderer's brush cache: this function is free
     // rather than a member (the music card and the notification call it before the class is in scope),
     // and it runs once or twice a frame rather than once per icon or per tile.
@@ -3135,12 +3135,12 @@ void TextRenderer::DrawSystemPanel(ID2D1DeviceContext2* context, const RoundedBo
                 // The OFF tile: a wash of the theme's ink over the card, and a hairline of the same ink.
                 // Both were fixed white, which is the one colour a theme with a coloured ink would show up
                 // against as a grey patch.
-                const D2D1_COLOR_F surface = island::PillInk(0.055f * opacity);
+                const D2D1_COLOR_F surface = island::CardInk(0.055f * opacity);
                 if ((fillBrush = BrushFor(context, surface)) != nullptr) {
                     context->FillRoundedRectangle(&rounded, fillBrush);
                 }
                 ID2D1SolidColorBrush* edge = nullptr;
-                const D2D1_COLOR_F border = island::PillInk(0.13f * opacity);
+                const D2D1_COLOR_F border = island::CardInk(0.13f * opacity);
                 if ((edge = BrushFor(context, border)) != nullptr) {
                     context->DrawRoundedRectangle(&rounded, edge, 1.0f);
                 }
@@ -3158,7 +3158,7 @@ void TextRenderer::DrawSystemPanel(ID2D1DeviceContext2* context, const RoundedBo
         // two display tiles, and on none of the plain switches -- see the field's own comment in the header.
         if (tile.chevron && gearGlyphFormat_ && layout.tiles[i].right > layout.tiles[i].left) {
             ID2D1SolidColorBrush* chevronBrush = nullptr;
-            const D2D1_COLOR_F ink = PillInk(0.72f * opacity);
+            const D2D1_COLOR_F ink = CardInk(0.72f * opacity);
             if ((chevronBrush = BrushFor(context, ink)) != nullptr) {
                 const float side = 14.0f;
                 const float centreY = (layout.tiles[i].top + layout.tiles[i].bottom) * 0.5f;
@@ -3178,7 +3178,7 @@ void TextRenderer::DrawSystemPanel(ID2D1DeviceContext2* context, const RoundedBo
             (tile.stateText && tile.stateText[0] != L'\0') ? tile.stateText : tile.label;
         if (caption && caption[0] != L'\0') {
             ID2D1SolidColorBrush* labelBrush = nullptr;
-            const D2D1_COLOR_F ink = PillInk(0.94f * opacity);
+            const D2D1_COLOR_F ink = CardInk(0.94f * opacity);
             if ((labelBrush = BrushFor(context, ink)) != nullptr) {
                 // Centred in both directions: the box IS the caption's line.
                 const DWRITE_PARAGRAPH_ALIGNMENT previous = bodyFormat_->GetParagraphAlignment();
@@ -3227,7 +3227,7 @@ void TextRenderer::DrawSystemPanel(ID2D1DeviceContext2* context, const RoundedBo
         // The track, then the filled portion, then the handle. Drawn in that order so the fill covers
         // the track and the handle covers the fill.
         ID2D1SolidColorBrush* trackBrush = nullptr;
-        const D2D1_COLOR_F trackColour = PillInk(0.22f * opacity);
+        const D2D1_COLOR_F trackColour = CardInk(0.22f * opacity);
         if ((trackBrush = BrushFor(context, trackColour)) != nullptr) {
             const D2D1_ROUNDED_RECT rounded = {
                 D2D1::RectF(track.left, centreY - barHeight * 0.5f, track.right,
@@ -3262,7 +3262,7 @@ void TextRenderer::DrawSystemPanel(ID2D1DeviceContext2* context, const RoundedBo
         }
 
         ID2D1SolidColorBrush* handleBrush = nullptr;
-        const D2D1_COLOR_F handleColour = PillInk(0.96f * opacity);
+        const D2D1_COLOR_F handleColour = CardInk(0.96f * opacity);
         if ((handleBrush = BrushFor(context, handleColour)) != nullptr) {
             // The handle is a touch larger while its row is the one being used (see sliderEmphasis): the
             // change is 2 DIP on the radius, which reads as "this row" without the track moving at all.
@@ -3286,7 +3286,7 @@ void TextRenderer::DrawSystemPanel(ID2D1DeviceContext2* context, const RoundedBo
 
         if (gearGlyphFormat_) {
             ID2D1SolidColorBrush* chevronBrush = nullptr;
-            const D2D1_COLOR_F ink = PillInk(0.72f * opacity);
+            const D2D1_COLOR_F ink = CardInk(0.72f * opacity);
             if (SUCCEEDED(context->CreateSolidColorBrush(ink, &chevronBrush)) && chevronBrush) {
                 const float side = 13.0f;
                 const D2D1_RECT_F area = D2D1::RectF(
@@ -3323,7 +3323,7 @@ void TextRenderer::DrawSystemPanel(ID2D1DeviceContext2* context, const RoundedBo
         std::swprintf(reading, 16, L"%d%%", static_cast<int>(fraction * 100.0f + 0.5f));
 
         ID2D1SolidColorBrush* numberBrush = nullptr;
-        const D2D1_COLOR_F ink = PillInk(0.94f * opacity);
+        const D2D1_COLOR_F ink = CardInk(0.94f * opacity);
         if (SUCCEEDED(context->CreateSolidColorBrush(ink, &numberBrush)) && numberBrush) {
             // The band BETWEEN the slider row and the grid above it, which the layout leaves empty, and a
             // 11 DIP face so the digits fit inside it. The box is the band's full width around the handle
@@ -3346,7 +3346,7 @@ void TextRenderer::DrawSystemPanel(ID2D1DeviceContext2* context, const RoundedBo
     // The settings button, bottom right.
     if (gearGlyphFormat_) {
         ID2D1SolidColorBrush* gearBrush = nullptr;
-        const D2D1_COLOR_F ink = PillInk(0.80f * opacity);
+        const D2D1_COLOR_F ink = CardInk(0.80f * opacity);
         if (SUCCEEDED(context->CreateSolidColorBrush(ink, &gearBrush)) && gearBrush) {
             const D2D1_RECT_F area =
                 D2D1::RectF(layout.gearButton.left, layout.gearButton.top, layout.gearButton.right,
@@ -3367,7 +3367,7 @@ void TextRenderer::DrawSystemPanel(ID2D1DeviceContext2* context, const RoundedBo
         for (int i = 0; i < layout.pageDotCount; ++i) {
             ID2D1SolidColorBrush* dotBrush = nullptr;
             const float alpha = (i == layout.pageIndex ? 0.95f : 0.35f) * opacity;
-            if (SUCCEEDED(context->CreateSolidColorBrush(PillInk(alpha),
+            if (SUCCEEDED(context->CreateSolidColorBrush(CardInk(alpha),
                                                         &dotBrush)) &&
                 dotBrush) {
                 const D2D1_ELLIPSE dot = D2D1::Ellipse(
@@ -3380,7 +3380,7 @@ void TextRenderer::DrawSystemPanel(ID2D1DeviceContext2* context, const RoundedBo
             }
         }
         ID2D1SolidColorBrush* arrowBrush = nullptr;
-        const D2D1_COLOR_F arrowInk = PillInk(0.70f * opacity);
+        const D2D1_COLOR_F arrowInk = CardInk(0.70f * opacity);
         if (SUCCEEDED(context->CreateSolidColorBrush(arrowInk, &arrowBrush)) && arrowBrush) {
             // ChevronUp / ChevronDown out of Segoe MDL2 Assets, the family the icons come from.
             const wchar_t up[] = {L'\uE70E', L'\0'};
@@ -3448,7 +3448,7 @@ void TextRenderer::DrawSoundPage(ID2D1DeviceContext2* context, const RoundedBox&
     const auto brushFor = [&](float alpha, ID2D1SolidColorBrush** brush) {
         *brush = nullptr;
         return SUCCEEDED(context->CreateSolidColorBrush(
-                   D2D1::ColorF(0.94f, 0.95f, 0.98f, alpha * opacity), brush)) &&
+                   island::CardInk(alpha * opacity), brush)) &&
                *brush != nullptr;
     };
 
@@ -3848,8 +3848,8 @@ void TextRenderer::DrawStartPage(ID2D1DeviceContext2* context, const RoundedBox&
 
     FillCardSurface(context, card, opacity);
 
-    const D2D1_COLOR_F ink = PillInk(0.92f * opacity);
-    const D2D1_COLOR_F dim = PillInk(0.50f * opacity);
+    const D2D1_COLOR_F ink = CardInk(0.92f * opacity);
+    const D2D1_COLOR_F dim = CardInk(0.50f * opacity);
     const D2D1_COLOR_F warm = D2D1::ColorF(1.0f, 0.72f, 0.35f, 0.95f * opacity);
 
     ID2D1SolidColorBrush* inkBrush = nullptr;
@@ -3860,8 +3860,8 @@ void TextRenderer::DrawStartPage(ID2D1DeviceContext2* context, const RoundedBox&
     context->CreateSolidColorBrush(ink, &inkBrush);
     context->CreateSolidColorBrush(dim, &dimBrush);
     context->CreateSolidColorBrush(warm, &warmBrush);
-    context->CreateSolidColorBrush(PillInk(0.10f * opacity), &washBrush);
-    context->CreateSolidColorBrush(PillInk(0.07f * opacity), &lineBrush);
+    context->CreateSolidColorBrush(CardInk(0.10f * opacity), &washBrush);
+    context->CreateSolidColorBrush(CardInk(0.07f * opacity), &lineBrush);
 
     const auto fillRounded = [&](const RectF& rect, float radius, ID2D1SolidColorBrush* brush) {
         if (!brush) return;
@@ -3882,7 +3882,7 @@ void TextRenderer::DrawStartPage(ID2D1DeviceContext2* context, const RoundedBox&
         if (!washBrush || amount <= 0.01f) return;
         ID2D1SolidColorBrush* brush = nullptr;
         if (SUCCEEDED(context->CreateSolidColorBrush(
-                PillInk(0.12f * amount * opacity), &brush)) &&
+                CardInk(0.12f * amount * opacity), &brush)) &&
             brush) {
             const D2D1_ROUNDED_RECT rounded = {
                 D2D1::RectF(rect.left, rect.top, rect.right, rect.bottom), radius, radius};

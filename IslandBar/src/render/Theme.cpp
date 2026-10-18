@@ -245,6 +245,32 @@ D2D1_COLOR_F PillInk(float alpha) {
                         theme.ink.b * m + theme.highlight.b * (1.0f - m), Clamp01(alpha));
 }
 
+namespace {
+float g_cardInkMix = 1.0f;
+ULONGLONG g_cardInkAt = 0;
+}
+
+void SetCardInkBackdrop(float luminance) {
+    // The same crossover the pill uses -- a mid-tone desktop keeps the theme's dark ink -- but fed from
+    // the CARD's own sample: the cards hang below the bar, over a different part of the desktop.
+    const float target = Clamp01((luminance - 0.20f) / 0.15f);
+    const ULONGLONG now = GetTickCount64();
+    const float dt = (g_cardInkAt == 0) ? 0.25f : static_cast<float>(now - g_cardInkAt) / 1000.0f;
+    g_cardInkAt = now;
+    const float step = Clamp01(dt * 4.0f);
+    g_cardInkMix += (target - g_cardInkMix) * step;
+}
+
+D2D1_COLOR_F CardInk(float alpha) {
+    const Theme& theme = CurrentTheme();
+    if (!theme.lens) return ThemeInk(alpha);
+    if (theme.pillTop.a > 0.15f || theme.pillBottom.a > 0.15f) return ThemeInk(alpha);
+    const float m = Clamp01(g_cardInkMix);
+    return D2D1::ColorF(theme.ink.r * m + theme.highlight.r * (1.0f - m),
+                        theme.ink.g * m + theme.highlight.g * (1.0f - m),
+                        theme.ink.b * m + theme.highlight.b * (1.0f - m), Clamp01(alpha));
+}
+
 D2D1_COLOR_F ThemeHighlight(float alpha) {
     const D2D1_COLOR_F& colour = CurrentTheme().highlight;
     return D2D1::ColorF(colour.r, colour.g, colour.b, Clamp01(colour.a * alpha));

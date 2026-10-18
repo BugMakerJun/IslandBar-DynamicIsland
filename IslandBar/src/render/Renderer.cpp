@@ -1106,6 +1106,34 @@ void Renderer::RenderFrame(const FrameState& frame) {
                 }
             }
 
+            // THE CARD'S INK IS DECIDED UNDER THE CARD.
+            //
+            // The system panel and the Start menu hang BELOW the bar, over a different part of the
+            // desktop, and they were taking the island's ink -- black words over whatever dark wallpaper
+            // was under the card. Sample the same captured frame the lens uses, at the card's own centre,
+            // once per frame, and let CardInk cross over exactly as PillInk does. The fallback is the
+            // island's own reading, which is the answer when the capture does not cover the card.
+            {
+                float cardLuminance = lens_.BackdropLuminance();
+                if (capture_.Running()) {
+                    ID3D11Texture2D* texture = capture_.LatestTexture();
+                    POINT origin = {0, 0};
+                    ClientToScreen(window_, &origin);
+                    const RECT area = {
+                        origin.x + static_cast<LONG>(std::lround(panelCard.rect.left * scale_)),
+                        origin.y + static_cast<LONG>(std::lround(panelCard.rect.top * scale_)),
+                        origin.x + static_cast<LONG>(std::lround(panelCard.rect.right * scale_)),
+                        origin.y + static_cast<LONG>(std::lround(panelCard.rect.bottom * scale_))};
+                    float sampled = -1.0f;
+                    if (texture &&
+                        lens_.SampleLuminance(texture, capture_.SourceRect(), area, &sampled) &&
+                        sampled >= 0.0f) {
+                        cardLuminance = sampled;
+                    }
+                }
+                island::SetCardInkBackdrop(cardLuminance);
+            }
+
             // ONE CARD AT A TIME, WHICHEVER OWNS IT -- and every one of the three is drawn the same way.
             //
             // The owner is a property of the frame (see NextCardOwner): who it is does not change while the

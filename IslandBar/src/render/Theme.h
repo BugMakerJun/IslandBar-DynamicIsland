@@ -104,6 +104,13 @@ D2D1_COLOR_F PillInk(float alpha);
 // Feeds the measured backdrop luminance (0..1) in; the crossover is smoothed across calls.
 void SetPillInkBackdrop(float luminance);
 
+// The ink for the words ON A CARD. It is a separate measurement from PillInk: the cards hang BELOW the
+// bar, over a different part of the desktop, and the system panel and the Start menu were taking the
+// island's answer -- black words over a dark wallpaper under the card. Fed from the same captured frame
+// as the island's lens, sampled at the card's own screen rectangle.
+D2D1_COLOR_F CardInk(float alpha);
+void SetCardInkBackdrop(float luminance);
+
 // The highlight at an alpha: the light reflected by the material, which is NOT the ink any more.
 D2D1_COLOR_F ThemeHighlight(float alpha);
 

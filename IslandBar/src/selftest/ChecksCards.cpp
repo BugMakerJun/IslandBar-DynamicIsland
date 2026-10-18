@@ -4779,6 +4779,26 @@ void TestMusicCardLayout() {
                           dt6);
                 }
 
+                // The CARD ink is decided by the backdrop UNDER THE CARD, not by the island's: the system
+                // panel and the Start menu hang below the bar, over a different part of the desktop. The
+                // crossover is time-smoothed, so each sample gets a wait longer than one step (250 ms).
+                {
+                    island::SetCardInkBackdrop(0.05f);
+                    Sleep(320);
+                    const D2D1_COLOR_F onDark = island::CardInk(1.0f);
+                    island::SetCardInkBackdrop(0.95f);
+                    Sleep(320);
+                    const D2D1_COLOR_F onLight = island::CardInk(1.0f);
+                    std::swprintf(dt6, 256,
+                                  L"card ink over dark %.2f/%.2f/%.2f, over light %.2f/%.2f/%.2f",
+                                  onDark.r, onDark.g, onDark.b, onLight.r, onLight.g, onLight.b);
+                    Check(onDark.r > 0.7f && onDark.g > 0.7f && onDark.b > 0.7f,
+                          L"a dark backdrop under a card switches its words to the light ink", dt6);
+                    Check(onLight.r < 0.3f && onLight.g < 0.3f && onLight.b < 0.3f,
+                          L"a bright backdrop under a card switches its words to the dark ink", dt6);
+                    island::SetCardInkBackdrop(0.5f);
+                }
+
                 // THE LIQUID-GLASS LAYERS (round 53). Two of them are pure arithmetic, which is the only
                 // reason they can be asserted here at all: the sweep's centre and the wallpaper tint's
                 // clamp. The third -- the drawing -- is checked by the screenshot, as every material is.
