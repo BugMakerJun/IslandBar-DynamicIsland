@@ -686,6 +686,10 @@ private:
     HWND                     lensWindow_  = nullptr;
     HWND                     window_      = nullptr;
     ULONGLONG                lensRetryAt_ = 0;
+    // The blurred album background's average luminance, recomputed when the art's revision changes; the
+    // music card's words choose black or white on it.
+    unsigned long long       musicBackgroundRevision_ = 0;
+    float                    musicBackgroundLuma_ = 0.0f;
     // The pill's size the lens was last shaped for. A change re-warps the last captured frame, because
     // WGC is silent while the window behind is static.
     int                      lensPillW_   = 0;

@@ -1211,6 +1211,17 @@ void Renderer::RenderFrame(const FrameState& frame) {
                     text.durationMs = frame.musicDurationMs > 0 ? frame.musicDurationMs
                                                                 : frame.music->durationMs;
                     text.progressFraction = frame.progressFraction;
+                    // The album's own brightness, for the card's black/white words. Recomputed only when
+                    // the blurred background changes (once per track), not per frame.
+                    if (frame.backgroundPixels && frame.backgroundWidth > 0 && frame.backgroundHeight > 0 &&
+                        frame.backgroundRevision != musicBackgroundRevision_) {
+                        musicBackgroundRevision_ = frame.backgroundRevision;
+                        musicBackgroundLuma_ = AverageLuminance(
+                            frame.backgroundPixels, frame.backgroundWidth, frame.backgroundHeight);
+                    }
+                    text.backgroundLuminance = musicBackgroundLuma_;
+                    // The cover's accent, so the progress bar and the play button follow the album.
+                    text.accent = frame.musicAccent;
 
                     text_->DrawMusicCard(d2dContext_, panelCard, text,
                                          CachedBitmap(frame.artworkPixels, frame.artworkWidth,

@@ -257,6 +257,13 @@ public:
         // 0..1, or <= 0 when the duration is unknown (a live stream), in which case the
         // bar is drawn but never filled.
         float progressFraction = 0.0f;
+        // Average luminance of the blurred album background, 0..1; 0 means "no background". The card's
+        // words switch between black and white on this, because the album -- not the island -- is what
+        // is behind them.
+        float backgroundLuminance = 0.0f;
+        // The accent taken from the cover (island::AccentColourFromArtwork), so the progress bar and the
+        // play button follow the album rather than a fixed blue. A zero alpha means "use the default".
+        D2D1_COLOR_F accent = D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f);
     };
 
     // Draws the now-playing card, laid out like the Windows 11 media flyout: blurred

@@ -51,6 +51,11 @@ struct AccentColour {
 // A cover with nothing saturated in it keeps the default.
 AccentColour AccentColourFromArtwork(const uint8_t* bgra, int width, int height);
 
+// The average luminance (0..1) of a BGRA buffer. The music card's blurred album background is what
+// this is asked about: the words switch between black and white on the result, because the album --
+// not the island -- is what is behind them. Zero for an empty buffer.
+float AverageLuminance(const uint8_t* bgra, int width, int height);
+
 // Which of the decoder's buffers to use.
 //
 // A decoded image's pixels stay valid until the next decode INTO THE SAME BUFFER, and the music path has

@@ -314,6 +314,32 @@ size_t EncodeFrameToPng(IWICImagingFactory* factory, IWICBitmapSource* source,
 
 } // namespace
 
+float AverageLuminance(const uint8_t* bgra, int width, int height) {
+    if (!bgra || width <= 0 || height <= 0) return 0.0f;
+
+    // Sampled on a grid, for the same reason the accent is: the blurred background changes once per
+    // track, and a few hundred pixels a side walked per pixel would be wasted.
+    const int stepX = width > 64 ? width / 64 : 1;
+    const int stepY = height > 64 ? height / 64 : 1;
+
+    double sum = 0.0;
+    int counted = 0;
+    for (int y = 0; y < height; y += stepY) {
+        for (int x = 0; x < width; x += stepX) {
+            const uint8_t* px = bgra + (static_cast<size_t>(y) * width + x) * 4;   // BGRA, premultiplied
+            const float alpha = px[3] / 255.0f;
+            if (alpha < 0.5f) continue;
+            // Unpremultiplied, or a darker pixel's channels come out scaled by its own alpha.
+            const float r = (px[2] / 255.0f) / alpha;
+            const float g = (px[1] / 255.0f) / alpha;
+            const float b = (px[0] / 255.0f) / alpha;
+            sum += 0.2126 * r + 0.7152 * g + 0.0722 * b;
+            ++counted;
+        }
+    }
+    return counted ? static_cast<float>(sum / counted) : 0.0f;
+}
+
 AccentColour AccentColourFromArtwork(const uint8_t* bgra, int width, int height) {
     AccentColour accent;
     if (!bgra || width <= 0 || height <= 0) return accent;

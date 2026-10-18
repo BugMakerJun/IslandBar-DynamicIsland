@@ -286,6 +286,20 @@ void TestImageCodec() {
     Check(!DecodeImage(nullptr, 0, &decoded), L"an empty buffer is refused");
     Check(!DecodeImage(encoded, 0, &decoded), L"a zero length is refused");
 
+    // The music card's words choose black or white from the blurred cover's average luminance. Half
+    // black and half white must read 0.5; an empty buffer has no luminance at all.
+    {
+        const uint8_t halfCover[2 * 2 * 4] = {0,   0,   0,   255, 255, 255, 255, 255,
+                                              0,   0,   0,   255, 255, 255, 255, 255};
+        const float luma = island::AverageLuminance(halfCover, 2, 2);
+        wchar_t detail[128] = {};
+        std::swprintf(detail, 128, L"half black/white -> %.3f", luma);
+        Check(std::abs(luma - 0.5f) < 0.01f,
+              L"a half black, half white cover reads 0.5", detail);
+        Check(island::AverageLuminance(nullptr, 0, 0) == 0.0f,
+              L"an empty background has no luminance", detail);
+    }
+
     // A body-truncated PNG is deliberately NOT asserted to fail, and the reason is
     // worth recording.
     //

@@ -1573,22 +1573,26 @@ void TextRenderer::DrawMusicCard(ID2D1DeviceContext2* context, const RoundedBox&
     FillCardSurface(context, box, opacity);
 
     // --- 1. the blurred album art, filling the card ---------------------
+    //
+    // GLASS, not a photograph: the wash is drawn at just over half strength, so the card's own glass and
+    // the desktop behind it still show, and the album only TINTS the card. The rim is drawn again after
+    // the scrim, because FillCardSurface's rim is under the wash.
     if (background) {
         pushSilhouette();
-        DrawBitmapRect(context, background, layout.artBackground, opacity,
+        DrawBitmapRect(context, background, layout.artBackground, opacity * 0.55f,
                        D2D1_INTERPOLATION_MODE_LINEAR);
         popSilhouette();
     }
 
     // --- 2. the scrim ---------------------------------------------------
     //
-    // Without this the white text sits on whatever the artwork happens to be, and a
-    // bright cover makes it unreadable. 0.62 keeps the colours visible while giving
-    // the text a consistent background, which is what the system flyout does too.
+    // A thin scrim only: 0.48 made the card an opaque dark panel, which hid both the album's colour and
+    // the glass. The words no longer need it for contrast -- they choose black or white from the album's
+    // own average luminance (text.backgroundLuminance).
     {
         pushSilhouette();
         ID2D1SolidColorBrush* scrim = nullptr;
-        const D2D1_COLOR_F scrimColour = D2D1::ColorF(0.04f, 0.05f, 0.08f, 0.48f * opacity);
+        const D2D1_COLOR_F scrimColour = D2D1::ColorF(0.04f, 0.05f, 0.08f, 0.15f * opacity);
         if (SUCCEEDED(context->CreateSolidColorBrush(scrimColour, &scrim)) && scrim) {
             context->FillRectangle(
                 D2D1::RectF(box.rect.left, box.rect.top, box.rect.right, box.rect.bottom),
@@ -1598,11 +1602,38 @@ void TextRenderer::DrawMusicCard(ID2D1DeviceContext2* context, const RoundedBox&
         popSilhouette();
     }
 
-    // Text colour. Everything below uses this one brush, so the whole card's contrast
-    // moves together.
-    const D2D1_COLOR_F primary = PillInk(opacity);
-    const D2D1_COLOR_F secondary = D2D1::ColorF(0.90f, 0.92f, 0.96f, 0.88f * opacity);
-    const D2D1_COLOR_F accent = D2D1::ColorF(0.42f, 0.68f, 0.96f, opacity);
+    // The glass edge, over the album wash and the thin scrim.
+    if (island::CurrentTheme().lens) {
+        const D2D1_ROUNDED_RECT rounded = {
+            D2D1::RectF(box.rect.left, box.rect.top, box.rect.right, box.rect.bottom),
+            box.radiusX, box.radiusY};
+        island::DrawLensRimBand(context, rounded, island::CurrentTheme(), opacity);
+    }
+
+    // Text colour. Everything below uses these three brushes, so the whole card's contrast moves together.
+    // The ALBUM is what is behind the words, not the island: black or white comes from the blurred
+    // background's average. PillInk is only the fallback for a track that published no cover.
+    const bool albumKnown = text.backgroundLuminance > 0.0f;
+    const bool darkAlbum = albumKnown && text.backgroundLuminance < 0.52f;
+    const D2D1_COLOR_F primary =
+        !albumKnown ? PillInk(opacity)
+                    : (darkAlbum ? D2D1::ColorF(0.96f, 0.97f, 1.00f, opacity)
+                                 : D2D1::ColorF(0.04f, 0.05f, 0.08f, opacity));
+    const D2D1_COLOR_F secondary =
+        !albumKnown ? PillInk(0.80f * opacity)
+                    : (darkAlbum ? D2D1::ColorF(0.90f, 0.92f, 0.96f, 0.85f * opacity)
+                                 : D2D1::ColorF(0.18f, 0.20f, 0.26f, 0.86f * opacity));
+    // The accent follows the cover; the fixed blue is only for a cover with no colour and for the
+    // no-cover case. On a light album it is darkened so the progress bar still reads.
+    D2D1_COLOR_F accent = D2D1::ColorF(0.42f, 0.68f, 0.96f, opacity);
+    if (text.accent.a > 0.0f) {
+        accent = D2D1::ColorF(text.accent.r, text.accent.g, text.accent.b, opacity);
+        if (albumKnown && !darkAlbum) {
+            accent.r *= 0.62f;
+            accent.g *= 0.62f;
+            accent.b *= 0.62f;
+        }
+    }
 
     ID2D1SolidColorBrush* primaryBrush = nullptr;
     ID2D1SolidColorBrush* secondaryBrush = nullptr;
@@ -1673,7 +1704,8 @@ void TextRenderer::DrawMusicCard(ID2D1DeviceContext2* context, const RoundedBox&
                         layout.artwork.bottom),
             8.0f, 8.0f};
         ID2D1SolidColorBrush* slotBrush = nullptr;
-        const D2D1_COLOR_F slotColour = PillInk(0.07f * opacity);
+        const D2D1_COLOR_F slotColour =
+            D2D1::ColorF(primary.r, primary.g, primary.b, 0.07f * opacity);
         if (SUCCEEDED(context->CreateSolidColorBrush(slotColour, &slotBrush)) && slotBrush) {
             context->FillRoundedRectangle(&placeholder, slotBrush);
             slotBrush->Release();
