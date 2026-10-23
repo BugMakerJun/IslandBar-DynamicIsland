@@ -7,7 +7,8 @@ Windows 11 的任务栏替代品：一个灵动岛风格的栏，固定在屏幕
 ## 长什么样
 
 ```
-![Uploading image.png…]()
+![Uploading dfcb78fd-1a8a-40bd-988a-51fd53a6eb54.png…]()
+
 
 ```
 
