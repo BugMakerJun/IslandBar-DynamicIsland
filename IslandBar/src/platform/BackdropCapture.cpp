@@ -127,10 +127,24 @@ void BackdropCapture::Stop() {
     if (impl.framePool) { try { impl.framePool.FrameArrived(impl.token); } catch (const winrt::hresult_error&) {} }
     if (impl.session) { try { impl.session.Close(); } catch (const winrt::hresult_error&) {} }
     if (impl.framePool) { try { impl.framePool.Close(); } catch (const winrt::hresult_error&) {} }
-    { std::lock_guard<std::mutex> lock(impl.mutex); if (impl.latestFrame) impl.latestFrame.Close(); impl.latestFrame = nullptr; }
+    {
+        std::lock_guard<std::mutex> lock(impl.mutex);
+        if (impl.latestFrame) impl.latestFrame.Close();
+        impl.latestFrame = nullptr;
+        impl.revision = 0;
+        impl.acquired = 0;
+    }
     impl.session = nullptr;
     impl.framePool = nullptr;
     impl.item = nullptr;
+    impl.context.Reset();
+    impl.stable.Reset();
+    impl.stableWidth = 0;
+    impl.stableHeight = 0;
+    impl.behind = nullptr;
+    impl.frameSpace = false;
+    impl.startWidth = 0;
+    impl.startHeight = 0;
     impl.running = false;
 }
 

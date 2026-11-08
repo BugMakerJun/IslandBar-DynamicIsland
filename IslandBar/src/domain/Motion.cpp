@@ -138,7 +138,7 @@ float (*CurveFor(IslandState from, IslandState to))(float) {
 }
 
 IslandAnchor AnchorForWindow(float originX, float originY, float monitorWidthDip,
-                             float bandHeightDip) {
+                             float bandHeightDip, BarShape shape) {
     (void)originY;   // the vertical anchor is intentionally independent of it
 
     IslandAnchor anchor;
@@ -146,15 +146,18 @@ IslandAnchor AnchorForWindow(float originX, float originY, float monitorWidthDip
     // full-width window, so the window origin has to be subtracted.
     anchor.centerX = monitorWidthDip * 0.5f - originX;
 
-    // Vertically: the margin, and NOTHING else.
+    // Vertically: where the shape starts, and NOTHING else.
     //
-    // The window's own top edge is placed at the top of the work area (see
-    // IslandWindow::Create), so "one margin below the work-area edge" is already
+    // The window's own top edge is placed at the top of the screen (see
+    // IslandWindow::Create), so "one margin below the edge" is already
     // expressed in window-local coordinates. An earlier version also subtracted
     // originY here, which double-counted the offset and put the pill 26 DIP above
     // the top of its own window -- invisible on screen, and caught only because
     // the self-test asserts the pill lies inside the window it was laid out for.
-    anchor.topY = kPillTopMarginDip;
+    //
+    // 2026-11-06: the margin is the SHAPE's now -- the capsule keeps the one margin the bar has always had,
+    // the notch starts flush with the screen's top edge (see domain/BarShape.h).
+    anchor.topY = BarShapeTopMarginDip(shape);
 
     // The band the shell's taskbar claims, when the caller measured one. Clamped rather than trusted:
     // a work area that says the band is nothing (which happens on a machine whose taskbar is on
@@ -163,6 +166,7 @@ IslandAnchor AnchorForWindow(float originX, float originY, float monitorWidthDip
                             bandHeightDip <= kMaxBandHeightDip)
                                ? bandHeightDip
                                : kFullBarHeightDip;
+    anchor.shape = shape;
     return anchor;
 }
 

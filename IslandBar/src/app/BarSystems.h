@@ -29,6 +29,7 @@
 #include "app/AppBar.h"              // AppBarResult
 #include "app/IslandWindow.h"        // IslandWindow, AppBar
 #include "app/PlayerWindow.h"        // PlayerWindowWatch
+#include "app/SettingsWindow.h"      // separate activating settings surface
 #include "media/AudioVolume.h"
 #include "media/Lyrics.h"            // LyricsProvider
 #include "media/MusicSession.h"
@@ -42,6 +43,7 @@
 #include "services/NotificationPipe.h"   // NotificationServer
 #include "services/ToastStore.h"     // ToastReader
 #include "services/WeChatWatch.h"
+#include "services/WindowsFileSearch.h"
 #include "shell/StartApps.h"
 #include "shell/SystemStatus.h"      // SystemStatusReader, SystemStatus
 #include "shell/TrayIcons.h"
@@ -75,12 +77,14 @@ struct BarSystems {
     IslandWindow window;
     Renderer renderer;
     TextRenderer text;
+    SettingsWindow settingsWindow;
 
     // what the outside world tells it about itself
     NotificationStore notifications;
     NotificationServer notificationServer;
     ToastReader toasts;
     WeChatWatcher wechat;
+    WindowsFileSearch fileSearch;
 
     // what is playing
     MusicSession music;

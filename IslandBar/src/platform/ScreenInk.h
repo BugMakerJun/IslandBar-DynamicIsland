@@ -21,6 +21,8 @@
 
 #include <windows.h>
 
+#include <atomic>
+
 namespace island {
 
 class ScreenInk {
@@ -37,6 +39,9 @@ public:
     // Which rectangles to read, in screen pixels. Posted every frame; a list that has not moved costs a
     // comparison and nothing else. Reading starts on the first request and stops with the object.
     void Request(const RECT* rects, int count);
+    // Stops screen readback without ending the worker. The last reading is deliberately kept: the notice
+    // island can still use it while a full-screen application owns the display.
+    void SetPaused(bool paused);
 
     // The mean grey of rectangle `index` from the last reading, 0..1, or -1 when that rectangle has not
     // been read (yet, or at all -- an off-screen patch answers -1 too).
@@ -45,6 +50,7 @@ public:
 private:
     struct State;
     State* state_ = nullptr;
+    std::atomic<bool> paused_{false};
 
     bool Start();
     static unsigned long __stdcall ThreadEntry(void* self);

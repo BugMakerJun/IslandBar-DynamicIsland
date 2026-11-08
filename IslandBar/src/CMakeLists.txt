@@ -54,6 +54,7 @@ add_library(island_core STATIC
 target_link_libraries(island_core PUBLIC island_domain)
 
 add_library(island_platform STATIC
+    platform/AutoStart.cpp
     platform/DisplayBrightness.cpp
     platform/Http.cpp
     platform/IconRaster.cpp
@@ -86,6 +87,7 @@ add_library(island_services STATIC
     services/NotificationPipe.cpp
     services/ToastStore.cpp
     services/WeChatWatch.cpp
+    services/WindowsFileSearch.cpp
 )
 target_link_libraries(island_services PUBLIC island_media)
 
@@ -110,6 +112,7 @@ add_library(island_render STATIC
     render/GlassMaterial.cpp
     render/LensMaterial.cpp
     render/Renderer.cpp
+    render/SettingsRenderer.cpp
     render/TextRenderer.cpp
     render/Theme.cpp
 )
@@ -118,8 +121,10 @@ target_link_libraries(island_render PUBLIC island_shell)
 add_library(island_app STATIC
     app/AppBar.cpp
     app/BarLoop.cpp
+    app/BarSettings.cpp
     app/IslandWindow.cpp
     app/PlayerWindow.cpp
+    app/SettingsWindow.cpp
 )
 target_link_libraries(island_app PUBLIC island_render)
 

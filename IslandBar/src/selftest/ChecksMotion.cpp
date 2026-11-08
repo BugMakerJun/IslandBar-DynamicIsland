@@ -121,10 +121,12 @@ void TestMotion(float originX, float originY, float monitorWidthDip) {
     Check(isStadium(collapsed) && isStadium(hover), L"pill and hover are stadiums");
 
     // The card deliberately is NOT. At 132 DIP tall, half the height would be a
-    // 66 DIP radius, which turns a 560-wide card into a lozenge and eats most of
+    // 66 DIP radius, which turns a 520-wide card into a lozenge and eats most of
     // its usable width; the card uses a small fixed radius instead.
     Check(Nearly(expanded.radiusX, kCardRadiusDip, 0.01f),
           L"the card uses the card radius, not half its height");
+    Check(Nearly(kCardRadiusDip, 24.0f, 0.01f),
+          L"the three Stitch cards share a 24 DIP outer radius");
     Check(expanded.radiusX < heightOf(expanded) * 0.5f,
           L"the card is not a lozenge");
 
@@ -330,6 +332,8 @@ void TestMotion(float originX, float originY, float monitorWidthDip) {
         const float atCard = OuterCardRevealDip(kExpandedHeightDip);
         const float midCard = OuterCardRevealDip((kCollapsedHeightDip + kExpandedHeightDip) * 0.5f);
         const float belowPill = OuterCardRevealDip(kCollapsedHeightDip - 20.0f);
+        const float musicAtCard =
+            CardRevealDipForHeight(kExpandedHeightDip, kMusicCardHeightDip);
         wchar_t detail[192];
         std::swprintf(detail, 192, L"reveal: pill %.1f, mid %.1f, card %.1f, below %.1f DIP",
                       atPill, midCard, atCard, belowPill);
@@ -338,6 +342,8 @@ void TestMotion(float originX, float originY, float monitorWidthDip) {
               L"the whole card is revealed at the card's height", detail);
         Check(Nearly(belowPill, 0.0f, 0.01f), L"the reveal cannot go negative", detail);
         Check(midCard > atPill && midCard < atCard, L"the reveal grows with the box", detail);
+        Check(Nearly(musicAtCard, kMusicCardHeightDip, 0.01f),
+              L"a compact owner reveals only its own card height");
     }
 
     // Reversing mid-flight must continue from where the shape is, never jump.
@@ -366,7 +372,7 @@ void TestMotion(float originX, float originY, float monitorWidthDip) {
     Check(midHeight > kCollapsedHeightDip && midHeight < kExpandedHeightDip,
           L"card transition animates the height");
     // Mid-transition the radius must sit between the two ends' radii -- 18 for the
-    // stadium and 20 for the card -- and must NOT be half the current height, which
+    // stadium and 24 for the card -- and must NOT be half the current height, which
     // is what the old height-derived version produced and what made the card bulge
     // into a lozenge (half of 84 DIP is 42).
     {
@@ -374,7 +380,7 @@ void TestMotion(float originX, float originY, float monitorWidthDip) {
         wchar_t detail[160];
         std::swprintf(detail, 160, L"mid radius=%.2f, half the mid height=%.2f",
                       midRadius, midHeight * 0.5f);
-        // Correct bounds: 18 is the stadium radius (half the resting height) and 20
+        // Correct bounds: 18 is the stadium radius (half the resting height) and 24
         // is the card radius, so 19 is exactly between them. Getting these the wrong
         // way round is easy -- this check failed twice for that reason alone.
         Check(midRadius >= kCollapsedHeightDip * 0.5f - 0.01f &&

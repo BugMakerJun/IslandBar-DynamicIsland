@@ -244,15 +244,19 @@ inline void RowWidths(int taskCount, float* widths) {
 }
 
 // Where the island itself goes: centred, regardless of how many icons there are.
-inline RoundedBox IslandBoxFor(float monitorWidthDip, float pillWidthDip, float pillHeightDip) {
+//
+// `shape` is where the visible box starts (the notch is flush with the screen's top edge, the capsule one
+// margin below it) and both shapes round their corners the same way; see domain/BarShape.h.
+inline RoundedBox IslandBoxFor(float monitorWidthDip, float pillWidthDip, float pillHeightDip,
+                               BarShape shape = BarShape::Capsule) {
     const float centreX = monitorWidthDip * 0.5f;
 
     RoundedBox box;
     box.rect.left = centreX - pillWidthDip * 0.5f;
-    box.rect.top = kPillTopMarginDip;
+    box.rect.top = BarShapeTopMarginDip(shape);
     box.rect.right = box.rect.left + pillWidthDip;
     box.rect.bottom = box.rect.top + pillHeightDip;
-    box.radiusX = std::min(pillHeightDip * 0.5f, pillWidthDip * 0.5f);
+    box.radiusX = std::min(BarShapeRadiusDip(pillHeightDip), pillWidthDip * 0.5f);
     box.radiusY = box.radiusX;
     return box;
 }

@@ -10,6 +10,8 @@
 #include "domain/CardLayout.h"   // HitsTransportButton, for click routing
 
 #include <dwmapi.h>
+#include <commctrl.h>
+#include <imm.h>
 #include <windowsx.h>   // GET_X_LPARAM / GET_Y_LPARAM
 
 #include <algorithm>
@@ -17,25 +19,64 @@
 #include <unordered_map>
 
 #pragma comment(lib, "dwmapi.lib")
+#pragma comment(lib, "imm32.lib")
 
 namespace island {
 namespace {
 
 std::unordered_map<HWND, IslandWindow*> g_windows;
+constexpr const wchar_t* kStartSearchHostClass = L"IslandBar.StartSearchHost";
+constexpr int kStartSearchEditId = 1;
 
 // The Start card's hover target, spelled out for the log: the names are the enum's own, so a reader can
 // follow one from the trace straight back into the code that produced it.
 const wchar_t* StartHitTargetName(IslandWindow::StartHitTarget target) {
     switch (target) {
+        case IslandWindow::StartHitTarget::Search:       return L"search";
         case IslandWindow::StartHitTarget::Pin:         return L"pin";
         case IslandWindow::StartHitTarget::PickerRow:   return L"picker row";
-        case IslandWindow::StartHitTarget::PowerRow:    return L"power row";
         case IslandWindow::StartHitTarget::PowerButton: return L"power button";
         case IslandWindow::StartHitTarget::EmptyGrid:   return L"empty grid";
-    case IslandWindow::StartHitTarget::AllApps:     return L"all apps";
+        case IslandWindow::StartHitTarget::AllApps:     return L"all apps";
+        case IslandWindow::StartHitTarget::PinnedTab:   return L"pinned tab";
+        case IslandWindow::StartHitTarget::AddTile:     return L"add tile";
+        case IslandWindow::StartHitTarget::Chrome:      return L"card";
+        case IslandWindow::StartHitTarget::ClearSearch: return L"clear search";
         case IslandWindow::StartHitTarget::None:        break;
     }
     return L"none";
+}
+
+// The layout's answer, in the window's own words.
+//
+// The geometry lives in domain/CardLayout.h (StartPageHitFor) and this window only renames it: the enum
+// cannot be shared because the window's is part of the frame loop's interface, and a second copy of the
+// hit-test arithmetic is exactly the defect the single function exists to prevent.
+IslandWindow::StartHit StartHitFromPage(const island::StartPageHit& pageHit) {
+    IslandWindow::StartHit hit;
+    hit.index = pageHit.index;
+    switch (pageHit.target) {
+        case island::StartPageTarget::None:        hit.target = IslandWindow::StartHitTarget::None; break;
+        case island::StartPageTarget::Search:      hit.target = IslandWindow::StartHitTarget::Search; break;
+        case island::StartPageTarget::Pin:         hit.target = IslandWindow::StartHitTarget::Pin; break;
+        case island::StartPageTarget::PickerRow:   hit.target = IslandWindow::StartHitTarget::PickerRow; break;
+        case island::StartPageTarget::PowerButton: hit.target = IslandWindow::StartHitTarget::PowerButton; break;
+        case island::StartPageTarget::EmptyGrid:   hit.target = IslandWindow::StartHitTarget::EmptyGrid; break;
+        case island::StartPageTarget::AllApps:     hit.target = IslandWindow::StartHitTarget::AllApps; break;
+        case island::StartPageTarget::PinnedTab:   hit.target = IslandWindow::StartHitTarget::PinnedTab; break;
+        case island::StartPageTarget::AddTile:     hit.target = IslandWindow::StartHitTarget::AddTile; break;
+        case island::StartPageTarget::Chrome:      hit.target = IslandWindow::StartHitTarget::Chrome; break;
+        case island::StartPageTarget::ClearSearch: hit.target = IslandWindow::StartHitTarget::ClearSearch; break;
+    }
+    return hit;
+}
+
+bool IsImeComposing(HWND hwnd) {
+    HIMC context = ImmGetContext(hwnd);
+    if (!context) return false;
+    const LONG bytes = ImmGetCompositionStringW(context, GCS_COMPSTR, nullptr, 0);
+    ImmReleaseContext(hwnd, context);
+    return bytes > 0;
 }
 
 // How often the pointer is re-checked, in milliseconds.
@@ -235,6 +276,20 @@ void IslandWindow::Show(bool show) {
 }
 
 void IslandWindow::Destroy() {
+    if (startSearchHost_ && IsWindow(startSearchHost_)) {
+        DestroyWindow(startSearchHost_);
+    }
+    startSearchHost_ = nullptr;
+    startSearchEdit_ = nullptr;
+    startSearchVisible_ = false;
+    if (startSearchBrush_) {
+        DeleteObject(startSearchBrush_);
+        startSearchBrush_ = nullptr;
+    }
+    if (startSearchFont_) {
+        DeleteObject(startSearchFont_);
+        startSearchFont_ = nullptr;
+    }
     if (pointerTimer_ && hwnd_) {
         KillTimer(hwnd_, pointerTimer_);
         pointerTimer_ = 0;
@@ -277,14 +332,26 @@ void IslandWindow::Layout() {
     const float widthDip   = PixelsToDip(rect_.right - rect_.left, monitor_.dpi);
 
     // The full-screen state is exactly as tall as the band; see IslandAnchor::bandHeightDip.
-    anchor_ = AnchorForWindow(originX, originY, widthDip, BandHeightDip());
+    anchor_ = AnchorForWindow(originX, originY, widthDip, BandHeightDip(), shape_);
     motion_.SetAnchor(anchor_);
+}
+
+void IslandWindow::SetBarShape(BarShape shape) {
+    if (shape_ == shape) return;
+    shape_ = shape;
+    // Before the window exists this is all that is needed: Create() lays the anchor out from shape_.
+    if (!hwnd_) return;
+    // The anchor is where the shape lives once the window exists, so the layout, the region and the hit
+    // tests all follow from this one call. The motion is re-anchored too, so the pill GLIDES from one form
+    // to the other rather than snapping.
+    Layout();
+    ApplyInputRegion();
+    InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
 bool IslandWindow::SetState(IslandState state) {
     return motion_.SetTarget(state);
 }
-
 bool IslandWindow::Tick(float dtSeconds) {
     return motion_.Tick(dtSeconds);
 }
@@ -315,13 +382,28 @@ bool IslandWindow::TakeRightClick() {
 }
 
 void IslandWindow::SetStartState(bool pageOpen, int page, int pinCount, int listCount,
-                                 int pickerScrollRow, bool allAppsMode) {
+                                 int pickerScrollRow, bool searchActive,
+                                 const SearchResultKind* resultKinds, int resultCount) {
+    if (!pageOpen && startPageOpen_) {
+        EndStartSearch(true, false);
+        startSearchEnter_ = false;
+        startSearchCancel_ = false;
+        startSearchNavigation_ = 0;
+    }
     startPageOpen_ = pageOpen;
     startPage_ = page;
     startPinCount_ = pinCount > 0 ? pinCount : 0;
     startListCount_ = listCount > 0 ? listCount : 0;
     startPickerScroll_ = pickerScrollRow > 0 ? pickerScrollRow : 0;
-    startAllApps_ = allAppsMode;
+    startSearchActive_ = searchActive;
+    startSearchKindsCount_ = 0;
+    if (resultKinds && resultCount > 0) {
+        startSearchKindsCount_ =
+            resultCount < kStartSearchMaxResults ? resultCount : kStartSearchMaxResults;
+        for (int i = 0; i < startSearchKindsCount_; ++i) {
+            startSearchKinds_[i] = resultKinds[i];
+        }
+    }
 }
 
 void IslandWindow::ScrollStartPicker(int notches) {
@@ -331,27 +413,12 @@ void IslandWindow::ScrollStartPicker(int notches) {
 
     // How many rows fit: the same layout the drawing and the hit test use, from the card this window is
     // told the position of.
-    int rowsOnScreen = 1;
-    int lastFirstRow = 0;
-    if (startAllApps_) {
-        // The 全部 grid scrolls in whole ROWS of `kStartColumns`: its visible height is the layout's own
-        // `kStartRows` rows, and the last first-row is the one whose final row is still on screen.
-        const int totalRows =
-            (startListCount_ + island::kStartColumns - 1) / island::kStartColumns;
-        rowsOnScreen = island::kStartRows;
-        lastFirstRow = totalRows - rowsOnScreen;
-    } else if (cardLeftDip_ > 0.0f) {
-        const RoundedBox card =
-            PlacedCardFor(BoxForState(IslandState::Collapsed, CurrentAnchor()), cardLeftDip_);
-        const island::StartPageLayout layout = island::StartPageFor(card);
-        if (layout.valid) {
-            rowsOnScreen =
-                static_cast<int>((layout.grid.bottom - layout.grid.top) / island::kStartRowHeight);
-        }
-        lastFirstRow = startListCount_ - (rowsOnScreen + 1);
-    } else {
-        lastFirstRow = startListCount_ - (rowsOnScreen + 1);
-    }
+    // Both the search results and "view all" are six-column grids, so scrolling always moves whole rows
+    // of three visible rows.
+    constexpr int rowsOnScreen = island::kStartRows;
+    const int totalRows =
+        (startListCount_ + island::kStartColumns - 1) / island::kStartColumns;
+    const int lastFirstRow = totalRows - rowsOnScreen;
     if (lastFirstRow > 0 && moved > lastFirstRow) moved = lastFirstRow;
     if (lastFirstRow <= 0) moved = 0;
     startPickerScroll_ = moved;
@@ -370,39 +437,149 @@ IslandWindow::StartHit IslandWindow::StartHitAtScreen(POINT screenPoint) const {
     float localX = 0.0f;
     float localY = 0.0f;
     ToLocalDip(screenPoint, &localX, &localY);
-    const RoundedBox card =
-        PlacedCardFor(BoxForState(IslandState::Collapsed, CurrentAnchor()), cardLeftDip_);
+    const RoundedBox card = PlacedCard();
+    // The SAME function the hover path uses (see StartPageHitFor): a press and the highlight under the
+    // pointer cannot land on two different controls.
+    return StartHitFromPage(island::StartPageHitFor(
+        card, startPage_, startPinCount_, startListCount_, startPickerScroll_, localX, localY,
+        startSearchActive_, startSearchKinds_, startSearchKindsCount_,
+        startSearchText_[0] != L'\0'));
+}
+
+void IslandWindow::BeginStartSearch() {
+    if (!hwnd_ || cardLeftDip_ <= 0.0f) return;
+
+    if (!startSearchHost_) {
+        WNDCLASSEXW wc = {};
+        wc.cbSize = sizeof(wc);
+        wc.lpfnWndProc = &IslandWindow::SearchHostProcThunk;
+        wc.hInstance = GetModuleHandleW(nullptr);
+        wc.hCursor = LoadCursorW(nullptr, IDC_IBEAM);
+        wc.lpszClassName = kStartSearchHostClass;
+        if (!RegisterClassExW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return;
+
+        startSearchHost_ =
+            CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, kStartSearchHostClass,
+                            L"IslandBar Search",
+                            WS_POPUP, 0, 0, 1, 1, hwnd_, nullptr, GetModuleHandleW(nullptr), this);
+        if (!startSearchHost_) return;
+
+        startSearchEdit_ =
+            CreateWindowExW(0, L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_LEFT | ES_AUTOHSCROLL,
+                            0, 0, 1, 1, startSearchHost_,
+                            reinterpret_cast<HMENU>(static_cast<INT_PTR>(kStartSearchEditId)),
+                            GetModuleHandleW(nullptr), nullptr);
+        if (!startSearchEdit_) return;
+        SetWindowLongPtrW(startSearchEdit_, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
+        startSearchEditProc_ = reinterpret_cast<WNDPROC>(
+            SetWindowLongPtrW(startSearchEdit_, GWLP_WNDPROC,
+                              reinterpret_cast<LONG_PTR>(&IslandWindow::SearchEditProcThunk)));
+        SendMessageW(startSearchEdit_, EM_SETLIMITTEXT, 63, 0);
+        SendMessageW(startSearchEdit_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
+                     MAKELPARAM(10, 10));
+        SendMessageW(startSearchEdit_, EM_SETCUEBANNER, TRUE,
+                     reinterpret_cast<LPARAM>(L"\u641C\u7D22\u5E94\u7528\u3001\u8BBE\u7F6E\u6216\u6587\u4EF6\u2026"));
+
+        startSearchBrush_ = CreateSolidBrush(RGB(6, 8, 12));
+        startSearchFont_ =
+            CreateFontW(-19, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                        OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                        DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
+        SendMessageW(startSearchEdit_, WM_SETFONT,
+                     reinterpret_cast<WPARAM>(startSearchFont_), TRUE);
+    }
+
+    const RoundedBox card = PlacedCard();
     const island::StartPageLayout layout = island::StartPageFor(card);
-    StartHit hit;
-    if (island::StartRectHasPoint(layout.powerButton, localX, localY)) {
-        hit.target = StartHitTarget::PowerButton;
-        return hit;
+    if (!layout.valid) return;
+    RECT windowRect = {};
+    if (!GetWindowRect(hwnd_, &windowRect)) return;
+    const int x = windowRect.left + static_cast<int>(std::lround(layout.searchHint.left * scale_));
+    const int y = windowRect.top +
+                  static_cast<int>(std::lround((layout.search.top + 5.0f) * scale_));
+    const int width =
+        static_cast<int>(std::lround((layout.searchHint.right - layout.searchHint.left) * scale_));
+    const int height =
+        static_cast<int>(std::lround((layout.search.bottom - layout.search.top - 10.0f) * scale_));
+    SetWindowPos(startSearchHost_, HWND_TOPMOST, x, y, width, height,
+                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    HRGN region = CreateRoundRectRgn(0, 0, width + 1, height + 1,
+                                     static_cast<int>(12 * scale_), static_cast<int>(12 * scale_));
+    SetWindowRgn(startSearchHost_, region, TRUE);
+    SetWindowPos(startSearchEdit_, nullptr, 0, 0, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
+
+    const HWND foreground = GetForegroundWindow();
+    if (foreground && foreground != startSearchHost_ && foreground != hwnd_) {
+        startSearchPreviousForeground_ = foreground;
     }
-    if (startPage_ == 2) {
-        const int row = island::StartPowerRowAt(card, localX, localY);
-        if (row >= 0) {
-            hit.target = StartHitTarget::PowerRow;
-            hit.index = row;
-        }
-        return hit;
+    startSearchVisible_ = true;
+    ShowWindow(startSearchHost_, SW_SHOWNORMAL);
+    SetForegroundWindow(startSearchHost_);
+    SetFocus(startSearchEdit_);
+    ++startSearchRevision_;
+    layoutChanged_ = true;
+}
+
+void IslandWindow::EndStartSearch(bool clearText, bool restoreForeground) {
+    const bool wasVisible = startSearchVisible_;
+    if (wasVisible && startSearchHost_ && IsWindow(startSearchHost_)) {
+        ShowWindow(startSearchHost_, SW_HIDE);
     }
-    if (startPage_ == 1) {
-        const int row =
-            island::StartPickerRowAt(card, startPickerScroll_, startListCount_, localX, localY);
-        if (row >= 0) {
-            hit.target = StartHitTarget::PickerRow;
-            hit.index = row;
-        }
-        return hit;
+    startSearchVisible_ = false;
+    bool textChanged = false;
+    if (clearText && startSearchEdit_ && GetWindowTextLengthW(startSearchEdit_) > 0) {
+        SetWindowTextW(startSearchEdit_, L"");
+        startSearchText_[0] = L'\0';
+        textChanged = true;
     }
-    const int pin = island::StartPinCellAt(layout, startPinCount_, localX, localY);
-    if (pin >= 0) {
-        hit.target = StartHitTarget::Pin;
-        hit.index = pin;
-    } else if (island::StartRectHasPoint(layout.grid, localX, localY)) {
-        hit.target = StartHitTarget::EmptyGrid;
+    if (wasVisible && restoreForeground && startSearchPreviousForeground_ &&
+        IsWindow(startSearchPreviousForeground_)) {
+        SetForegroundWindow(startSearchPreviousForeground_);
     }
-    return hit;
+    if (wasVisible || textChanged) {
+        ++startSearchRevision_;
+        layoutChanged_ = true;
+    }
+}
+
+void IslandWindow::SetStartSearchText(const wchar_t* text) {
+    if (!startSearchEdit_) return;
+    SetWindowTextW(startSearchEdit_, text ? text : L"");
+    OnStartSearchChanged();
+}
+
+bool IslandWindow::TakeStartSearchEnter() {
+    if (!startSearchEnter_) return false;
+    startSearchEnter_ = false;
+    return true;
+}
+
+bool IslandWindow::TakeStartSearchCancel() {
+    if (!startSearchCancel_) return false;
+    startSearchCancel_ = false;
+    return true;
+}
+
+int IslandWindow::TakeStartSearchNavigation() {
+    const int movement = startSearchNavigation_;
+    startSearchNavigation_ = 0;
+    return movement;
+}
+
+void IslandWindow::OnStartSearchChanged() {
+    if (!startSearchEdit_) return;
+    GetWindowTextW(startSearchEdit_, startSearchText_,
+                   static_cast<int>(sizeof(startSearchText_) / sizeof(startSearchText_[0])));
+    ++startSearchRevision_;
+    layoutChanged_ = true;
+}
+
+void IslandWindow::OnStartSearchLostFocus() {
+    if (!startSearchVisible_) return;
+    startSearchVisible_ = false;
+    if (startSearchHost_) ShowWindow(startSearchHost_, SW_HIDE);
+    ++startSearchRevision_;
+    layoutChanged_ = true;
 }
 
 bool IslandWindow::TakePress(POINT* screenPoint) {
@@ -416,7 +593,7 @@ RECT IslandWindow::InputRegionFor(const MonitorGeometry& monitor, IslandState st
                                   const IslandAnchor& anchor, const RoundedBox& current,
                                   float cardLeftDip, int taskIconCount,
                                   float statusStripWidthDip, int trayIconCount,
-                                  bool noticeStripUp) {
+                                  bool noticeStripUp, float cardHeightDip, float cardWidthDip) {
     // The bounding box of what the bar actually DRAWS, in window pixels.
     //
     // Horizontally it runs from the left of the state's own shape to the right of the longest icon row
@@ -473,7 +650,7 @@ RECT IslandWindow::InputRegionFor(const MonitorGeometry& monitor, IslandState st
     // for an animation that has ~50 frames. And it cannot help: a point that is inside the region but
     // outside the drawn shapes is still answered HTTRANSPARENT by WM_NCHITTEST, so a generous region
     // costs nothing and passes the click through anyway.
-    const float cardBottomDip = cardTopDip + kExpandedHeightDip;
+    const float cardBottomDip = cardTopDip + cardHeightDip;
     const bool cardUp = (cardLeftDip > 0.0f);
     RoundedBox shapeForRegion = shape;
     if (cardUp) {
@@ -515,7 +692,7 @@ RECT IslandWindow::InputRegionFor(const MonitorGeometry& monitor, IslandState st
     // The card's own rectangle is the only correct answer while a card is up, and this is the sixth time
     // that sentence has had to be written in this file.
     if (cardLeftDip > 0.0f) {
-        const float cardRight = cardLeftDip + island::kExpandedWidthDip;
+        const float cardRight = cardLeftDip + cardWidthDip;
         if (cardRight > right) right = cardRight;
     }
 
@@ -565,7 +742,7 @@ RECT IslandWindow::InputRegionFor(const MonitorGeometry& monitor, IslandState st
     // region cannot disagree with what is drawn -- with or without a card open.
     const RoundedBox restingIsland =
         IslandBoxFor(widthDip, noticeStripUp ? island::kNoticeStripWidthDip : kCollapsedWidthDip,
-                     kCollapsedHeightDip);
+                     kCollapsedHeightDip, anchor.shape);
     // Where the ICON ROW is measured from: the pill, or the notice strip while one is up. The row has to
     // start clear of whatever shape is beside it, and the region is what decides whether the icons can be
     // pressed at all.
@@ -579,9 +756,9 @@ RECT IslandWindow::InputRegionFor(const MonitorGeometry& monitor, IslandState st
     // window-manager call per change for nothing.
     const int wanted = taskIconCount < 0 ? kMaxTaskIcons : taskIconCount;
     const int fitting = TaskIconsThatFit(widthDip, wanted);
-    const float cardWidthDip = (cardLeftDip > 0.0f) ? kExpandedWidthDip : 0.0f;
+    const float rowCardWidthDip = (cardLeftDip > 0.0f) ? cardWidthDip : 0.0f;
     const float rowLeft =
-        TaskRowFor(rowWithTray, fitting > 0 ? fitting : 1, cardLeftDip, cardWidthDip).left;
+        TaskRowFor(rowWithTray, fitting > 0 ? fitting : 1, cardLeftDip, rowCardWidthDip).left;
     // The row's right edge at its WIDEST, not at rest.
     //
     // This used the resting width of every button, which is 30 DIP each -- but a button the pointer is on
@@ -658,14 +835,15 @@ void IslandWindow::ApplyInputRegion() {
     const float widthDip = PixelsToDip(rect_.right - rect_.left, monitor_.dpi);
     // With the band, so that the region and the full-screen bar it must cover are the same height --
     // the only state whose height comes from the monitor rather than from a constant.
-    const IslandAnchor anchor = AnchorForWindow(originX, originY, widthDip, BandHeightDip());
+    const IslandAnchor anchor = AnchorForWindow(originX, originY, widthDip, BandHeightDip(), shape_);
 
     // The card's left edge is passed so the region can follow the icon row past it. It is the value the
     // renderer was given, held on the window for exactly this reason: a plan for where the card goes that
     // only the renderer knows about is a plan the clickable area cannot keep up with.
     const RECT region =
         InputRegionFor(monitor_, motion_.Target(), anchor, motion_.Current(), cardLeftDip_,
-                       taskButtonCount_, statusStripWidthDip_, trayIconCount_, noticeStripUp_);
+                       taskButtonCount_, statusStripWidthDip_, trayIconCount_, noticeStripUp_,
+                       cardHeightDip_, cardWidthDip_);
 
     // Skipped when it is the same rectangle as last time.
     //
@@ -710,7 +888,7 @@ RoundedBox IslandWindow::LayoutIslandFor() const {
     // the icon row out with it. Asked through one rule (RowAnchorBox) so the region, the hit tests and the
     // drawing cannot disagree about where those controls are -- the failure mode being a button painted in
     // one place and clickable in another.
-    const RoundedBox resting = IslandBoxFor(widthDip, kCollapsedWidthDip, kCollapsedHeightDip);
+    const RoundedBox resting = IslandBoxFor(widthDip, kCollapsedWidthDip, kCollapsedHeightDip, shape_);
     return RowAnchorBox(motion_.Current(), resting);
 }
 
@@ -737,6 +915,9 @@ bool IslandWindow::PointerOverControl(POINT screenPoint) const {
     // the CURSOR, so the three dots that open the tray page showed a plain arrow -- the same defect the
     // media card's transport buttons had, reported as "这些按钮 鼠标移上去 应该变成小手".
     if (TrayButtonAtScreen(screenPoint)) return true;
+    if (trayPageOpen_ && (TrayCellHovered() >= 0 || TrayTaskManagerAtScreen(screenPoint))) {
+        return true;
+    }
 
     // THE CARD'S CONTROLS ARE THE CONTROLS OF THE CARD THAT IS UP.
     //
@@ -795,7 +976,8 @@ int IslandWindow::IconAtScreen(POINT screenPoint) const {
 bool IslandWindow::HitTestScreen(POINT screenPoint) const {
     return ShouldAcceptPointer(monitor_, rect_, screenPoint, motion_.Target(),
                                RowButtonCount(), cardLeftDip_, fullscreenApp_, trayIconCount_,
-                               motion_.Current(), noticeStripUp_);
+                               motion_.Current(), noticeStripUp_, shape_, cardHeightDip_,
+                               cardWidthDip_);
 }
 
 void IslandWindow::SetFullscreenApp(bool fullscreenApp) {
@@ -806,13 +988,28 @@ void IslandWindow::SetTrayIconCount(int count) {
     trayIconCount_ = count < 0 ? 0 : count;
 }
 
+void IslandWindow::SetTrayPageOpen(bool open) {
+    if (trayPageOpen_ == open) return;
+    trayPageOpen_ = open;
+    // The page can appear under a pointer that has not moved, so the next poll must not early-out on the
+    // previous cursor position alone.
+    havePointer_ = false;
+}
+
+bool IslandWindow::TrayTaskManagerAtScreen(POINT screenPoint) const {
+    if (!trayPageOpen_ || !hwnd_ || cardLeftDip_ <= 0.0f) return false;
+    float localX = 0.0f;
+    float localY = 0.0f;
+    ToLocalDip(screenPoint, &localX, &localY);
+    return island::TrayPageTaskManagerAt(PlacedCard(), trayIconCount_, localX, localY);
+}
+
 void IslandWindow::OpenTrayMenu(int cell, int entryCount) {
     if (cell < 0 || trayIconCount_ <= 0 || cardLeftDip_ <= 0.0f) {
         CloseTrayMenu();
         return;
     }
-    const RoundedBox card =
-        PlacedCardFor(BoxForState(IslandState::Collapsed, CurrentAnchor()), cardLeftDip_);
+    const RoundedBox card = PlacedCard();
     const island::TrayPageLayout page = TrayPageFor(card, trayIconCount_);
     if (cell >= page.count) {
         CloseTrayMenu();
@@ -860,8 +1057,7 @@ SystemPanelHit IslandWindow::SystemPanelHitAtScreen(POINT screenPoint) const {
     //
     // The arithmetic now lives in PlacedCardFor, because the music card's transport controls had the same
     // fault in both axes (HANDOFF 7.86) and a second copy would have been a second chance to differ.
-    const RoundedBox card =
-        PlacedCardFor(BoxForState(IslandState::Collapsed, CurrentAnchor()), cardLeftDip_);
+    const RoundedBox card = PlacedCard();
     // The slider count comes from the panel that was last BUILT, not from a constant: the brightness row
     // exists only when the display answered for it, and a hit test that assumed two rows would put a press
     // between the sliders on the brightness track of a card that has none.
@@ -885,18 +1081,17 @@ void IslandWindow::CloseSoundPage() {
 void IslandWindow::SetSoundPageScroll(float scroll) {
     // Clamped HERE, from the same layout the drawing uses: a scroll the content cannot support would leave
     // the page blank with no way back, which is what "the page scrolled off the top" looks like.
-    const RoundedBox card =
-        PlacedCardFor(BoxForState(IslandState::Collapsed, CurrentAnchor()), cardLeftDip_);
+    const RoundedBox card = PlacedCard();
     const float limit = SoundPageScrollLimit(card, soundPage_.deviceCount, soundPage_.mixCount);
     if (scroll < 0.0f) scroll = 0.0f;
     if (scroll > limit) scroll = limit;
     soundScroll_ = scroll;
 }
 
-bool IslandWindow::TakeSoundWheel(int* notches) {
+bool IslandWindow::TakeCardWheel(int* notches) {
     if (!notches) return false;
-    const int pending = soundWheelNotches_;
-    soundWheelNotches_ = 0;
+    const int pending = cardWheelNotches_;
+    cardWheelNotches_ = 0;
     if (pending == 0) return false;
     *notches = pending;
     return true;
@@ -911,8 +1106,7 @@ SoundPageHit IslandWindow::SoundPageHitAtScreen(POINT screenPoint) const {
     float localY = 0.0f;
     ToLocalDip(screenPoint, &localX, &localY);
 
-    const RoundedBox card =
-        PlacedCardFor(BoxForState(IslandState::Collapsed, CurrentAnchor()), cardLeftDip_);
+    const RoundedBox card = PlacedCard();
     return SoundPageHitFor(card, soundPage_.deviceCount, soundPage_.mixCount, soundScroll_, localX,
                            localY);
 }
@@ -926,8 +1120,7 @@ int IslandWindow::SoundScrollJumpFor(POINT screenPoint) const {
 
     // The same layout the click was hit-tested against, so the thumb the press is compared with is the thumb
     // that was drawn.
-    const RoundedBox card =
-        PlacedCardFor(BoxForState(IslandState::Collapsed, CurrentAnchor()), cardLeftDip_);
+    const RoundedBox card = PlacedCard();
     const SoundPageLayout layout =
         SoundPageFor(card, soundPage_.deviceCount, soundPage_.mixCount, soundScroll_);
 
@@ -946,8 +1139,7 @@ bool IslandWindow::PanelSliderFractionForDrag(int row, POINT screenPoint, float*
     float localY = 0.0f;
     ToLocalDip(screenPoint, &localX, &localY);
 
-    const RoundedBox card =
-        PlacedCardFor(BoxForState(IslandState::Collapsed, CurrentAnchor()), cardLeftDip_);
+    const RoundedBox card = PlacedCard();
     // WHICH row, because there are two now: 0 is the volume and 1 the brightness, the same numbering the
     // hit test uses, and the row's own track is what the pointer is followed along.
     const SystemPanelLayout layout =
@@ -971,8 +1163,7 @@ bool IslandWindow::MixerSliderFractionForDrag(int row, POINT screenPoint, float*
     float localY = 0.0f;
     ToLocalDip(screenPoint, &localX, &localY);
 
-    const RoundedBox card =
-        PlacedCardFor(BoxForState(IslandState::Collapsed, CurrentAnchor()), cardLeftDip_);
+    const RoundedBox card = PlacedCard();
     const SoundPageLayout layout =
         SoundPageFor(card, soundPage_.deviceCount, soundPage_.mixCount, soundScroll_);
     if (row >= layout.sessionCount) return false;
@@ -1002,8 +1193,7 @@ CardControl IslandWindow::MusicControlAtScreen(POINT screenPoint) const {
     // 2560 monitor: drawn at x 853..1373 y 50..300, tested at x 1020..1540 y 6..256 -- so every transport
     // button was 167 DIP to the right and 44 DIP up from where it appears, and the controls could not be
     // pressed at all. See PlacedCardFor.
-    const RoundedBox card =
-        PlacedCardFor(BoxForState(IslandState::Collapsed, CurrentAnchor()), cardLeftDip_);
+    const RoundedBox card = PlacedCard();
     return MusicControlAt(card, localX, localY);
 }
 
@@ -1014,13 +1204,20 @@ IslandAnchor IslandWindow::CurrentAnchor() const {
     // The band goes with it: the frame loop reads this anchor to lay the bar out, and an anchor that
     // disagreed with the window's own would put the full-screen bar at a different height from the
     // region that has to cover it.
-    return AnchorForWindow(originX, originY, widthDip, BandHeightDip());
+    return AnchorForWindow(originX, originY, widthDip, BandHeightDip(), shape_);
+}
+
+RoundedBox IslandWindow::PlacedCard() const {
+    return PlacedCardFor(BoxForState(IslandState::Collapsed, CurrentAnchor()), cardLeftDip_,
+                         cardWidthDip_, cardHeightDip_);
 }
 
 bool IslandWindow::ShouldAcceptPointer(const MonitorGeometry& monitor, const RECT& windowRect,
                                        POINT screenPoint, IslandState state, int iconCount,
                                        float cardLeftDip, bool fullscreenApp, int trayIconCount,
-                                       const RoundedBox& currentShape, bool noticeStripUp) {
+                                       const RoundedBox& currentShape, bool noticeStripUp,
+                                       BarShape barShape, float cardHeightDip,
+                                       float cardWidthDip) {
     // THE BAR IS NOT THERE WHILE A FULL-SCREEN APPLICATION IS IN FRONT.
     //
     // Nothing of it is drawn in that state (see Renderer::RenderFrame), so there is nothing to point at
@@ -1039,7 +1236,7 @@ bool IslandWindow::ShouldAcceptPointer(const MonitorGeometry& monitor, const REC
     // would answer for a bar that is not the one on screen.
     const IslandAnchor anchor = AnchorForWindow(
         originX, originY, widthDip,
-        PixelsToDip(monitor.work.top - monitor.screen.top, monitor.dpi));
+        PixelsToDip(monitor.work.top - monitor.screen.top, monitor.dpi), barShape);
 
     const float localX = PixelsToDip(screenPoint.x - windowRect.left, monitor.dpi);
     const float localY = PixelsToDip(screenPoint.y - windowRect.top, monitor.dpi);
@@ -1150,7 +1347,7 @@ bool IslandWindow::ShouldAcceptPointer(const MonitorGeometry& monitor, const REC
     // exactly as the user moves down onto it. See CardColumnFor.
     if (cardLeftDip > 0.0f) {
         const RoundedBox restingBar = BoxForState(IslandState::Collapsed, anchor);
-        const RectF column = CardColumnFor(restingBar, cardLeftDip);
+        const RectF column = CardColumnFor(restingBar, cardLeftDip, cardWidthDip, cardHeightDip);
         if (localX >= column.left && localX <= column.right && localY >= column.top &&
             localY <= column.bottom) {
             return true;
@@ -1237,13 +1434,15 @@ void IslandWindow::UpdatePointerState() {
         pointerInCardColumn_ = false;
         if (cardLeftDip_ > 0.0f) {
             const RectF column = CardColumnFor(
-                BoxForState(IslandState::Collapsed, CurrentAnchor()), cardLeftDip_);
+                BoxForState(IslandState::Collapsed, CurrentAnchor()), cardLeftDip_, cardWidthDip_,
+                cardHeightDip_);
             pointerInCardColumn_ = localX >= column.left && localX <= column.right &&
                                    localY >= column.top && localY <= column.bottom;
         }
         const bool accepted = ShouldAcceptPointer(monitor_, rect_, cursor, motion_.Target(),
                                                   RowButtonCount(), cardLeftDip_, false, 0,
-                                                  motion_.Current(), noticeStripUp_);
+                                                  motion_.Current(), noticeStripUp_, shape_,
+                                                  cardHeightDip_, cardWidthDip_);
 
         // `haveTrace_` distinguishes the first poll from a genuine transition.
         if (!haveTrace_ || accepted != lastAccepted_) {
@@ -1326,12 +1525,16 @@ void IslandWindow::UpdatePointerState() {
         // this is the same placed rectangle the renderer drew into -- the same rule the music card's
         // controls and the panel's tiles follow (see PlacedCardFor).
         trayCellHovered_ = -1;
+        trayTaskManagerHovered_ = false;
         if (trayIconCount_ > 0 && cardLeftDip_ > 0.0f) {
             // The anchor the window is laid out from, NOT a local one: the card is placed from the resting
             // pill's box, and the frame loop placed it from this same anchor.
-            const RoundedBox card =
-                PlacedCardFor(BoxForState(IslandState::Collapsed, CurrentAnchor()), cardLeftDip_);
+            const RoundedBox card = PlacedCard();
             trayCellHovered_ = TrayPageCellAt(card, trayIconCount_, localX, localY);
+        }
+        if (trayPageOpen_ && cardLeftDip_ > 0.0f) {
+            trayTaskManagerHovered_ =
+                island::TrayPageTaskManagerAt(PlacedCard(), trayIconCount_, localX, localY);
         }
 
         // ... and the tray's own menu, when one is up: the rows it was OPENED with, not a fresh layout from
@@ -1345,40 +1548,11 @@ void IslandWindow::UpdatePointerState() {
         // ... and the same question for the Start card, which is laid out by the same rule.
         startHit_ = {};
         if (startPageOpen_ && cardLeftDip_ > 0.0f) {
-            const RoundedBox card =
-                PlacedCardFor(BoxForState(IslandState::Collapsed, CurrentAnchor()), cardLeftDip_);
-            const island::StartPageLayout layout = island::StartPageFor(card);
-            if (island::StartRectHasPoint(layout.powerButton, localX, localY)) {
-                startHit_.target = StartHitTarget::PowerButton;
-            } else if (startPage_ == 0 && island::StartRectHasPoint(layout.allApps, localX, localY)) {
-                startHit_.target = StartHitTarget::AllApps;
-            } else if (startPage_ == 2) {
-                const int row = island::StartPowerRowAt(card, localX, localY);
-                if (row >= 0) {
-                    startHit_.target = StartHitTarget::PowerRow;
-                    startHit_.index = row;
-                }
-            } else if (startPage_ == 1) {
-                const int row =
-                    startAllApps_
-                        ? island::StartPickerCellAt(card, startPickerScroll_, startListCount_, localX,
-                                                    localY)
-                        : island::StartPickerRowAt(card, startPickerScroll_, startListCount_, localX,
-                                                   localY);
-                if (row >= 0) {
-                    startHit_.target = StartHitTarget::PickerRow;
-                    startHit_.index = row;
-                }
-            } else {
-                const int pin = island::StartPinCellAt(layout, startPinCount_, localX, localY);
-                if (pin >= 0) {
-                    startHit_.target = StartHitTarget::Pin;
-                    startHit_.index = pin;
-                } else if (island::StartRectHasPoint(layout.grid, localX, localY)) {
-                    // The empty upper area itself: what the user presses to add something.
-                    startHit_.target = StartHitTarget::EmptyGrid;
-                }
-            }
+            const RoundedBox card = PlacedCard();
+            startHit_ = StartHitFromPage(island::StartPageHitFor(
+                card, startPage_, startPinCount_, startListCount_, startPickerScroll_, localX,
+                localY, startSearchActive_, startSearchKinds_, startSearchKindsCount_,
+                startSearchText_[0] != L'\0'));
         }
 
         // Reported on change, like the icon row above and for the same reason: "the highlight is on the
@@ -1417,7 +1591,8 @@ void IslandWindow::UpdatePointerState() {
 
     const bool inside =
         ShouldAcceptPointer(monitor_, rect_, cursor, motion_.Target(), RowButtonCount(),
-                            cardLeftDip_, false, 0, motion_.Current(), noticeStripUp_);
+                            cardLeftDip_, false, 0, motion_.Current(), noticeStripUp_, shape_,
+                            cardHeightDip_, cardWidthDip_);
     if (inside != pointerInside_) {
         pointerInside_ = inside;
         pointerInsideChanged_ = true;
@@ -1503,6 +1678,96 @@ LRESULT CALLBACK IslandWindow::WndProcThunk(HWND hwnd, UINT message, WPARAM wPar
         return self->WndProc(message, wParam, lParam);
     }
     return DefWindowProcW(hwnd, message, wParam, lParam);
+}
+
+LRESULT CALLBACK IslandWindow::SearchHostProcThunk(HWND hwnd, UINT message, WPARAM wParam,
+                                                   LPARAM lParam) {
+    IslandWindow* self = nullptr;
+    if (message == WM_NCCREATE) {
+        auto* cs = reinterpret_cast<CREATESTRUCTW*>(lParam);
+        self = static_cast<IslandWindow*>(cs->lpCreateParams);
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
+    } else {
+        self = reinterpret_cast<IslandWindow*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    }
+    if (!self) return DefWindowProcW(hwnd, message, wParam, lParam);
+    return self->SearchHostProc(hwnd, message, wParam, lParam);
+}
+
+LRESULT IslandWindow::SearchHostProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
+    switch (message) {
+        case WM_COMMAND:
+            if (LOWORD(wParam) == kStartSearchEditId && HIWORD(wParam) == EN_CHANGE) {
+                OnStartSearchChanged();
+            }
+            return 0;
+        case WM_CTLCOLOREDIT: {
+            HDC dc = reinterpret_cast<HDC>(wParam);
+            SetBkMode(dc, TRANSPARENT);
+            SetTextColor(dc, RGB(242, 244, 248));
+            return reinterpret_cast<LRESULT>(startSearchBrush_);
+        }
+        case WM_ERASEBKGND: {
+            RECT area = {};
+            GetClientRect(hwnd, &area);
+            FillRect(reinterpret_cast<HDC>(wParam), &area, startSearchBrush_);
+            return 1;
+        }
+        case WM_SIZE:
+            if (startSearchEdit_) {
+                SetWindowPos(startSearchEdit_, nullptr, 0, 0, LOWORD(lParam), HIWORD(lParam),
+                             SWP_NOZORDER | SWP_NOACTIVATE);
+            }
+            return 0;
+        case WM_CLOSE:
+            OnStartSearchLostFocus();
+            return 0;
+        case WM_NCDESTROY:
+            startSearchHost_ = nullptr;
+            startSearchEdit_ = nullptr;
+            startSearchVisible_ = false;
+            break;
+        default:
+            break;
+    }
+    return DefWindowProcW(hwnd, message, wParam, lParam);
+}
+
+LRESULT CALLBACK IslandWindow::SearchEditProcThunk(HWND hwnd, UINT message, WPARAM wParam,
+                                                   LPARAM lParam) {
+    auto* self = reinterpret_cast<IslandWindow*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    if (!self) return DefWindowProcW(hwnd, message, wParam, lParam);
+    if (message == WM_KEYDOWN) {
+        if (wParam == VK_RETURN) {
+            self->startSearchEnter_ = true;
+            ++self->startSearchRevision_;
+            self->layoutChanged_ = true;
+            return 0;
+        }
+        if (wParam == VK_ESCAPE) {
+            if (GetWindowTextLengthW(hwnd) > 0) {
+                SetWindowTextW(hwnd, L"");
+            } else {
+                self->EndStartSearch(false, true);
+                self->startSearchCancel_ = true;
+                self->layoutChanged_ = true;
+            }
+            return 0;
+        }
+        if ((wParam == VK_UP || wParam == VK_DOWN) && !IsImeComposing(hwnd)) {
+            self->startSearchNavigation_ += wParam == VK_UP ? -1 : 1;
+            ++self->startSearchRevision_;
+            self->layoutChanged_ = true;
+            return 0;
+        }
+    }
+    if (message == WM_KILLFOCUS) {
+        const HWND next = reinterpret_cast<HWND>(wParam);
+        if (!next || GetAncestor(next, GA_ROOT) != self->startSearchHost_) {
+            self->OnStartSearchLostFocus();
+        }
+    }
+    return CallWindowProcW(self->startSearchEditProc_, hwnd, message, wParam, lParam);
 }
 
 LRESULT IslandWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
@@ -1656,7 +1921,8 @@ LRESULT IslandWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
             }
             return 0;
 
-        // The wheel, for the one thing on this bar that scrolls: the 声音输出 page's list.
+        // The wheel, for the card levels that scroll: the tiles pager, the 声音输出 page's list and the
+        // Start card's picker.
         //
         // Counted here and taken by the frame loop. A wheel notch is a delta and nothing else -- there is
         // nowhere to read it back from -- so it has to be recorded the moment it arrives; but the OFFSET it
@@ -1665,11 +1931,11 @@ LRESULT IslandWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
         // SetSoundPage() wrote its (unchanged) offset straight back over it: the page could not be
         // scrolled at all, which is what "声音输出的位置应该可以用鼠标滚轮控制" asked for.
         case WM_MOUSEWHEEL: {
-            // The two card levels that scroll: the 声音输出 page's list and the Start card's picker. The
-            // wheel is counted for whichever of them is up -- the frame loop decides what the notches move,
-            // because it owns the offsets.
+            // The wheel is counted for whichever level is up -- the frame loop decides what the notches
+            // move, because it owns the page index and the scroll offsets.
             const bool startPickerUp = startPageOpen_ && startPage_ == 1;
-            if (!soundPageOpen_ && !startPickerUp) break;
+            const bool tilesPagerUp = systemPanel_.tilesPageShown && systemPanel_.pageCount > 1;
+            if (!soundPageOpen_ && !startPickerUp && !tilesPagerUp) break;
 
             // Only over the card. The window spans the whole bar strip at the top of the screen, and
             // swallowing the wheel anywhere in it would be stealing input from whatever is underneath.
@@ -1677,11 +1943,22 @@ LRESULT IslandWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
             float localX = 0.0f;
             float localY = 0.0f;
             ToLocalDip(cursor, &localX, &localY);
-            const RoundedBox card =
-                PlacedCardFor(BoxForState(IslandState::Collapsed, CurrentAnchor()), cardLeftDip_);
+            const RoundedBox card = PlacedCard();
             if (localX < card.rect.left || localX > card.rect.right || localY < card.rect.top ||
                 localY > card.rect.bottom) {
                 break;
+            }
+            if (tilesPagerUp) {
+                const SystemPanelLayout layout =
+                    SystemPanelFor(card, systemPanel_.tileCount,
+                                   systemPanel_.hasBrightness ? 2 : 1,
+                                   systemPanel_.pageCount > 1, systemPanel_.pageIndex,
+                                   systemPanel_.pageCount);
+                const RectF& area = layout.tileArea;
+                if (localX < area.left || localX > area.right || localY < area.top ||
+                    localY > area.bottom) {
+                    break;
+                }
             }
 
             // Forwarded to the pointer position the frame loop will see anyway, so the two agree about
@@ -1691,14 +1968,15 @@ LRESULT IslandWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
             // discarding the remainder throws away every message a precision touchpad sends (they come in
             // tens, not hundreds), and it also divides a coarse wheel's own motion into notches the list
             // never sees. What is left over is kept for the next message.
-            soundWheelRemainder_ += GET_WHEEL_DELTA_WPARAM(wParam);
-            const int notches = soundWheelRemainder_ / WHEEL_DELTA;
+            cardWheelRemainder_ += GET_WHEEL_DELTA_WPARAM(wParam);
+            const int notches = cardWheelRemainder_ / WHEEL_DELTA;
             if (notches != 0) {
-                soundWheelRemainder_ -= notches * WHEEL_DELTA;
-                soundWheelNotches_ += notches;
-                return 0;
+                cardWheelRemainder_ -= notches * WHEEL_DELTA;
+                cardWheelNotches_ += notches;
             }
-            break;
+            // Consume even a sub-notch precision-touchpad delta. Letting those messages fall through
+            // leaked part of the gesture to the window underneath and made every notch arrive later.
+            return 0;
         }
 
         case WM_DISPLAYCHANGE:

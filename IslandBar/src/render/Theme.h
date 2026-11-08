@@ -89,6 +89,9 @@ int CurrentThemeIndex();
 
 // Applies the next theme in that list and returns it (wrapping at the end).
 const Theme& CycleTheme();
+// Selects one theme explicitly. False means the index is invalid; persistence can still fail
+// independently and is reported by the log inside SaveThemeChoice.
+bool SelectTheme(int index);
 
 // Where the choice is remembered: `<exe dir>\theme.txt`, the same place and the same idea as
 // weather.txt. An unknown name leaves the current theme alone and says so.
@@ -110,6 +113,26 @@ void SetPillInkBackdrop(float luminance);
 // as the island's lens, sampled at the card's own screen rectangle.
 D2D1_COLOR_F CardInk(float alpha);
 void SetCardInkBackdrop(float luminance);
+
+// Whether the cards' ink is the LIGHT one. The tray menu is the one surface that has to HIDE what it
+// covers, so it takes the tone its own labels are not (see TrayMenuBody).
+bool CardInkIsLight();
+
+// The surface under the tray MENU's rows, at an alpha. `ink` is the colour the labels are drawn in, and
+// the sheet takes the tone that ink is not.
+//
+// A menu is not a level of the card, it is a sheet in FRONT of it. The glass theme used to give it the
+// card's own 2% crystal, so the tray page's icons showed through the menu and the words were read
+// against whatever happened to be behind them: measured 2026-11-05, the body's luminance swung 50..178
+// with the desktop ("托盘卡片里 鼠标右键弹窗看不清"). So the menu gets a body thick enough to hide what
+// it covers -- light ink over a dark backdrop gets a dark sheet, dark ink over a bright one gets a light
+// sheet -- and both keep the labels above kInkContrastFloor.
+D2D1_COLOR_F TrayMenuBody(const D2D1_COLOR_F& ink, float opacity);
+
+// WCAG contrast between that body and the labels drawn on it, over the WORST desktop the sheet can meet
+// (a bright one under the dark sheet, a dark one under the light sheet). Both tones are asserted in the
+// self-test, which is the half a screenshot cannot say.
+float TrayMenuInkContrast(const D2D1_COLOR_F& ink);
 
 // The highlight at an alpha: the light reflected by the material, which is NOT the ink any more.
 D2D1_COLOR_F ThemeHighlight(float alpha);

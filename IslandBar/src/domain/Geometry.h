@@ -64,7 +64,11 @@ inline constexpr float kDipPerInch = 96.0f;
 // slider (Motion.h: kExpandedHeightDip 250 -> 280), so it ends at 330 and the window keeps the same
 // 30 DIP of slack it had at 320. Growing the window is free -- nothing is drawn below the card, and
 // the window is a transparent strip over the desktop whose input region is narrowed to what is drawn.
-inline constexpr float kWindowHeightDip = 360.0f;
+//
+// 540, because the card is 520 x 500 now: it reaches y=506 and the same 30 DIP of slack puts the
+// window's bottom edge at 540. The window is still never resized, so this is the one number that has to track
+// the tallest card.
+inline constexpr float kWindowHeightDip = 540.0f;
 
 // The resting pill.
 inline constexpr float kPillWidthDip    = 220.0f;

@@ -21,10 +21,18 @@
 
 #include <windows.h>
 
+#include <atomic>
+
 #include "platform/CriticalSection.h"
 #include "platform/WorkerThread.h"
 
 namespace island {
+
+// The fast peak read exists only for meters that are actually on screen. This pure rule is shared by the
+// frame loop and its self-test: no visible meter means the worker can wait on the volume cadence instead.
+inline bool AudioPeakMeterNeedsSampling(bool musicMeterVisible, bool callMeterVisible) noexcept {
+    return musicMeterVisible || callMeterVisible;
+}
 
 class AudioVolume {
 public:
@@ -66,6 +74,9 @@ public:
     // Polled fast (about 30 Hz) on the worker, because a meter sampled once a frame at 60 Hz would be wasted
     // work and one sampled at the volume's 500 ms would not move at all.
     bool Peak(float* level) const;
+    // Enables the 30 Hz peak cadence only while a meter is visible. The worker still reads the master
+    // volume at its normal 500 ms cadence when this is false.
+    void SetPeakMeterActive(bool active);
 
     void ToggleMute();
 
@@ -86,6 +97,9 @@ private:
     WorkerThread worker_;
     // Auto-reset: a write request wakes the worker without a full poll interval of latency.
     HANDLE        writeEvent_ = nullptr;
+    // Auto-reset: a meter-demand change wakes the worker so the first visible value is fresh.
+    HANDLE        peakEvent_ = nullptr;
+    std::atomic<bool> peakMeterActive_{false};
     volatile bool running_ = false;
 
     mutable CriticalSection lock_;

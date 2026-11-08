@@ -60,8 +60,10 @@ while ((Get-Date) -lt $deadline) {
         $seen[$key] = $true
 
         $parent = Get-CimInstance Win32_Process -Filter "ProcessId=$($p.ParentProcessId)" -ErrorAction SilentlyContinue
+        # SIXTY SECONDS, not ten: the first sighting at 20:44:38 had nothing at all in the ten seconds before
+        # it, and a caller that started a helper half a minute earlier would have been outside the window.
         $newest = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-                    Where-Object { $_.CreationDate -and $_.CreationDate -gt $now.AddSeconds(-10) } |
+                    Where-Object { $_.CreationDate -and $_.CreationDate -gt $now.AddSeconds(-60) } |
                     Sort-Object CreationDate |
                     ForEach-Object { "    {0}  {1} (pid {2})  {3}" -f $_.CreationDate.ToString('HH:mm:ss.fff'), $_.Name, $_.ProcessId, $_.CommandLine })
         $barLog = Join-Path $env:USERPROFILE 'IslandBar\island_bar.log'
@@ -73,7 +75,7 @@ while ((Get-Date) -lt $deadline) {
         $block += "  SystemSettings pid=$($p.ProcessId) created=$($created.ToString('HH:mm:ss.fff'))"
         $block += "  parent=$($parent.Name) (pid $($p.ParentProcessId)) cmd=[$($parent.CommandLine)]"
         $block += "  own cmd=[$($p.CommandLine)]"
-        $block += "  processes created in the last 10 s:"
+        $block += "  processes created in the last 60 s:"
         $block += $newest
         $block += "  bar log tail:"
         $block += $barTail
@@ -82,10 +84,14 @@ while ((Get-Date) -lt $deadline) {
         if ($Shot) {
             try {
                 Add-Type -AssemblyName System.Drawing
+                Add-Type -AssemblyName System.Windows.Forms
                 $name = "settings-popup-$($now.ToString('HHmmss')).png"
-                $bmp = New-Object System.Drawing.Bitmap 1400, 700
+                # THE WHOLE SCREEN: the first picture was the top-left 1400x700 and it missed whatever else was
+                # going on (a toast in the notification area, a dialog behind the window, the taskbar state).
+                $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+                $bmp = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
                 $g = [System.Drawing.Graphics]::FromImage($bmp)
-                $g.CopyFromScreen(0, 0, 0, 0, (New-Object System.Drawing.Size 1400, 700))
+                $g.CopyFromScreen($bounds.X, $bounds.Y, 0, 0, (New-Object System.Drawing.Size $bounds.Width, $bounds.Height))
                 $bmp.Save((Join-Path $captures $name), [System.Drawing.Imaging.ImageFormat]::Png)
                 $g.Dispose(); $bmp.Dispose()
                 Write-Block @("  screenshot: $name")

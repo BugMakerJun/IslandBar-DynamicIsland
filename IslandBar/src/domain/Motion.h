@@ -19,6 +19,7 @@
 // =====================================================================
 #pragma once
 
+#include "domain/BarShape.h"
 #include "domain/Geometry.h"
 
 namespace island {
@@ -134,6 +135,9 @@ inline constexpr float kHoverHeightDip     = kCollapsedHeightDip;
 // the sides IN while the bottom dropped -- a visible inward twitch, reported as a stutter on
 // hover entry. A shape that is opening must not get narrower anywhere. Matching the strip's
 // width also gives the card the room its text wanted.
+//
+// 520 x 500: wide enough for the Start page's six 72 DIP columns and for the tray page's grid. The
+// system tiles page has its own smaller face below.
 inline constexpr float kExpandedWidthDip   = 520.0f;
 // 232 DIP, up from the original 132.
 //
@@ -144,11 +148,11 @@ inline constexpr float kExpandedWidthDip   = 520.0f;
 // resized, which is what makes that constraint load-bearing.
 // 250 DIP.
 //
-// Both cards are the SAME state and therefore the same shape: two heights for "the card" would mean the
-// bar was tall while showing music and short while showing system state, and the outline would jump
-// between them for no reason the user could see. So this is the taller of the two requirements.
+// Expanded is the motion ENVELOPE. The rendered card face can differ by owner and panel level -- the music
+// card and the compact system tiles page each have their own height -- but every transition still runs
+// through the same duration, curve and motion state.
 //
-// THE MUSIC CARD IS WHAT SETS IT, and the reason is not obvious. Its content band is a FRACTION of the
+// The original music card selected this ceiling, and the reason is not obvious. Its content band is a FRACTION of the
 // card's height (0.52 to 0.94) rather than a fixed inset from the top, so shrinking the card moves the
 // time row UP faster than it moves the artwork -- the band itself gets shorter from the top while the
 // 44 DIP cover keeps its size. Measured:
@@ -164,20 +168,25 @@ inline constexpr float kExpandedWidthDip   = 520.0f;
 // never-resized 240 DIP window. THE WINDOW THEREFORE GROWS TO 260, which is the one number here that
 // is free -- nothing is drawn below the card, and the window is a transparent strip over the desktop.
 //
-// 280, not 250: THE BRIGHTNESS ROW.
+// 500, not 540: the compact system panel.
 //
-// The system panel gained a brightness slider under the volume row (22 DIP of track plus the 8 DIP gap),
-// and the tile grid above it takes the space that is left -- so at 250 the six tiles lost 30 DIP between
-// them and their glyph boxes were squeezed to about 8 DIP: measured arithmetic, not a guess, since the
-// caption and its gap are 23 of every tile's height. Growing the card by exactly the row's height keeps
-// the tiles the size they were designed at, and the window grows with it (Geometry.h: 320 -> 360).
-inline constexpr float kExpandedHeightDip  = 280.0f;
+// The panel keeps three bands -- tiles, the inset volume/brightness surface, and an independent footer --
+// but redistributes their heights to fit 500 DIP. See SystemPanelFor for the arithmetic.
+inline constexpr float kExpandedHeightDip  = 500.0f;
+
+// The music card is not a settings page. It keeps the compact height it was designed around.
+inline constexpr float kMusicCardHeightDip = 280.0f;
+
+// The system tiles page is denser than the Start and tray pages and was reported as too large on its own.
+// It therefore has a compact face while the other Stitch pages keep the full 520 x 500 envelope above.
+inline constexpr float kSystemPanelWidthDip  = 480.0f;
+inline constexpr float kSystemPanelHeightDip = 408.0f;
 
 // How much of an outer card (the system panel, a notification) is uncovered, given the height of the
 // animated box it is being drawn in.
 //
 // The box IS the pill at the near end of a transition and the card at the far end, so its height runs
-// from the pill's 36 DIP up to the card's 250 -- but the panel is only 250 tall when the box is 250.
+// from the pill's 36 DIP up to the card's 500 -- but the panel is only 500 tall when the box is 500.
 // Taking the clip from the box height directly therefore left 36 DIP of the panel on screen at BOTH ends
 // of the movement, and the last quarter of the retraction was a band of tile tops hanging under the bar
 // that did not move at all and then vanished in a single frame. Reported, with a screenshot of exactly
@@ -186,8 +195,8 @@ inline constexpr float kExpandedHeightDip  = 280.0f;
 // Zero means nothing of the card is showing, and the caller must SKIP the draw rather than clip to
 // nothing: an empty rectangle is not a clip -- D2D fails to create it, no layer is pushed, and the panel
 // would be composed at full size, which is the opposite of hiding it.
-inline float OuterCardRevealDip(float boxHeightDip) {
-    // No guard for a zero span: both ends are compile-time constants and they are 214 DIP apart, so the
+inline float CardRevealDipForHeight(float boxHeightDip, float cardHeightDip) {
+    // No guard for a zero span: both ends are compile-time constants and they are 504 DIP apart, so the
     // division below cannot be by zero -- the compiler said so itself (C4127, "constant conditional
     // expression"), and a branch that cannot be reached is a branch that cannot be tested. The guard was
     // deleted rather than silenced.
@@ -195,7 +204,11 @@ inline float OuterCardRevealDip(float boxHeightDip) {
     float t = (boxHeightDip - kCollapsedHeightDip) / span;
     if (t < 0.0f) t = 0.0f;
     if (t > 1.0f) t = 1.0f;
-    return kExpandedHeightDip * t;
+    return cardHeightDip * t;
+}
+
+inline float OuterCardRevealDip(float boxHeightDip) {
+    return CardRevealDipForHeight(boxHeightDip, kExpandedHeightDip);
 }
 
 // The lyric strip: the same width as the resting pill, showing a lyric in place of the clock.
@@ -238,7 +251,7 @@ inline constexpr float kNoticeStripHeightDip = kCollapsedHeightDip;
 // than a card, and shorter than half a card", and that rule has a hole big enough to drive the whole bar
 // through: A CARD HALF WAY THROUGH ITS OWN GROWTH SATISFIES EVERY CLAUSE OF IT.
 //
-// The card's box is a lerp from the pill to 520x250, so for the whole first 40% of an opening -- and the
+// The card's box is a lerp from the pill to 560x540, so for the whole first 40% of an opening -- and the
 // last 40% of a retraction -- it is wider than the pill, narrower than a card, and under 125 DIP tall. The
 // anchor followed it, and with the anchor the island's own FILL, the clock, the deck, the icon row, the
 // window region and every hit test: a dark slab grew out of the pill and across the system panel's tiles
@@ -273,10 +286,11 @@ inline RoundedBox RowAnchorBox(const RoundedBox& current, const RoundedBox& rest
 // semicircles. Deriving that from the height keeps them perfectly round.
 inline float StadiumRadiusForHeight(float heightDip) { return heightDip * 0.5f; }
 
-// The card is NOT a stadium. At 132 DIP tall, half the height would be a 66 DIP
-// radius, which turns a 560-wide card into a lozenge and eats most of its usable
-// width. A fixed, smaller radius reads as a rounded card instead.
-inline constexpr float kCardRadiusDip = 20.0f;
+// The card is NOT a stadium. Half of its 500 DIP height would turn it into a
+// lozenge and eat most of its usable width. 24 DIP is the outer radius shared by
+// the three Stitch references (系统 / 开始菜单 / 托盘), so every page opens as the
+// same rounded glass sheet rather than as a different kind of window.
+inline constexpr float kCardRadiusDip = 24.0f;
 
 struct SizeF {
     float width  = 0.0f;
@@ -325,10 +339,16 @@ struct IslandAnchor {
     // centre comes from the monitor's width), so no layout function needs a new parameter and the
     // geometry stays a pure function of one struct.
     float bandHeightDip = kFullBarHeightDip;
+
+    // Which shape the bar is in (see domain/BarShape.h). Carried HERE for the same reason as the band:
+    // the anchor is the one struct every layout function is already given, the shape decides `topY` above,
+    // and the window region's resting box reads it back off the same value.
+    BarShape shape = BarShape::Capsule;
 };
 
 IslandAnchor AnchorForWindow(float originX, float originY, float monitorWidthDip,
-                             float bandHeightDip = kFullBarHeightDip);
+                             float bandHeightDip = kFullBarHeightDip,
+                             BarShape shape = BarShape::Capsule);
 
 // The pill for a state, as window-local DIPs. The same function the renderer
 // draws and the hit test decides with, so the two can never disagree.
@@ -345,15 +365,21 @@ RoundedBox BoxForState(IslandState state, const IslandAnchor& anchor);
 //
 // Replaces a `BoxHangingFrom` that hung a state's box from a left edge and kept the MOTION's top -- which
 // is exactly the mistake above, and which nothing called.
-inline RoundedBox PlacedCardFor(const RoundedBox& restingPill, float cardLeftDip) {
+inline RoundedBox PlacedCardFor(const RoundedBox& restingPill, float cardLeftDip,
+                                float cardWidthDip, float cardHeightDip) {
     RoundedBox card;
     card.rect.left = cardLeftDip;
-    card.rect.right = cardLeftDip + kExpandedWidthDip;
+    card.rect.right = cardLeftDip + cardWidthDip;
     card.rect.top = restingPill.rect.bottom + kCardTopGapDip;
-    card.rect.bottom = card.rect.top + kExpandedHeightDip;
+    card.rect.bottom = card.rect.top + cardHeightDip;
     card.radiusX = kCardRadiusDip;
     card.radiusY = kCardRadiusDip;
     return card;
+}
+
+inline RoundedBox PlacedCardFor(const RoundedBox& restingPill, float cardLeftDip,
+                                float cardHeightDip = kExpandedHeightDip) {
+    return PlacedCardFor(restingPill, cardLeftDip, kExpandedWidthDip, cardHeightDip);
 }
 
 // The COLUMN a card hangs in: from the bar's underside down to the card's bottom, as wide as the card.
@@ -365,14 +391,20 @@ inline RoundedBox PlacedCardFor(const RoundedBox& restingPill, float cardLeftDip
 // card", and the pointer travelling from one to the other is on NEITHER for those 8 DIP -- so the card was
 // given up mid-journey. The test that passed jumped straight from one to the other and never crossed it,
 // which is why the bar still failed after the assertion went green.
-inline RectF CardColumnFor(const RoundedBox& restingPill, float cardLeftDip) {
-    const RoundedBox card = PlacedCardFor(restingPill, cardLeftDip);
+inline RectF CardColumnFor(const RoundedBox& restingPill, float cardLeftDip,
+                           float cardWidthDip, float cardHeightDip) {
+    const RoundedBox card = PlacedCardFor(restingPill, cardLeftDip, cardWidthDip, cardHeightDip);
     RectF column;
     column.left = card.rect.left;
     column.right = card.rect.right;
     column.top = restingPill.rect.bottom;   // the bar's underside, NOT the card's top edge
     column.bottom = card.rect.bottom;
     return column;
+}
+
+inline RectF CardColumnFor(const RoundedBox& restingPill, float cardLeftDip,
+                           float cardHeightDip = kExpandedHeightDip) {
+    return CardColumnFor(restingPill, cardLeftDip, kExpandedWidthDip, cardHeightDip);
 }
 
 // Whether two shapes are the same rectangle. Used to recognise a state change that has no

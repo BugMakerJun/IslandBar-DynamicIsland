@@ -31,6 +31,8 @@
 #include "domain/MiniJson.h"
 #include "domain/Motion.h"
 #include "core/ProcessMetrics.h"
+#include "domain/StartSearch.h"
+#include "domain/SettingsLayout.h"
 #include "domain/StatePolicy.h"
 #include "domain/TaskStripLayout.h"
 #include "domain/TrayEncoding.h"

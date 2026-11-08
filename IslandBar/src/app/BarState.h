@@ -29,6 +29,7 @@
 
 #include "app/PlayerWindow.h"    // PlayerWindowInfo: the player that never publishes a session
 #include "domain/CardLayout.h"   // TrayMenuAction, kMaxTrayMenuEntries
+#include "domain/StartSearch.h"  // the unified application/settings/file results
 #include "media/Lyrics.h"        // kLyricLineCapacity, TrackPosition
 #include "media/MusicSession.h"  // kMusicTitleCapacity, kMusicArtistCapacity
 #include "platform/WindowList.h" // kMaxTaskWindows, kTaskTitleCapacity: the row's titles are copied from it
@@ -61,13 +62,32 @@ struct BarState {
     // card's three lists, plus the values they were drawn at, and the last three fields exist so a CHANGE in
     // where the pointer is can ask for a redraw (the card's highlight is not a state the loop already watches).
     bool startPageOpen = false;
-    int startPageState = 0;        // 0 = the pins, 1 = the picker, 2 = the power list
+    int startPageState = 0;        // 0 = the pins, 1 = the all-applications/search grid
     int startPickerScroll = 0;
     int startPowerConfirm = -1;
-    // True while the picker was opened by the 全部 button: its rows LAUNCH the application instead of
+    unsigned long long startPowerConfirmUntil = 0;
+    int lastStartPowerConfirm = -2;
+    // True while the picker was opened by the grid button: its cells LAUNCH the application instead of
     // pinning it. The empty grid still opens the same list in pin mode, which is what keeps the card
     // fillable.
     bool startAllApps = false;
+    bool startSearchActive = false;
+    wchar_t startSearchQuery[64] = {};
+    wchar_t startSearchAppliedQuery[64] = {};
+    std::vector<StartSearchResult> startSearchResults;
+    std::vector<StartSearchResult> startSearchFileResults;
+    std::uint64_t startSearchSequence = 0;
+    std::uint64_t startSearchFilesSequence = 0;
+    bool startSearchFilesCompleted = false;
+    bool startSearchPending = false;
+    int startSearchSelected = -1;
+    unsigned long long startSearchChangedAt = 0;
+    unsigned long long startSearchStartedAt = 0;
+    int startSearchHovered = -1;
+    unsigned long long startSearchAppsRevision = 0;
+    unsigned long long lastStartSearchRevision = 0;
+    unsigned long long lastStartIconRevision = 0;
+    std::vector<island::SearchResultKind> startSearchKinds;
     std::vector<uint8_t> accountAvatarPng;
     wchar_t accountName[64] = {};
     // Rebuilt per frame for the frame's icon pointers (see below), and kept here so the storage outlives
@@ -89,6 +109,8 @@ struct BarState {
     bool startWashAnimating = false;
     int startPinCount = 0;
     int startAppCount = 0;
+    bool startIconLoading = false;
+    unsigned long long startIconSourceRevision = 0;
     // The pointer's position in the card, remembered so a CHANGE can ask for a redraw: the card's
     // highlight is not a state the loop already watches (see needDraw), and without this the highlight
     // moved only on the next clock tick -- up to a second late.
@@ -100,6 +122,19 @@ struct BarState {
     // The tray page and the panel's tiles are two levels of ONE card, which is why their flags are read
     // together by the click handler and by the draw.
     bool trayPageOpen = false;
+    // The tray page's pointer answers, remembered so a CHANGE can ask for a redraw -- the same rule the
+    // Start card's three fields above follow, and the same defect: without them the hover highlight and the
+    // tray menu moved only on the next clock tick, once a second. Reported 2026-11-06 as "鼠标移动时高亮
+    // 跟得慢 / 点格子或右键后响应慢"; the log showed `clock=4` with every other redraw reason at zero while
+    // the pointer was crossing the card's cells.
+    int lastTrayCellHovered = -1;
+    int lastTrayMenuRow = -1;
+    bool lastTrayMenuOpen = false;
+    bool lastTrayTaskManagerHovered = false;
+
+    // The application row's hovered button, remembered for the same reason: its widening is an animation,
+    // and a change that does not ask for a frame is a button that widens late or not at all.
+    int lastTaskHovered = -1;
 
     // --- THE TRAY'S OWN MENU (2026-10-14, HANDOFF 8.80) -------------------------------------
     //

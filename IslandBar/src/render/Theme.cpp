@@ -31,7 +31,7 @@ const Theme kThemes[] = {
     //               cardFill                         edge   accent                            ink
     //               shadow grain
     {L"\u9ED8\u8BA4",   {0.05f, 0.05f, 0.07f, 0.92f}, {0.04f, 0.05f, 0.08f, 0.98f}, 0.06f,
-     {0.05f, 0.05f, 0.07f, 0.97f}, 0.13f, {0.0f, 0.47f, 0.83f, 0.95f}, {0.93f, 0.93f, 0.93f, 1.0f},
+     {0.075f, 0.086f, 0.122f, 0.94f}, 0.10f, {0.0f, 0.47f, 0.83f, 0.95f}, {0.93f, 0.93f, 0.93f, 1.0f},
      0.0f, 0.0f, 0.0f, 0.0f, 0.0f, {1.0f, 1.0f, 1.0f, 1.0f}, false},
     // 冰蓝
     {L"\u51B0\u84DD", {0.06f, 0.09f, 0.16f, 0.93f}, {0.02f, 0.03f, 0.07f, 0.97f}, 0.10f,
@@ -201,6 +201,14 @@ const Theme& CycleTheme() {
     return CurrentTheme();
 }
 
+bool SelectTheme(int index) {
+    if (index < 0 || index >= ThemeCount()) return false;
+    g_current = index;
+    SaveThemeChoice(CurrentTheme().name);
+    LogTheme(CurrentTheme(), L"selected");
+    return true;
+}
+
 int BuiltInThemeCount() { return kThemeCount; }
 
 const Theme& BuiltInTheme(int index) {
@@ -317,9 +325,11 @@ namespace {
 
 // What the ink would be read against if a surface of this colour were the card: the same rule
 // ThemeInkContrast uses, so the clamp below and the floor the self-test asserts are the same question.
-float ContrastAgainst(const D2D1_COLOR_F& surface, const D2D1_COLOR_F& ink) {
+// `backdrop` is what shows through the surface where it is translucent: the card's floor is defined
+// against a BRIGHT desktop, and the tray menu asks the same question against the worst desktop that
+// sheet can meet (see TrayMenuInkContrast).
+float ContrastAgainst(const D2D1_COLOR_F& surface, const D2D1_COLOR_F& ink, float backdrop = 0.9f) {
     const float a = Clamp01(surface.a);
-    const float backdrop = 0.9f;   // the bright desktop the floor is defined against
     const D2D1_COLOR_F effective = D2D1::ColorF(surface.r * a + backdrop * (1.0f - a),
                                               surface.g * a + backdrop * (1.0f - a),
                                               surface.b * a + backdrop * (1.0f - a), 1.0f);
@@ -337,6 +347,29 @@ D2D1_COLOR_F Mix(const D2D1_COLOR_F& from, const D2D1_COLOR_F& to, float amount)
 }
 
 }  // namespace
+
+bool CardInkIsLight() {
+    const D2D1_COLOR_F ink = CardInk(1.0f);
+    return Luminance(ink) > 0.5f;
+}
+
+D2D1_COLOR_F TrayMenuBody(const D2D1_COLOR_F& ink, float opacity) {
+    // The two bodies: dark under light words, light under dark words. The alphas are what
+    // TrayMenuInkContrast is computed against, so if one moves the other has to be re-measured.
+    //
+    // The flip happens at the ink's own crossover, which takes ~250 ms: for that moment the words are
+    // mid-grey while the body has already changed tone, exactly as the card's own words already are.
+    const D2D1_COLOR_F dark = D2D1::ColorF(0.05f, 0.06f, 0.09f, Clamp01(0.92f * opacity));
+    const D2D1_COLOR_F light = D2D1::ColorF(0.97f, 0.98f, 1.00f, Clamp01(0.90f * opacity));
+    return Luminance(ink) > 0.5f ? dark : light;
+}
+
+float TrayMenuInkContrast(const D2D1_COLOR_F& ink) {
+    // The worst desktop each sheet can meet: the dark sheet is translucent over whatever is bright, the
+    // light one over whatever is dark. Same reasoning as ThemeInkContrast, one surface further in.
+    const float backdrop = Luminance(ink) > 0.5f ? 0.90f : 0.05f;
+    return ContrastAgainst(TrayMenuBody(ink, 1.0f), ink, backdrop);
+}
 
 D2D1_COLOR_F TintedFill(const Theme& theme, const D2D1_COLOR_F& fill, const D2D1_COLOR_F& wallpaper,
                         float amount) {

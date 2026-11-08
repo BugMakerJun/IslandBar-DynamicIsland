@@ -154,6 +154,15 @@ struct FrameState {
     // been correct.
     RoundedBox restingPill;
 
+    // The box the pill's MATERIAL is drawn from. Equal to `restingPill` for the capsule; for the notch it
+    // starts one radius ABOVE the screen, and the display cuts the top circle away (see domain/BarShape.h).
+    //
+    // Separate from `restingPill` on purpose: the material has to grow upward while every LAYOUT answer --
+    // the deck's buttons, the icon row, the status strip, the card's top -- stays measured from the visible
+    // box. Feeding the taller box to those would have moved the controls up by half the difference and put
+    // half of each button above the screen.
+    RoundedBox restingMaterial;
+
     // Whether an outer card -- the system panel or a notification -- is on screen or on its way there.
     //
     // NOT the same question as `systemPanelOpen`, and using that flag instead was two separate bugs:
@@ -387,9 +396,11 @@ struct FrameState {
     // Whether the card is showing the tray page rather than the panel's tiles. The same card, the same
     // place, the same animation -- only the contents change (see TrayPageFor).
     bool            trayPageOpen = false;
-    // The page's own heading. Supplied by the caller, because this class holds no user-facing strings of its
-    // own (see SoundPageText, which is here for the same reason). Empty means no heading.
-    const wchar_t*  trayPageTitle = nullptr;
+    // What that page says, and what it is playing. Supplied by the caller, because this class holds no
+    // user-facing strings of its own (see SoundPageText, which is here for the same reason). The track is
+    // carried as TEXT rather than through `music` below, because `music` is only filled while the MEDIA card
+    // owns the card -- and the tray page is a level of the panel, so it would always be null here.
+    TextRenderer::TrayPageText trayPage = {};
 
     // THE TRAY'S OWN CONTEXT MENU (CardLayout.h): the bar's answer to a right click on a cell, instead of
     // the shell's panel and the application's menu at the far corner. Opened data, like everything else
@@ -402,9 +413,10 @@ struct FrameState {
 
     // --- the Start card -------------------------------------------------------------------------------
     //
-    // The same card, one level further: the user's own pins, the shell's full list behind the picker, and
-    // the footer's two things. See TextRenderer::StartCardText, which this fills in one place so the
-    // drawing and the hit tests cannot be given different answers.
+    // The same card, one level further: the search field and tab row, the user's own pins, the shell's full
+    // list behind the picker, and the footer's account line and power group. See
+    // TextRenderer::StartCardText, which this fills in one place so the drawing and the hit tests cannot be
+    // given different answers.
     TextRenderer::StartCardText startCard = {};
     bool startPageOpen = false;
 
@@ -446,6 +458,9 @@ struct FrameState {
     // The value is computed by the caller because the anchor is the caller's knowledge -- the window's
     // layout is asked for the control's rectangle, and the renderer never sees it.
     float cardLeftDip = 0.0f;
+    // The visible face for this owner/level. The motion envelope stays 520 x 500; this is the rectangle
+    // the content is composed in, and the window's input and hit tests use the same value.
+    CardFaceSize cardSize = {};
 
     // The window each button stands for, so the renderer can cache that window's icon.
     //
@@ -529,6 +544,12 @@ public:
     // True when the capture has a backdrop the lens has not drawn yet: the loop redraws then, and only
     // then, so a still desktop keeps the bar idle.
     bool TakeLensFrame();
+    // Stops all backdrop work that reads the screen: WGC capture, its textures and the luminance sampler.
+    // The frame loop calls this while a full-screen application owns the display.
+    void SetBackdropSuspended(bool suspended);
+    // Starts or stops the real backdrop work when the selected theme changes. The painted themes need
+    // no screen capture; entering or leaving the lens theme must not leave a stale WGC session behind.
+    void OnThemeChanged();
 
     // Convenience for paths that only care about a shape with no content.
     void Render(const PillAppearance& pill) {
@@ -703,6 +724,8 @@ private:
     RECT                     inkPatches_[20] = {};
     LensMaterial             lens_;
     bool                     lensActive_  = false;
+    bool                     backdropSuspended_ = false;
+    bool                     lensRestartPending_ = false;
     HWND                     lensWindow_  = nullptr;
     HWND                     window_      = nullptr;
     ULONGLONG                lensRetryAt_ = 0;

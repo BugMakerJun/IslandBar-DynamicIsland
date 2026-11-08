@@ -6,6 +6,7 @@
 #include <cstring>
 #include <cwchar>
 #include <cwctype>
+#include <string>
 
 namespace island {
 namespace {
@@ -59,6 +60,19 @@ bool NamesSameUid(const TrayLiveRegistration& entry, unsigned uid, const wchar_t
     if (entry.hasGuid || entry.uid != uid) return false;
     if (entry.exe[0] == L'\0' || !exeLeaf || exeLeaf[0] == L'\0') return true;
     return SameText(entry.exe, exeLeaf);
+}
+
+// The first line of a tooltip, with the ends trimmed. A registration's tip is live text and can be several
+// lines; the registry's InitialTooltip is a label. Comparing past the first line would never match, and
+// trailing whitespace would turn a match into a miss.
+std::wstring FirstLineText(const wchar_t* text) {
+    std::wstring line;
+    if (!text) return line;
+    for (const wchar_t* p = text; *p && *p != L'\r' && *p != L'\n'; ++p) line.push_back(*p);
+    while (!line.empty() && (line.back() == L' ' || line.back() == L'\t')) line.pop_back();
+    size_t start = 0;
+    while (start < line.size() && (line[start] == L' ' || line[start] == L'\t')) ++start;
+    return line.substr(start);
 }
 
 } // namespace
@@ -135,6 +149,27 @@ const TrayLiveRegistration* TrayLedger::Find(const wchar_t* exeLeaf, unsigned ui
         if (NamesSameUid(entry, uid, exeLeaf)) return &entry;
     }
     return nullptr;
+}
+
+const TrayLiveRegistration* TrayLedger::FindByTip(unsigned uid, const wchar_t* tip) const {
+    if (!tip || !tip[0]) return nullptr;
+    const std::wstring wanted = FirstLineText(tip);
+    if (wanted.empty()) return nullptr;
+    for (const TrayLiveRegistration& entry : entries_) {
+        // A guid is an identity on its own: its entry never needs a tooltip to be recognised, and a tip match
+        // must not pull a guid registration into a uid entry's place (see Find).
+        if (entry.hasGuid || entry.uid != uid || !entry.tip[0]) continue;
+        const std::wstring have = FirstLineText(entry.tip);
+        if (SameText(have.c_str(), wanted.c_str())) return &entry;
+    }
+    return nullptr;
+}
+
+bool SameTrayIcon(const TrayLiveRegistration& a, const TrayLiveRegistration& b) {
+    if (a.hasGuid || b.hasGuid) {
+        return a.hasGuid && b.hasGuid && std::memcmp(a.guid, b.guid, sizeof(a.guid)) == 0;
+    }
+    return a.window == b.window && a.uid == b.uid;
 }
 
 } // namespace island

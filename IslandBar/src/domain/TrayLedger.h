@@ -85,9 +85,29 @@ public:
     const TrayLiveRegistration* Find(const wchar_t* exeLeaf, unsigned uid, bool hasGuid,
                                      const unsigned char* guid) const;
 
+    // The same question when the EXECUTABLE cannot answer it, which is a real case and not a fallback for
+    // paranoia: the registry names an icon by its installer's path while the shell names it by the process
+    // that registered it, and NVIDIA's two entries (nvcontainer.exe and NVDisplay.Container.exe) are one icon
+    // in the tray. The tooltip is what the two have in common, so it is compared together with the uid --
+    // never on its own, because two applications can call their icons the same thing.
+    //
+    // Only the FIRST LINE counts, case-insensitively: a registration's tip is live text (Task Manager sends
+    // "CPU 24%\n内存 58%\n磁盘 0%\n网络 0%") while the registry holds a label. An empty tooltip on either side
+    // is not a match: that would let a typeless entry claim the first registration with the same uid.
+    const TrayLiveRegistration* FindByTip(unsigned uid, const wchar_t* tip) const;
+
 private:
     std::vector<TrayLiveRegistration> entries_;
     int refused_ = 0;
 };
+
+// Whether two registrations are the same icon of the shell, which is what the card draws as ONE cell.
+//
+// It matters because two lookup paths can name one registration: a guid entry and a uid entry of the same
+// application, or the two executable names NVIDIA's icon is stored under (see FindByTip). The shell treats
+// the guid, or the (window, uid) pair, as the identity -- so that is the comparison, not the picture and not
+// the tooltip. Measured 2026-11-06: without it, the tray card drew two WeChat cells and two NVIDIA cells
+// where the tray itself shows one of each.
+bool SameTrayIcon(const TrayLiveRegistration& a, const TrayLiveRegistration& b);
 
 } // namespace island

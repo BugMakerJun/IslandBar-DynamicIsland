@@ -17,6 +17,7 @@
 #pragma once
 
 #include "domain/Geometry.h"
+#include "domain/StartSearch.h"
 // The tray page's grid is bounded by the same limit the tray itself has (kMaxTrayIcons), so the two cannot
 // disagree about how many icons exist.
 #include "domain/TaskStripLayout.h"
@@ -75,6 +76,11 @@ enum class CardOwner {
     Music,         // what is playing, shown once no message is in the way
 };
 
+struct CardFaceSize {
+    float widthDip = kExpandedWidthDip;
+    float heightDip = kExpandedHeightDip;
+};
+
 // --- the tray page: the applications' tray icons, inside the panel's own card ------------------
 //
 // A PAGE of the panel rather than a fourth card, for the same reason the 声音输出 page is one: it is the
@@ -82,126 +88,214 @@ enum class CardOwner {
 // what the shell's own flyouts do too, and it means no new card geometry, no new policy rule and no new
 // transition. See Renderer::RenderFrame's panel branch.
 //
-// A WRAPPING GRID, because the number of icons is whatever the user has running: three to a row in the
-// system panel's own tile size would hold six, and the machine this was built on has sixteen.
-inline constexpr int   kTrayPageColumns      = 5;
-inline constexpr float kTrayPageCellDip      = 48.0f;   // the cell a 16 DIP picture sits in
-inline constexpr float kTrayPageCellGapDip   = 6.0f;
-// The grid FITS itself to the card (see TrayPageFor), and these are its two limits: it may use more columns
-// than kTrayPageColumns when that is what makes the rows fit, and a cell may not shrink past the point where
-// the 24 DIP picture inside it is still a target a finger can find.
-inline constexpr int   kTrayPageMaxColumns   = 8;
-inline constexpr float kTrayPageMinCellDip   = 38.0f;
-// The ceiling for a cell that has room to grow (see the growth step in TrayPageFor): an icon page shares
-// the card's space like the panel's tiles do, up to here. It is also the size at which the picture inside
-// stops growing -- see the icon side in DrawTrayPage, which is half the cell.
-inline constexpr float kTrayPageMaxCellDip   = 68.0f;
+// WHAT THE PAGE PRINTS, top to bottom: a header row with a green status dot, the page's title and a count
+// chip; a section row; the grid of tray icons; one "now playing" row standing on an inset well; and a footer
+// with a single real "task manager" action at the right. It keeps the full 520 x 500 face while the system
+// tiles page uses its own compact face, so the
+// bands add up to this page's height -- the arithmetic is written down here so a moved number cannot
+// leave a band hanging off the edge (the rule SystemPanelFor follows):
+//
+//     padding top                                                            18
+//     header (status dot, title, count chip)                                 40
+//     gap to the section row                                                  8
+//     section row (one dim word)                                             18
+//     gap to the grid                                                        10
+//     grid band (flexible, centred)                                         268
+//     gap to the now-playing well                                            12
+//     now-playing well (26 DIP mark, two lines, inset surface)               52
+//     gap to the footer                                                      12
+//     footer (one 168 x 36 task-manager pill at the right)                   48
+//     padding bottom                                                         18
+//                                                                          ----
+//                                                                          500
+//
+// THE GRID IS FIVE COLUMNS WIDE, as the reference's is, and the CELL is the design's own 56 DIP -- which
+// is also exactly what a four-row page of sixteen icons comes out at. A page with fewer rows grows toward
+// -- but not past -- 76: the extra air is what keeps a two-row page from reading as a strip of stamps in a
+// 520 wide card. The columns stay five however many icons there are, so the column count never has to be
+// explained to a reader; the cell is the only number that moves with the icon count, and it is derived
+// from the card, so `TrayPageCellAt` (which calls this function) cannot disagree with the drawing.
+inline constexpr int   kTrayPageColumns        = 5;
+inline constexpr float kTrayPagePadDip         = 20.0f;
+inline constexpr float kTrayPageHeaderDip      = 40.0f;
+inline constexpr float kTrayPageHeaderGapDip   = 8.0f;
+inline constexpr float kTrayPageSectionDip     = 18.0f;
+inline constexpr float kTrayPageSectionGapDip  = 10.0f;
+// The cell the design calls for. It is also exactly what a four-row page of sixteen icons comes out at,
+// which makes "the design size" and "the size this machine gets" the same number rather than two that
+// happen to be close.
+inline constexpr float kTrayPageCellDip        = 56.0f;
+inline constexpr float kTrayPageCellGapDip     = 12.0f;
+// The floor a cell must clear to still be a target a finger can find, and the ceiling it may grow to when
+// a page needs fewer rows than the band has room for. The floor is applied only when the band can hold it
+// (see TrayPageFor): the page is composed in a fixed 520 x 500 card, where the worst case -- 24 icons, five
+// rows -- still clears the pressable floor.
+inline constexpr float kTrayPageMinCellDip     = 38.0f;
+inline constexpr float kTrayPageMaxCellDip     = 76.0f;
+inline constexpr float kTrayPageNowDip         = 52.0f;
+inline constexpr float kTrayPageGapDip         = 12.0f;
+inline constexpr float kTrayPageFooterDip      = 48.0f;
+inline constexpr float kTrayPageButtonDip      = 34.0f;
+inline constexpr float kTrayPageChipHeightDip  = 22.0f;
+inline constexpr float kTrayPageChipWidthDip   = 96.0f;
+// The header's status dot.
+inline constexpr float kTrayPageDotDip         = 8.0f;
+inline constexpr float kTrayPageNowIconDip     = 26.0f;
+// The width reserved for the page's title, between the status dot and the count chip. The caption is the
+// caller's ("系统后台托盘": six 13 DIP characters, so 78 DIP of ink), and the chip stands 12 DIP after the
+// reserved width -- the 6 DIP of air is what keeps the LAST glyph out of the chip if the text face's
+// fallback rounds the advance up. Written as a number rather than measured because this function is pure:
+// it must give the hit test and the drawing the same arithmetic without a DWrite factory.
+inline constexpr float kTrayPageTitleDip       = 84.0f;
 
 struct TrayPageLayout {
-    RectF title;          // the page's own line, at the top
+    // The header row: a green dot, the page's title and the count chip.
+    RectF header;
+    RectF headerDot;
+    RectF title;
+    RectF countChip;
+    RectF countText;
+    // The section row above the grid.
+    RectF section;
+    RectF sectionLabel;   // 驻留托盘应用
+    // The grid.
     RectF cells[kMaxTrayIcons];
+    // The now-playing row's inset well, and the parts of the row: its mark, the state word and the track.
+    RectF nowPlaying;
+    RectF nowIcon;
+    RectF nowLabel;
+    RectF nowTitle;
+    // The footer: the hairline at its top edge and the one real Task Manager button.
+    RectF footer;
+    RectF footerTaskManager;
+    RectF footerTaskManagerLabel;
+    RectF footerGear;
     int   count = 0;
     int   columns = 0;
 };
 
 // Where the page's contents go, inside the card the renderer was given. Pure, so the hit test and the
-// drawing cannot disagree about which cell an icon is in.
+// drawing cannot disagree about which cell an icon is in, and so every band can be asserted from numbers.
 inline TrayPageLayout TrayPageFor(const RoundedBox& card, int iconCount) {
     TrayPageLayout layout;
     if (iconCount < 0) iconCount = 0;
     if (iconCount > kMaxTrayIcons) iconCount = kMaxTrayIcons;
     layout.count = iconCount;
-    if (iconCount == 0) return layout;
 
     const float cardWidth = card.rect.right - card.rect.left;
-    const float titleHeight = 34.0f;
-    // 16 DIP, the music card's own padding, written here as a literal because that constant is declared
-    // further down this file and a page's heading is not worth reordering the file for.
-    layout.title.left = card.rect.left + 16.0f;
-    layout.title.right = card.rect.right - 16.0f;
-    layout.title.top = card.rect.top + 6.0f;
-    layout.title.bottom = layout.title.top + titleHeight - 8.0f;
+    const float pad = kTrayPagePadDip;
+    const float left = card.rect.left + pad;
+    const float right = card.rect.right - pad;
 
-    // THE GRID FITS THE CARD, however many icons there are.
-    //
-    // It did not, and the limit was invisible: five columns times two rows held ten, this machine has
-    // sixteen, and the page drew the first ten and silently dropped the rest -- reported as "托盘卡片里没有
-    // 显示全啊" over a photograph of five-by-two with empty space beneath it. The cap that dropped them
-    // (kMaxTrayIcons used to be 10) was written for the ROW this page replaced, and nothing here checked
-    // that the grid it computed was inside the card it was drawn in. The self-test did not catch it because
-    // its counts were 1, 3, 6 and 10 -- exactly the numbers that fit. (Same lesson as HANDOFF 8.71: an
-    // assertion whose parameters are the lucky ones measures the luck.)
-    //
-    // So the column count and the cell size are DERIVED, from the card: as many columns as the width takes,
-    // up to kTrayPageMaxColumns, and the cell that makes those rows fit the height, never below
-    // kTrayPageMinCellDip -- and if the cell would go below it, one more column (one fewer row) and try
-    // again. Everything below is measured from the card, so this cannot disagree with `TrayPageCellAt`
-    // (which calls this function) and cannot overflow however many icons the registry holds.
-    const float cardHeight = card.rect.bottom - card.rect.top;
-    const float availableWidth = cardWidth - 32.0f;              // 16 DIP either side
-    const float availableHeight = cardHeight - titleHeight - 18.0f;
+    // --- the header row -------------------------------------------------------------------------
+    layout.header.left = left;
+    layout.header.right = right;
+    layout.header.top = card.rect.top + pad;
+    layout.header.bottom = layout.header.top + kTrayPageHeaderDip;
+    const float headerCentre = (layout.header.top + layout.header.bottom) * 0.5f;
 
-    int columns = kTrayPageColumns < iconCount ? kTrayPageColumns : iconCount;
-    float cell = kTrayPageCellDip;
-    if (iconCount > 1) {
-        // FULL SIZE FIRST. A grid whose cells are still 48 DIP beats one that fits in fewer columns by
-        // shrinking them: sixteen icons came out as 5/5/5/1 with 45 DIP cells, which reads as a row that
-        // lost its icons, while six columns holds the same sixteen in THREE rows at full size. So the
-        // search takes the first column count that keeps a full-size cell, and only then the first that
-        // merely clears kTrayPageMinCellDip -- and if neither does, the widest grid this page allows.
-        int bestColumns = 0;
-        float bestCell = 0.0f;
-        for (int candidate = kTrayPageColumns; candidate <= kTrayPageMaxColumns; ++candidate) {
-            const int rows = (iconCount + candidate - 1) / candidate;
-            const float byWidth = (availableWidth - (candidate - 1) * kTrayPageCellGapDip) / candidate;
-            const float byHeight = (availableHeight - (rows - 1) * kTrayPageCellGapDip) / rows;
-            float candidateCell = kTrayPageCellDip;
-            if (byWidth < candidateCell) candidateCell = byWidth;
-            if (byHeight < candidateCell) candidateCell = byHeight;
+    layout.headerDot.left = left;
+    layout.headerDot.right = left + kTrayPageDotDip;
+    layout.headerDot.top = headerCentre - kTrayPageDotDip * 0.5f;
+    layout.headerDot.bottom = layout.headerDot.top + kTrayPageDotDip;
 
-            const bool fullSize = candidateCell >= kTrayPageCellDip - 0.01f;
-            const bool pressable = candidateCell >= kTrayPageMinCellDip - 0.01f;
-            if (fullSize) {
-                bestColumns = candidate;
-                bestCell = kTrayPageCellDip;
-                break;
-            }
-            if (!bestColumns && pressable) {
-                bestColumns = candidate;
-                bestCell = candidateCell;
-            }
-            if (candidate == kTrayPageMaxColumns && !bestColumns) {
-                bestColumns = candidate;
-                bestCell = candidateCell;
-            }
-        }
-        if (bestColumns > 0) {
-            columns = bestColumns < iconCount ? bestColumns : iconCount;
-            cell = bestCell;
-        }
+    layout.title.left = layout.headerDot.right + 10.0f;
+    layout.title.right = layout.title.left + kTrayPageTitleDip;
+    layout.title.top = layout.header.top;
+    layout.title.bottom = layout.header.bottom;
+
+    layout.countChip.left = layout.title.right + 12.0f;
+    layout.countChip.right = layout.countChip.left + kTrayPageChipWidthDip;
+    layout.countChip.top = headerCentre - kTrayPageChipHeightDip * 0.5f;
+    layout.countChip.bottom = layout.countChip.top + kTrayPageChipHeightDip;
+    layout.countText.left = layout.countChip.left + 10.0f;
+    layout.countText.right = layout.countChip.right - 10.0f;
+    layout.countText.top = layout.countChip.top;
+    layout.countText.bottom = layout.countChip.bottom;
+
+    // --- the section row ------------------------------------------------------------------------
+    layout.section.left = left;
+    layout.section.right = right;
+    layout.section.top = layout.header.bottom + kTrayPageHeaderGapDip;
+    layout.section.bottom = layout.section.top + kTrayPageSectionDip;
+    layout.sectionLabel = layout.section;
+
+    // --- the footer, pinned to the card's bottom edge like the panel's --------------------------
+    layout.footer.left = left;
+    layout.footer.right = right;
+    layout.footer.bottom = card.rect.bottom - pad;
+    layout.footer.top = layout.footer.bottom - kTrayPageFooterDip;
+    const float footerCentre = (layout.footer.top + layout.footer.bottom) * 0.5f;
+    layout.footerTaskManager.right = right;
+    layout.footerTaskManager.left = right - 168.0f;
+    layout.footerTaskManager.top = footerCentre - 18.0f;
+    layout.footerTaskManager.bottom = footerCentre + 18.0f;
+    layout.footerGear.left = right - kTrayPageButtonDip;
+    layout.footerGear.right = right;
+    layout.footerGear.top = footerCentre - kTrayPageButtonDip * 0.5f;
+    layout.footerGear.bottom = layout.footerGear.top + kTrayPageButtonDip;
+    layout.footerTaskManagerLabel.left = layout.footerTaskManager.left + 16.0f;
+    layout.footerTaskManagerLabel.right = layout.footerGear.left - 6.0f;
+    layout.footerTaskManagerLabel.top = layout.footerTaskManager.top;
+    layout.footerTaskManagerLabel.bottom = layout.footerTaskManager.bottom;
+
+    // --- the now-playing well, directly above the footer ---------------------------------------
+    layout.nowPlaying.left = left;
+    layout.nowPlaying.right = right;
+    layout.nowPlaying.bottom = layout.footer.top - kTrayPageGapDip;
+    layout.nowPlaying.top = layout.nowPlaying.bottom - kTrayPageNowDip;
+    const float nowCentre = (layout.nowPlaying.top + layout.nowPlaying.bottom) * 0.5f;
+    layout.nowIcon.left = left + 14.0f;
+    layout.nowIcon.right = layout.nowIcon.left + kTrayPageNowIconDip;
+    layout.nowIcon.top = nowCentre - kTrayPageNowIconDip * 0.5f;
+    layout.nowIcon.bottom = layout.nowIcon.top + kTrayPageNowIconDip;
+    layout.nowLabel.left = layout.nowIcon.right + 12.0f;
+    layout.nowLabel.right = layout.nowPlaying.right - 16.0f;
+    layout.nowLabel.top = layout.nowPlaying.top + 9.0f;
+    layout.nowLabel.bottom = layout.nowLabel.top + 18.0f;
+    layout.nowTitle.left = layout.nowLabel.left;
+    layout.nowTitle.top = layout.nowLabel.bottom;
+    layout.nowTitle.bottom = layout.nowPlaying.bottom - 9.0f;
+    layout.nowTitle.right = layout.nowPlaying.right - 16.0f;
+
+    if (iconCount == 0) return layout;
+
+    // --- the grid, centred in the band between the section row and the well ---------------------
+    const int columns = iconCount < kTrayPageColumns ? iconCount : kTrayPageColumns;
+    layout.columns = columns;
+    const int rows = (iconCount + columns - 1) / columns;
+    const float bandTop = layout.section.bottom + kTrayPageSectionGapDip;
+    const float bandBottom = layout.nowPlaying.top - kTrayPageGapDip;
+    float band = bandBottom - bandTop;
+    if (band < 0.0f) band = 0.0f;
+    const float availableWidth = right - left;
+    const float byWidth =
+        (availableWidth - static_cast<float>(columns - 1) * kTrayPageCellGapDip) / columns;
+    const float byHeight = (band - static_cast<float>(rows - 1) * kTrayPageCellGapDip) / rows;
+    float cell = byWidth < byHeight ? byWidth : byHeight;
+    if (cell > kTrayPageMaxCellDip) cell = kTrayPageMaxCellDip;
+    // The pressable floor, applied only when this card can hold it: a box smaller than the design's must
+    // not have its cells pushed out of it to satisfy a floor meant for the 520 x 500 card.
+    if (cell < kTrayPageMinCellDip &&
+        static_cast<float>(rows) * kTrayPageMinCellDip +
+                static_cast<float>(rows - 1) * kTrayPageCellGapDip <=
+            band + 0.01f &&
+        static_cast<float>(columns) * kTrayPageMinCellDip +
+                static_cast<float>(columns - 1) * kTrayPageCellGapDip <=
+            availableWidth + 0.01f) {
+        cell = kTrayPageMinCellDip;
     }
     if (cell < 1.0f) cell = 1.0f;
 
-    layout.columns = columns;
-
-    const int rows = (iconCount + columns - 1) / columns;
-    // ... AND THEN EACH CELL GROWS INTO THE ROOM, capped, the way the panel's tiles share the space that is
-    // left. Without this a three-row page of sixteen icons is 152 DIP of tiles inside a 280 DIP card: the
-    // grid is centred and correct and the CARD looks half empty, which is what "看着不协调" was about. The
-    // cap is what keeps a page of five icons from turning into five postage stamps.
-    {
-        const float byWidth = (availableWidth - (columns - 1) * kTrayPageCellGapDip) / columns;
-        const float byHeight = (availableHeight - (rows - 1) * kTrayPageCellGapDip) / rows;
-        float grown = byWidth < byHeight ? byWidth : byHeight;
-        if (grown > kTrayPageMaxCellDip) grown = kTrayPageMaxCellDip;
-        if (grown > cell) cell = grown;
-    }
-    const float gridWidth = columns * cell + (columns - 1) * kTrayPageCellGapDip;
-    const float gridHeight = rows * cell + (rows - 1) * kTrayPageCellGapDip;
-    // Centred BOTH ways: a page of four icons is not pinned to the left while a page of five fills the card,
-    // and a page that only needs one row sits in the middle of the room rather than under the heading.
-    const float left = card.rect.left + (cardWidth - gridWidth) * 0.5f;
-    const float top = card.rect.top + titleHeight + 8.0f + (availableHeight - gridHeight) * 0.5f;
+    const float gridWidth =
+        static_cast<float>(columns) * cell + static_cast<float>(columns - 1) * kTrayPageCellGapDip;
+    const float gridHeight =
+        static_cast<float>(rows) * cell + static_cast<float>(rows - 1) * kTrayPageCellGapDip;
+    // Centred BOTH ways: the grid is a group of tiles in the reference, not a page-wide sheet, and a
+    // two-row page (this machine's eight icons) sits in the middle of the room rather than under the
+    // section row.
+    const float gridLeft = card.rect.left + (cardWidth - gridWidth) * 0.5f;
+    const float gridTop = bandTop + (band - gridHeight) * 0.5f;
 
     for (int i = 0; i < iconCount; ++i) {
         const int column = i % columns;
@@ -212,14 +306,17 @@ inline TrayPageLayout TrayPageFor(const RoundedBox& card, int iconCount) {
         const int firstInRow = row * columns;
         const int remaining = iconCount - firstInRow;
         const int rowCount = remaining < columns ? remaining : columns;
-        const float rowWidth = rowCount * cell + (rowCount - 1) * kTrayPageCellGapDip;
-        const float rowLeft = left + (gridWidth - rowWidth) * 0.5f;
+        const float rowWidth =
+            static_cast<float>(rowCount) * cell +
+            static_cast<float>(rowCount - 1) * kTrayPageCellGapDip;
+        const float rowLeft = gridLeft + (gridWidth - rowWidth) * 0.5f;
         RectF placed;
-        placed.left = rowLeft + column * (cell + kTrayPageCellGapDip);
-        placed.top = top + row * (cell + kTrayPageCellGapDip);
+        placed.left = rowLeft + static_cast<float>(column) * (cell + kTrayPageCellGapDip);
+        placed.top = gridTop + static_cast<float>(row) * (cell + kTrayPageCellGapDip);
         placed.right = placed.left + cell;
         placed.bottom = placed.top + cell;
         layout.cells[i] = placed;
+
     }
     return layout;
 }
@@ -232,6 +329,12 @@ inline int TrayPageCellAt(const RoundedBox& card, int iconCount, float x, float 
         if (x >= cell.left && x <= cell.right && y >= cell.top && y <= cell.bottom) return i;
     }
     return -1;
+}
+
+inline bool TrayPageTaskManagerAt(const RoundedBox& card, int iconCount, float x, float y) {
+    const TrayPageLayout layout = TrayPageFor(card, iconCount);
+    const RectF& button = layout.footerTaskManager;
+    return x >= button.left && x <= button.right && y >= button.top && y <= button.bottom;
 }
 
 // --- the tray's own context menu (2026-10-14, HANDOFF 8.80) ---------------------------
@@ -281,8 +384,8 @@ inline const wchar_t* TrayMenuLabel(TrayMenuAction action, bool ownMenuUnreachab
 //
 // Only one entry has a second state, and it is the one that cannot be taken back: 结束应用 ends the
 // application's processes, so it gives the application no chance to save. The first press says so in
-// words ("再点一次"), which is the same arrangement the Start card's power list uses for sign-out,
-// restart and shutdown.
+// words ("再点一次"), the same deliberate two-step arrangement the Start card uses for restart and
+// shutdown.
 inline const wchar_t* TrayMenuArmedLabel(TrayMenuAction action) {
     if (action == TrayMenuAction::QuitApplication) return L"再点一次：关闭应用";
     return TrayMenuLabel(action);
@@ -613,8 +716,31 @@ inline float CardLeftFor(float anchorLeftDip, float cardWidthDip, float windowWi
 //
 // `held` is the previous answer, so the caller feeds this back to itself exactly as it does with
 // NextCardOwner. Every row of that table is asserted in Diagnostics.
-// `Start` is the fourth level: the user's own Start card (see StartPageFor).
+// `Start` is the fourth level: the user's own Start card (see StartPageFor). The bar's own settings
+// moved to a separate activating window on 2026-11-08.
 enum class PanelLevel { Tiles, Sound, Tray, Start };
+
+// A card's visible face can differ by owner AND level while the state and animation remain shared.
+// Start and tray are levels of the SystemPanel owner, so owner alone cannot distinguish the compact
+// system-tiles page from the wider pages it shares its lifecycle with.
+inline CardFaceSize CardFaceSizeFor(CardOwner owner, PanelLevel level) {
+    CardFaceSize size;
+    if (owner == CardOwner::Music) {
+        size.heightDip = kMusicCardHeightDip;
+    } else if (owner == CardOwner::SystemPanel && level == PanelLevel::Tiles) {
+        size.widthDip = kSystemPanelWidthDip;
+        size.heightDip = kSystemPanelHeightDip;
+    }
+    return size;
+}
+
+inline float CardFaceWidthFor(CardOwner owner, PanelLevel level) {
+    return CardFaceSizeFor(owner, level).widthDip;
+}
+
+inline float CardFaceHeightFor(CardOwner owner, PanelLevel level = PanelLevel::Tiles) {
+    return CardFaceSizeFor(owner, level).heightDip;
+}
 
 inline PanelLevel NextPanelLevel(PanelLevel held, bool cardUp, bool panelWanted, bool trayWanted,
                                  bool soundWanted, bool startWanted) {
@@ -624,6 +750,20 @@ inline PanelLevel NextPanelLevel(PanelLevel held, bool cardUp, bool panelWanted,
     if (soundWanted) return PanelLevel::Sound;
     if (startWanted) return PanelLevel::Start;
     return PanelLevel::Tiles;
+}
+
+// WHAT PRESSING THE SYSTEM BUTTON ASKS FOR.
+//
+// One card, four levels (see NextPanelLevel above), and three controls that open one of them -- so this
+// button toggles ITS OWN level, not "a card". While the Start card is up the press SWITCHES the card to
+// the tiles and the card stays up; every other case is the shell's own toggle.
+//
+// The distinction is the whole bug it was written for (2026-11-05): the Start card holds the very same
+// request -- `systemPanelOpen` is "a card is wanted", and the Start level sets it -- so a plain toggle
+// put the card away instead of switching it, and left the level pointing at Start. Reported as
+// "点击开始菜单按钮弹出卡片后 再点击系统按钮 不会弹窗 而且是关闭开始菜单卡片".
+inline bool SystemButtonWantsTiles(bool panelWanted, bool startWanted) {
+    return startWanted || !panelWanted;
 }
 
 // WHETHER A CONTROL MAY ANSWER THE POINTER.
@@ -670,10 +810,20 @@ struct ControlLit {
     bool start = false;
 };
 
-inline ControlLit ControlLitFor(PanelLevel level, bool cardUp) {
+// Whether the SYSTEM button should show its open state. `panelCardUp` is "the card on screen is the
+// SYSTEM PANEL's own", NOT "some card is up".
+//
+// The music card and a notification are cards too, and neither was opened by that button -- with the old
+// answer ("any card") the chevron flipped every time a song's card appeared, which read as the control
+// itself moving (reported 2026-11-06 as "当音乐卡片弹出来的时候 系统按钮图标也在动").
+inline bool SystemButtonLitFor(PanelLevel level, bool panelCardUp) {
+    return panelCardUp && SystemButtonShowsOpen(level);
+}
+
+inline ControlLit ControlLitFor(PanelLevel level, bool panelCardUp) {
     ControlLit lit;
-    if (!cardUp) return lit;
-    lit.system = SystemButtonShowsOpen(level);
+    if (!panelCardUp) return lit;
+    lit.system = SystemButtonLitFor(level, panelCardUp);
     lit.tray = TrayButtonShowsOpen(level);
     lit.start = StartButtonShowsOpen(level);
     return lit;
@@ -685,79 +835,279 @@ inline ControlLit ControlLitFor(PanelLevel level, bool cardUp) {
 // 上面的应该可以让用户手动添加" -- a BLANK card whose footer holds the account picture and the power
 // button, and whose upper area the user fills himself.
 //
-// So the card's upper area is a GRID OF PINS that starts empty, and the footer is the two things the
-// shell's Start menu puts in its own footer. The card itself is the SAME card as the panel's -- 520 x 250,
-// hanging from the same button, with the same open/close animation -- because a Start card is one more
-// level of a thing that already exists, not a new kind of window.
+// The 2026-11 reference put a frame around that grid: a search field at the top, a page row under it,
+// and the account and power controls in a footer band. The card is still the SAME card as the panel's --
+// 520 x 500, hanging from the same button, with the same open/close animation. The search field now owns a
+// temporary native editor for real keyboard/IME input, and the grid button opens the all-applications grid.
+//
+//     padding top                                                          18
+//     search field (full inner width, stadium radius)                      52
+//     gap to the tab row                                                   12
+//     page row: 固定常用 + all-applications grid button                    28
+//     gap to the grid                                                      16
+//     three rows of 72 DIP cells (a 50 icon with its name beneath)        232
+//     ... room below the grid, which the picker uses as it scrolls
+//     footer: picture + name, and the four-button power group               48
+//     padding bottom                                                       18
+//                                                                        ----
+//                                                                        500 (with room for the picker)
 inline constexpr int   kStartColumns    = 6;
 inline constexpr int   kStartRows       = 3;
-inline constexpr float kStartCellWidth  = 76.0f;
-// 50, not 60: three rows plus two 4 DIP gaps have to fit the 162 DIP between the card's top padding and
-// the footer (250 - 16 top - 16 bottom - 46 footer - 10 gap). Asserted, and it failed at 60 -- which is
-// what the assertion is for.
-inline constexpr float kStartCellHeight = 50.0f;
-inline constexpr float kStartCellGap    = 4.0f;
-inline constexpr float kStartFooterDip  = 46.0f;
-inline constexpr float kStartAvatarDip  = 28.0f;
-inline constexpr float kStartPowerDip   = 30.0f;   // the power button's square
-inline constexpr float kStartRowHeight  = 34.0f;   // one line of the picker or the power list
-inline constexpr float kStartHeaderDip  = 30.0f;   // the row the 全部 button sits in, above the grid
-inline constexpr float kStartAllAppsWidth = 30.0f;   // an icon button, not a word
-inline constexpr float kStartAllAppsHeight = 22.0f;
+// The card's own padding: the shared card's 18, so this page's content sits on the same margins as the
+// system panel's tiles and the tray page's grid.
+inline constexpr float kStartPadDip     = 20.0f;
+// The search field is the command-palette silhouette: darker than the card, a fine neutral edge, a
+// cyan optical mark at the left, and enough height for the placeholder to breathe.
+inline constexpr float kStartSearchDip       = 52.0f;
+inline constexpr float kStartSearchRadiusDip = 26.0f;
+inline constexpr float kStartSearchIconDip   = 20.0f;
+// The tab row: 28 DIP is the reference's px-3.5 py-1 around a 12 DIP caption. The two widths are the
+// captions' own ink plus that padding, written down because this function is pure and cannot measure.
+// The middle two are reference-only categories in this round: they are drawn and deliberately answer no
+// target.
+inline constexpr float kStartTabHeightDip        = 28.0f;
+inline constexpr float kStartTabsGapDip          = 12.0f;   // search field -> page row
+inline constexpr float kStartGridGapDip          = 16.0f;   // page row -> the grid's first icon
+inline constexpr float kStartPinnedTabWidthDip   = 88.0f;   // 固定常用
+inline constexpr float kStartAllAppsButtonDip    = 34.0f;   // the tab row's only right-hand button
+// The grid: six columns of a 44 DIP icon with its name under it, compacted for the 520 DIP card.
+//
+// The CELL is the whole thing -- icon and caption -- because a tile is one target: the icon and the name
+// below it are pressed together, and the name has to be INSIDE the cell or the rows would be hit-tested
+// against the gaps as well. The two gaps are separate because the reference's are: the columns are
+// separated by 8 and the rows by 8, which keeps a 72 DIP cell with a 44 DIP icon from reading as
+// a stamp sheet.
+inline constexpr float kStartCellWidth         = 72.0f;
+inline constexpr float kStartCellHeight        = 72.0f;
+inline constexpr float kStartColumnGap         = 8.0f;
+inline constexpr float kStartRowGap            = 8.0f;
+inline constexpr float kStartAppIconDip        = 44.0f;
+inline constexpr float kStartAppIconRadiusDip  = 10.0f;
+inline constexpr float kStartLabelGapDip       = 3.0f;
+// The footer. Its band is compact at 48 DIP, and the power group is the reference's pill of four 36 DIP
+// round buttons -- the size the panel's footer buttons use, so the two cards' bottoms read as the same
+// furniture. Only the fourth button answers (see StartPageHitFor); the lock, the moon and the restart are
+// drawn for the reference and are inert in this round.
+inline constexpr float kStartFooterDip          = 48.0f;
+inline constexpr float kStartAvatarDip          = 30.0f;
+inline constexpr float kStartPowerDip           = 36.0f;
+inline constexpr float kStartPowerGroupPadDip   = 4.0f;
+inline constexpr float kStartPowerGroupGapDip   = 4.0f;
+inline constexpr int   kStartPowerButtons       = 4;
 
 struct StartPageLayout {
-    RectF grid;         // where the pinned tiles live
-    RectF footer;       // the account picture and the power button
+    // The chrome, drawn on every page because it is the card's frame rather than one page's content: the
+    // search field with its magnifier and text box, plus the page row's title and grid button.
+    RectF search;
+    RectF searchIcon;
+    RectF searchHint;
+    RectF searchClear;
+    RectF tabRow;
+    RectF pinnedTab;
+    RectF allAppsButton;
+    // Where the pins, the add tile and the all-applications grid live.
+    RectF grid;
+    // The footer: the account picture, the name's box, and the four-button power group.
+    RectF footer;
     RectF avatar;
-    RectF powerButton;
-    RectF allApps;      // the 全部 button, in the header row at the card's top-right
+    RectF accountName;
+    RectF powerGroup;
+    RectF powerButtons[kStartPowerButtons];
     bool  valid = false;
 };
 
 // `card` is the card's own rectangle, the same one every other level is laid out in.
 inline StartPageLayout StartPageFor(const RoundedBox& card) {
     StartPageLayout layout;
-    constexpr float pad = 16.0f;
-    if (card.rect.right - card.rect.left < pad * 2.0f + 1.0f ||
-        card.rect.bottom - card.rect.top < kStartFooterDip + pad * 2.0f + 1.0f) {
+    const float pad = kStartPadDip;
+    const float cardWidth = card.rect.right - card.rect.left;
+    const float cardHeight = card.rect.bottom - card.rect.top;
+    // The grid's own width, and the height the three rows need. A box that cannot hold the chrome, one
+    // full grid and the footer is not a card this page can be composed in; every caller skips the page
+    // rather than drawing a rectangle with a negative side.
+    const float gridWidth =
+        kStartColumns * kStartCellWidth + (kStartColumns - 1) * kStartColumnGap;
+    const float gridHeight =
+        kStartRows * kStartCellHeight + (kStartRows - 1) * kStartRowGap;
+    const float fixedHeight = pad * 2.0f + kStartSearchDip + kStartTabsGapDip + kStartTabHeightDip +
+                              kStartGridGapDip + gridHeight + 16.0f + kStartFooterDip;
+    if (cardWidth < pad * 2.0f + gridWidth || cardHeight < fixedHeight) {
         return layout;
     }
 
-    layout.footer.left = card.rect.left + pad;
-    layout.footer.right = card.rect.right - pad;
+    const float left = card.rect.left + pad;
+    const float right = card.rect.right - pad;
+
+    // --- the search field -------------------------------------------------------------------------
+    layout.search.left = left;
+    layout.search.right = right;
+    layout.search.top = card.rect.top + pad;
+    layout.search.bottom = layout.search.top + kStartSearchDip;
+    const float searchCentreY = (layout.search.top + layout.search.bottom) * 0.5f;
+    layout.searchIcon.left = layout.search.left + 18.0f;
+    layout.searchIcon.top = searchCentreY - kStartSearchIconDip * 0.5f;
+    layout.searchIcon.right = layout.searchIcon.left + kStartSearchIconDip;
+    layout.searchIcon.bottom = layout.searchIcon.top + kStartSearchIconDip;
+    layout.searchClear.right = layout.search.right - 10.0f;
+    layout.searchClear.left = layout.searchClear.right - 30.0f;
+    layout.searchClear.top = searchCentreY - 15.0f;
+    layout.searchClear.bottom = layout.searchClear.top + 30.0f;
+    layout.searchHint.left = layout.searchIcon.right + 14.0f;
+    layout.searchHint.right = layout.searchClear.left - 10.0f;
+    layout.searchHint.top = layout.search.top;
+    layout.searchHint.bottom = layout.search.bottom;
+
+    // --- the page row, under it --------------------------------------------------------------------
+    //
+    // The card has one page title and one way to the full application grid. The old category tabs were
+    // labels without behaviour, and the all-applications text tab duplicated the grid button.
+    layout.tabRow.left = left;
+    layout.tabRow.right = right;
+    layout.tabRow.top = layout.search.bottom + kStartTabsGapDip;
+    layout.tabRow.bottom = layout.tabRow.top + kStartTabHeightDip;
+
+    layout.pinnedTab.left = layout.tabRow.left;
+    layout.pinnedTab.right = layout.pinnedTab.left + kStartPinnedTabWidthDip;
+    layout.pinnedTab.top = layout.tabRow.top;
+    layout.pinnedTab.bottom = layout.tabRow.bottom;
+    layout.allAppsButton.right = layout.tabRow.right;
+    layout.allAppsButton.left = layout.allAppsButton.right - kStartAllAppsButtonDip;
+    layout.allAppsButton.top = layout.tabRow.top - 3.0f;
+    layout.allAppsButton.bottom = layout.tabRow.bottom + 3.0f;
+
+    // --- the footer, pinned to the card's lower edge ----------------------------------------------
+    layout.footer.left = left;
+    layout.footer.right = right;
     layout.footer.bottom = card.rect.bottom - pad;
     layout.footer.top = layout.footer.bottom - kStartFooterDip;
-
-    // The grid starts below the card's top edge and stops a gap above the footer. Its columns are spread
-    // across the card's full inner width, centred: the cell size is fixed and the leftover is split.
-    const float innerWidth = card.rect.right - card.rect.left - pad * 2.0f;
-    const float gridWidth =
-        kStartColumns * kStartCellWidth + (kStartColumns - 1) * kStartCellGap;
-    layout.grid.left = card.rect.left + pad + (innerWidth - gridWidth) * 0.5f;
-    layout.grid.right = layout.grid.left + gridWidth;
-    // The header row belongs to the 全部 button: the grid starts under it, so the button can never sit on
-    // top of a tile (it would have covered the first row's last application).
-    layout.grid.top = card.rect.top + pad + kStartHeaderDip;
-    layout.grid.bottom = layout.footer.top - 10.0f;
-
-    layout.allApps.right = card.rect.right - pad;
-    layout.allApps.left = layout.allApps.right - kStartAllAppsWidth;
-    layout.allApps.top = card.rect.top + pad - 2.0f;
-    layout.allApps.bottom = layout.allApps.top + kStartAllAppsHeight;
-
-    layout.avatar.right = layout.footer.left + kStartAvatarDip;
-    layout.avatar.left = layout.footer.left;
     const float footerCentreY = (layout.footer.top + layout.footer.bottom) * 0.5f;
+
+    layout.avatar.left = layout.footer.left;
     layout.avatar.top = footerCentreY - kStartAvatarDip * 0.5f;
+    layout.avatar.right = layout.avatar.left + kStartAvatarDip;
     layout.avatar.bottom = layout.avatar.top + kStartAvatarDip;
 
-    layout.powerButton.right = layout.footer.right;
-    layout.powerButton.left = layout.powerButton.right - kStartPowerDip;
-    layout.powerButton.top = footerCentreY - kStartPowerDip * 0.5f;
-    layout.powerButton.bottom = layout.powerButton.top + kStartPowerDip;
+    // The power group: four round buttons in a pill, against the card's right edge. The pad and the gap
+    // are the reference's p-1 / gap-1, so the buttons stand 4 DIP apart inside a 4 DIP rim.
+    const float groupWidth = kStartPowerButtons * kStartPowerDip +
+                             (kStartPowerButtons - 1) * kStartPowerGroupGapDip +
+                             kStartPowerGroupPadDip * 2.0f;
+    layout.powerGroup.right = layout.footer.right;
+    layout.powerGroup.left = layout.powerGroup.right - groupWidth;
+    layout.powerGroup.top =
+        footerCentreY - (kStartPowerDip + kStartPowerGroupPadDip * 2.0f) * 0.5f;
+    layout.powerGroup.bottom =
+        layout.powerGroup.top + kStartPowerDip + kStartPowerGroupPadDip * 2.0f;
+    for (int i = 0; i < kStartPowerButtons; ++i) {
+        RectF& button = layout.powerButtons[i];
+        button.left = layout.powerGroup.left + kStartPowerGroupPadDip +
+                      static_cast<float>(i) * (kStartPowerDip + kStartPowerGroupGapDip);
+        button.top = footerCentreY - kStartPowerDip * 0.5f;
+        button.right = button.left + kStartPowerDip;
+        button.bottom = button.top + kStartPowerDip;
+    }
+    // The account name uses everything between the picture and the power group.
+    layout.accountName.left = layout.avatar.right + 10.0f;
+    layout.accountName.right = layout.powerGroup.left - 16.0f;
+    layout.accountName.top = layout.footer.top;
+    layout.accountName.bottom = layout.footer.bottom;
+
+    // --- the grid, between the tab row and the footer ---------------------------------------------
+    // The columns are spread across the card's full inner width, centred: the cell size is fixed and the
+    // leftover is split, the same rule the tray page's cells follow.
+    layout.grid.left = card.rect.left + (cardWidth - gridWidth) * 0.5f;
+    layout.grid.right = layout.grid.left + gridWidth;
+    layout.grid.top = layout.tabRow.bottom + kStartGridGapDip;
+    // The band the picker scrolls in ends a gap above the footer. The pins themselves are only three rows
+    // tall and stand at the band's top; the room under them is what the picker uses.
+    layout.grid.bottom = layout.footer.top - 16.0f;
+    if (layout.grid.bottom < layout.grid.top + gridHeight) {
+        return StartPageLayout{};
+    }
 
     layout.valid = true;
     return layout;
+}
+
+// --- the grouped search list ---------------------------------------------------------------------
+//
+// Search uses the same grid band as the pins, but not the six-column grid: applications, Windows Settings
+// and files are three lists a reader scans vertically. Eight rows is the largest list that fits without
+// scrolling, and the three section headers are part of that arithmetic:
+//
+//     3 section headers x 16 + 8 rows x 29 + 2 gaps x 4 = 288 DIP
+//
+// which is exactly the height StartPageFor leaves between the tab row and the footer on the 520 x 500 card.
+inline constexpr int   kStartSearchMaxResults = 8;
+inline constexpr int   kStartSearchGroupCount = 3;
+inline constexpr float kStartSearchHeaderDip   = 16.0f;
+inline constexpr float kStartSearchRowDip      = 30.0f;
+inline constexpr float kStartSearchGroupGapDip = 4.0f;
+
+struct StartSearchListLayout {
+    RectF headers[kStartSearchGroupCount];
+    RectF rows[kStartSearchMaxResults];
+    int   rowGroup[kStartSearchMaxResults] = {};
+    int   groupCounts[kStartSearchGroupCount] = {};
+    int   count = 0;
+    bool  valid = false;
+};
+
+inline StartSearchListLayout StartSearchListFor(const StartPageLayout& page,
+                                                const SearchResultKind* kinds, int count) {
+    StartSearchListLayout layout;
+    if (!page.valid || !kinds || count <= 0) return layout;
+    if (count > kStartSearchMaxResults) count = kStartSearchMaxResults;
+    layout.count = count;
+    for (int i = 0; i < count; ++i) {
+        const int group = static_cast<int>(kinds[i]);
+        if (group < 0 || group >= kStartSearchGroupCount) return StartSearchListLayout{};
+        layout.rowGroup[i] = group;
+        ++layout.groupCounts[group];
+    }
+
+    int presentGroups = 0;
+    for (int groupCount : layout.groupCounts) {
+        if (groupCount > 0) ++presentGroups;
+    }
+    const float fixedHeight =
+        static_cast<float>(presentGroups) * kStartSearchHeaderDip +
+        static_cast<float>(presentGroups > 0 ? presentGroups - 1 : 0) *
+            kStartSearchGroupGapDip;
+    float rowHeight =
+        (page.grid.bottom - page.grid.top - fixedHeight) / static_cast<float>(count);
+    if (rowHeight > kStartSearchRowDip) rowHeight = kStartSearchRowDip;
+    if (rowHeight < 1.0f) return StartSearchListLayout{};
+
+    float top = page.grid.top;
+    bool haveGroup = false;
+    int row = 0;
+    for (int group = 0; group < kStartSearchGroupCount; ++group) {
+        if (layout.groupCounts[group] == 0) continue;
+        if (haveGroup) top += kStartSearchGroupGapDip;
+        layout.headers[group] = {page.grid.left, top, page.grid.right,
+                                 top + kStartSearchHeaderDip};
+        top += kStartSearchHeaderDip;
+        haveGroup = true;
+
+        for (int i = 0; i < count; ++i) {
+            if (layout.rowGroup[i] != group) continue;
+            layout.rows[i] = {page.grid.left, top, page.grid.right, top + rowHeight};
+            top += rowHeight;
+            ++row;
+        }
+    }
+    layout.valid = row == count && top <= page.grid.bottom + 0.01f;
+    return layout;
+}
+
+inline int StartSearchResultAt(const StartSearchListLayout& layout, float x, float y) {
+    if (!layout.valid) return -1;
+    for (int i = 0; i < layout.count; ++i) {
+        const RectF& row = layout.rows[i];
+        if (x >= row.left && x <= row.right && y >= row.top && y <= row.bottom) return i;
+    }
+    return -1;
 }
 
 // One pinned application's cell, by index. Rows are read left to right, top to bottom, which is also the
@@ -767,45 +1117,43 @@ inline RectF StartPinCellFor(const StartPageLayout& layout, int index) {
     if (!layout.valid || index < 0) return cell;
     const int column = index % kStartColumns;
     const int row = index / kStartColumns;
-    cell.left = layout.grid.left + static_cast<float>(column) * (kStartCellWidth + kStartCellGap);
-    cell.top = layout.grid.top + static_cast<float>(row) * (kStartCellHeight + kStartCellGap);
+    cell.left = layout.grid.left + static_cast<float>(column) * (kStartCellWidth + kStartColumnGap);
+    cell.top = layout.grid.top + static_cast<float>(row) * (kStartCellHeight + kStartRowGap);
     cell.right = cell.left + kStartCellWidth;
     cell.bottom = cell.top + kStartCellHeight;
     return cell;
 }
 
+// The 44 DIP icon inside a cell: centred horizontally, against the cell's top. The name is under it, so
+// the two are separate rectangles rather than one tile: the drawing rounds the icon (radius 10) and centres
+// the caption in the room that is left, and neither has to guess where the other is.
+inline RectF StartPinIconFor(const StartPageLayout& layout, int index) {
+    RectF icon;
+    const RectF cell = StartPinCellFor(layout, index);
+    if (cell.right <= cell.left) return icon;
+    icon.left = cell.left + (kStartCellWidth - kStartAppIconDip) * 0.5f;
+    icon.top = cell.top;
+    icon.right = icon.left + kStartAppIconDip;
+    icon.bottom = icon.top + kStartAppIconDip;
+    return icon;
+}
+
+// The application's name under its icon, INSIDE the cell: the caption is part of the target, so a press on
+// the word is a press on the application (see StartPinCellAt, which divides the whole cell area).
+inline RectF StartPinLabelFor(const StartPageLayout& layout, int index) {
+    RectF label;
+    const RectF cell = StartPinCellFor(layout, index);
+    const RectF icon = StartPinIconFor(layout, index);
+    if (cell.right <= cell.left) return label;
+    label.left = cell.left + 2.0f;
+    label.right = cell.right - 2.0f;
+    label.top = icon.bottom + kStartLabelGapDip;
+    label.bottom = cell.bottom;
+    return label;
+}
+
 // How many pins the grid can hold, which is what says whether a pin has to wait for a second page.
 inline int StartPinCapacity() { return kStartColumns * kStartRows; }
-
-// One row of the picker, counting from the top of the grid area: `rowOnScreen` is after the scroll.
-inline RectF StartPickerRowFor(const RoundedBox& card, int rowOnScreen) {
-    const StartPageLayout layout = StartPageFor(card);
-    RectF row;
-    if (!layout.valid || rowOnScreen < 0) return row;
-    row.left = layout.grid.left;
-    row.right = layout.grid.right;
-    row.top = layout.grid.top + static_cast<float>(rowOnScreen) * kStartRowHeight;
-    row.bottom = row.top + kStartRowHeight;
-    if (row.bottom > layout.grid.bottom + kStartRowHeight * 0.5f) {
-        // Past the bottom of the grid area: not on screen, and the caller skips it.
-        return row;
-    }
-    return row;
-}
-
-// One row of the power list, which stands ABOVE the power button and is right-aligned to it -- the
-// placement the shell's own Start uses, so the menu reads as belonging to the button it came from.
-inline constexpr float kStartPowerRowWidth = 168.0f;
-inline RectF StartPowerRowFor(const RoundedBox& card, int index) {
-    const StartPageLayout layout = StartPageFor(card);
-    RectF row;
-    if (!layout.valid || index < 0) return row;
-    row.right = layout.powerButton.right;
-    row.left = row.right - kStartPowerRowWidth;
-    row.bottom = layout.footer.top - 8.0f - static_cast<float>(index) * kStartRowHeight;
-    row.top = row.bottom - kStartRowHeight;
-    return row;
-}
 
 // The rectangles for the tiles that get a wash. Kept here with the geometry so the hit tests and the
 // drawing cannot disagree about where a cell is.
@@ -833,11 +1181,11 @@ inline bool StartCardAsksForFrame(int target, int index, int scroll, int lastTar
 inline int StartPinCellAt(const StartPageLayout& layout, int count, float x, float y) {
     if (!layout.valid) return -1;
     if (!StartRectHasPoint(layout.grid, x, y)) return -1;
-    // By ARITHMETIC rather than by testing each cell: the cells are separated by a 4 DIP gap, and a click
+    // By ARITHMETIC rather than by testing each cell: the cells are separated by a small gap, and a click
     // two pixels off a tile landing in that gap and doing nothing is a dead zone in a grid the user is
     // meant to fill by hand. Dividing the offset by the pitch makes the whole area belong to some tile.
-    const float pitchX = kStartCellWidth + kStartCellGap;
-    const float pitchY = kStartCellHeight + kStartCellGap;
+    const float pitchX = kStartCellWidth + kStartColumnGap;
+    const float pitchY = kStartCellHeight + kStartRowGap;
     const int column = static_cast<int>((x - layout.grid.left) / pitchX);
     const int row = static_cast<int>((y - layout.grid.top) / pitchY);
     if (column < 0 || column >= kStartColumns || row < 0 || row >= kStartRows) return -1;
@@ -847,29 +1195,14 @@ inline int StartPinCellAt(const StartPageLayout& layout, int count, float x, flo
     return index < limit ? index : -1;
 }
 
-inline int StartPickerRowAt(const RoundedBox& card, int scrollRow, int count, float x, float y) {
-    const StartPageLayout layout = StartPageFor(card);
-    if (!layout.valid) return -1;
-    const int rowsOnScreen =
-        static_cast<int>((layout.grid.bottom - layout.grid.top) / kStartRowHeight);
-    for (int visible = 0; visible <= rowsOnScreen; ++visible) {
-        const int index = scrollRow + visible;
-        if (index < 0 || index >= count) break;
-        const RectF row = StartPickerRowFor(card, visible);
-        if (row.bottom > layout.grid.bottom) break;
-        if (StartRectHasPoint(row, x, y)) return index;
-    }
-    return -1;
-}
-
 // One cell of the ALL-APPLICATIONS grid: the same 6-column cells the pins use, scrolled by whole rows.
 // Returns the LIST index (scrollRow * kStartColumns + the cell), not the cell index, because that is what
 // the drawing and the click need; -1 off the grid or past the end of the list.
 inline int StartPickerCellAt(const RoundedBox& card, int scrollRow, int count, float x, float y) {
     const StartPageLayout layout = StartPageFor(card);
     if (!layout.valid || !StartRectHasPoint(layout.grid, x, y)) return -1;
-    const float pitchX = kStartCellWidth + kStartCellGap;
-    const float pitchY = kStartCellHeight + kStartCellGap;
+    const float pitchX = kStartCellWidth + kStartColumnGap;
+    const float pitchY = kStartCellHeight + kStartRowGap;
     const int column = static_cast<int>((x - layout.grid.left) / pitchX);
     const int row = static_cast<int>((y - layout.grid.top) / pitchY);
     if (column < 0 || column >= kStartColumns || row < 0 || row >= kStartRows) return -1;
@@ -877,55 +1210,142 @@ inline int StartPickerCellAt(const RoundedBox& card, int scrollRow, int count, f
     return index < count ? index : -1;
 }
 
-inline int StartPowerRowAt(const RoundedBox& card, float x, float y) {
-    for (int i = 0; i < 5; ++i) {
-        if (StartRectHasPoint(StartPowerRowFor(card, i), x, y)) return i;
+// What a point on the Start card lands on.
+//
+// ONE function for the pointer's hover, the press that follows it and the right-click that unpins: the
+// three used to ask slightly different questions, and the all-applications grid is what paid for it -- it
+// was DRAWN as 6-column cells and hit-tested as 34 DIP list rows on one of the paths, so a click on the
+// second half of an icon opened whatever the list thought was there.
+//
+// The card passed in must already be the PLACED card (the one the drawing was given), and the page, the
+// two counts and the scroll must be the same numbers the drawing was given -- they are the frame's, told
+// to the window for exactly this reason.
+enum class StartPageTarget {
+    None = 0,
+    Search,       // the text field; starts the native search editor
+    Pin,          // one pinned application
+    PickerRow,    // one application in the all-applications grid
+    PowerButton,  // one of the four direct power controls
+    EmptyGrid,    // the pins area away from every tile: pressing it adds a shortcut
+    AllApps,      // the grid button at the right of the page row
+    PinnedTab,    // 固定常用: return to the pins
+    AddTile,      // the dashed "+ 添加快捷键" tile at the end of the pins
+    // THE CARD ITSELF: its chrome and its gaps. It is
+    // NOT a control -- nothing happens -- but a press here must still be CONSUMED, because the panel's own
+    // tiles are laid out in the same rectangle one level down and `bar.systemPanelOpen` is set for the Start
+    // level too. Without this, pressing the card's background fell through to the panel and closed it.
+    Chrome,
+    ClearSearch,  // the x inside the search field
+};
+
+struct StartPageHit {
+    StartPageTarget target = StartPageTarget::None;
+    int index = -1;
+};
+
+inline StartPageHit StartPageHitFor(const RoundedBox& card, int page, int pinCount, int listCount,
+                                    int pickerScrollRow, float x, float y,
+                                    bool searchActive = false,
+                                    const SearchResultKind* resultKinds = nullptr,
+                                    int resultCount = 0, bool searchHasText = false) {
+    StartPageHit hit;
+    const StartPageLayout layout = StartPageFor(card);
+    if (!layout.valid || !StartRectHasPoint(card.rect, x, y)) return hit;
+
+    // Text entry first, because the search field spans a wide top band.
+    if (searchHasText && StartRectHasPoint(layout.searchClear, x, y)) {
+        hit.target = StartPageTarget::ClearSearch;
+        return hit;
     }
-    return -1;
+    if (StartRectHasPoint(layout.search, x, y)) {
+        hit.target = StartPageTarget::Search;
+        return hit;
+    }
+    // The four footer controls are direct actions.
+    for (int i = 0; i < kStartPowerButtons; ++i) {
+        if (StartRectHasPoint(layout.powerButtons[i], x, y)) {
+            hit.target = StartPageTarget::PowerButton;
+            hit.index = i;
+            return hit;
+        }
+    }
+    // Then the page-row controls, which are drawn on every page.
+    if (StartRectHasPoint(layout.pinnedTab, x, y)) {
+        hit.target = StartPageTarget::PinnedTab;
+        return hit;
+    }
+    if (StartRectHasPoint(layout.allAppsButton, x, y)) {
+        hit.target = StartPageTarget::AllApps;
+        return hit;
+    }
+
+    if (page == 1) {
+        int index = -1;
+        if (searchActive) {
+            const StartSearchListLayout results =
+                StartSearchListFor(layout, resultKinds, resultCount);
+            index = StartSearchResultAt(results, x, y);
+        } else {
+            index = StartPickerCellAt(card, pickerScrollRow, listCount, x, y);
+        }
+        if (index >= 0) {
+            hit.target = StartPageTarget::PickerRow;
+            hit.index = index;
+            return hit;
+        }
+    } else {
+        const int pin = StartPinCellAt(layout, pinCount, x, y);
+        if (pin >= 0) {
+            hit.target = StartPageTarget::Pin;
+            hit.index = pin;
+            return hit;
+        }
+        // The add tile is the cell AFTER the last pin, and it is a real one: pressing it opens the picker,
+        // the same as pressing the empty part of the grid. It only exists while there is room for it.
+        if (pinCount < StartPinCapacity()) {
+            const RectF addCell = StartPinCellFor(layout, pinCount);
+            if (StartRectHasPoint(addCell, x, y)) {
+                hit.target = StartPageTarget::AddTile;
+                return hit;
+            }
+        }
+        if (StartRectHasPoint(layout.grid, x, y)) {
+            hit.target = StartPageTarget::EmptyGrid;
+            return hit;
+        }
+    }
+
+    // Everything left inside the card is its own body: drawn chrome and the room between the controls.
+    hit.target = StartPageTarget::Chrome;
+    return hit;
 }
 
 // --- the system panel --------------------------------------------------------------
 //
-// What the row of system indicators summarises, opened out. Its structure follows the shell's own
-// quick-settings flyout, because that is the shape a user already knows for this content:
+// What the row of system indicators summarises, opened out, in the arrangement of the reference control
+// centre (2026-11-06):
 //
-//     [ tile ] [ tile ] [ tile ]     2 rows of 3
-//     [ tile ] [ tile ] [ tile ]
-//     [ speaker  -----------o----- ]  the volume slider
-//     [ sun      ---------o------- ]  the brightness slider, when the display answers
-//     [                        (gear) ] the settings button
+//     [ tile ][ tile ][ tile ]          2 rows of 3, each 82 DIP tall and radius 14
+//     [ tile ][ tile ][ tile ]
+//     +--------------------------------+
+//     | [speaker] 音量         78% [dev] |
+//     | ==============o--------------  |   the volume row
+//     | [sun] 显示亮度              85% |   (the reading is orange)
+//     | =================o-----------  |   the brightness row
+//     +--------------------------------+
+//     (battery) 98% 充电中    (moon)(speaker)(gear)
 //
 // The tiles have an ON and an OFF appearance rather than being a list of readings. A row that says
 // "Wi-Fi: not connected" tells the user something; a tile that is dark tells them the same thing AND
-// what pressing it will do.
+// what pressing it will do. The tile carries its own caption now: the name in the reference's bold
+// white and the state under it in the dim face, both INSIDE the rounded box -- the reference's tile is
+// one surface, not a box with a caption hanging under it.
 //
 // Like the music card, this is one CARD -- same state, same shape, same radius -- because it is the
 // same kind of thing: something that opens downward from the bar to show more than the bar has room
-// for.
-//
-// THE HEIGHT, because the window is a fixed 240 DIP and nothing may be clipped:
-//
-//     padding top                      14
-//     2 rows of 46 tiles + 8 gap       100
-//     gap                              10
-//     slider row                       22
-//     gap                               8
-//     settings row                     28
-//     padding bottom                   14
-//                                     ----
-//                                     196
-//
-// and the card starts at the pill's margin of 6, so it ends at 202 with 38 DIP to spare. The music
-// card uses the same 212 DIP height, since both are the same state and the outline must not jump
-// between them.
-inline constexpr float kSystemTileHeightDip = 46.0f;
+// for. The compact card is 520 x 500 (Motion.h), and the bands below add up to 500.
+inline constexpr float kSystemTileHeightDip = 74.0f;
 inline constexpr float kSystemTileGapDip = 8.0f;
-
-// The tallest a tile is allowed to become when the card has room to spare.
-//
-// The tiles SHARE the space that is left rather than taking their designed height and leaving the rest empty
-// -- see the grid in SystemPanelFor -- and this keeps a very tall card from turning them into slabs.
-inline constexpr float kSystemTileMaxHeightDip = 76.0f;
 
 inline constexpr int kSystemTileColumns = 3;
 inline constexpr int kSystemTileRows = 2;
@@ -936,22 +1356,40 @@ inline constexpr int kMaxSystemTiles = kSystemTileColumns * kSystemTileRows;
 inline constexpr int kMaxSystemPanelTiles = 3 * kMaxSystemTiles;
 
 struct SystemPanelLayout {
-    // The tile's BOX -- the rounded square the glyph sits in. Its caption is `tileLabels`, which is BELOW this
-    // rectangle, not inside it: that is how the shell's own flyout is built (the box carries the glyph and,
-    // where the tile opens something, a chevron; the caption under it carries the state or the name).
+    // The tile itself: one rounded surface carrying the glyph, the chevron, the name and the state.
+    // The two caption rectangles are INSIDE it, which is the reference's arrangement.
     RectF tiles[kMaxSystemTiles];
     RectF tileIcons[kMaxSystemTiles];
-    RectF tileLabels[kMaxSystemTiles];   // the CAPTION box, under the tile
-    RectF sliders[2];         // the volume slider, and the brightness slider if there is one
-    RectF speakerIcon;        // at the left of the first slider
-    // At the left of the second slider. Its own rectangle rather than a shared one, because the two rows
-    // carry different marks -- a speaker and a sun -- and one rectangle for both drew the speaker glyph
-    // twice, which is how the first attempt at this looked.
+    RectF tileLabels[kMaxSystemTiles];      // the bold name at the tile's lower left
+    RectF tileSubLabels[kMaxSystemTiles];   // the dim state line under the name
+    // The inset surface the two control rows stand on, and the parts of each row: its label at the
+    // left, its reading at the right, and the row the track is drawn and pressed in.
+    RectF sliderPanel;
+    RectF sliderLabels[2];
+    RectF sliderValues[2];
+    RectF sliders[2];
+    // The visible row is 32 DIP high, but the mouse gets a 36 DIP target centred on it. Keeping the two
+    // separate preserves the larger hit target without making the compressed panel look taller.
+    RectF sliderHitRows[2];
+    // The complete tile band, including its gaps. The wheel uses this rectangle rather than each tile,
+    // so scrolling over the space between two tiles still feels like scrolling the grid.
+    RectF tileArea;
+    RectF speakerIcon;        // at the left of the volume row's header
+    // At the left of the brightness row's header. Its own rectangle rather than a shared one, because
+    // the two rows carry different marks -- a speaker and a sun.
     RectF brightnessIcon;
-    // The output-device button at the RIGHT of the volume slider: the device glyph and the chevron
-    // that opens the "声音输出" page, which is what the shell's own flyout puts there.
+    // The output-device button at the RIGHT of the volume row: the device glyph and the chevron that
+    // opens the "声音输出" page, which is what the shell's own flyout puts there.
     RectF volumeButton;
-    RectF gearButton;         // bottom right
+    // The footer: the battery plate at the left and the three round buttons at the right.
+    RectF footer;
+    RectF footerText;
+    RectF footerSubText;
+    RectF footerBattery;
+    RectF footerButtons[3];
+    // The visible circles are 32 DIP while their hit regions stay 40 DIP.
+    RectF footerButtonHits[3];
+    RectF gearButton;
     // The paging column, on the grid's right: the dots and the two arrows that page the tiles, as the shell's
     // own flyout has them. Empty when there is only one page.
     RectF pageDots[4];
@@ -963,12 +1401,28 @@ struct SystemPanelLayout {
     int sliderCount = 0;
 };
 
-// The panel's geometry for a card box and a number of tiles, laid out from the bottom up.
+// The panel's geometry for a card box and a number of tiles, in the reference's three bands.
 //
-// Bottom-up for the same reason the music card is: the slider and the settings button are pinned to
-// the card's lower edge, and the tile grid takes whatever room is left above them. Laying it out
-// top-down would mean the slider moved whenever a tile was added, and the slider is the control a
-// finger goes straight for.
+// TOP-DOWN, which is a change. The old panel stacked its sliders up from the settings button because
+// they were pinned to the card's lower edge. The reference pins the FOOTER there instead, and the tile
+// grid and the inset slider surface are one group above it -- so the grid starts at the card's top,
+// the panel sits directly under it, and only the footer answers to the card's bottom edge.
+//
+// The arithmetic is the whole of the compact card's 408 DIP, and it is written down here so a moved number
+// cannot leave a band hanging off the edge:
+//
+//     padding top                                    18
+//     2 rows of 74 tiles + one 8 gap                156
+//     gap to the inset panel                          12
+//     inset: 8 pad + 54 row + 8 gap + 54 row + 8    132
+//     gap to the footer                               12
+//     footer (three 32 DIP buttons, inset plate)       60
+//     padding bottom                                  18
+//                                                   ----
+//                                                   408
+//
+// A row inside the inset panel is an 18 DIP header (glyph, name, reading) and a 32 DIP track row. The
+// visible 6 DIP track is centred in it; the hit rectangle grows to 36 DIP by extending two DIP each way.
 inline SystemPanelLayout SystemPanelFor(const RoundedBox& box, int tileCount, int sliderCount,
                                         bool paging = false, int pageIndex = 0, int pageCount = 1) {
     SystemPanelLayout layout;
@@ -980,157 +1434,195 @@ inline SystemPanelLayout SystemPanelFor(const RoundedBox& box, int tileCount, in
     layout.tileCount = tileCount;
     layout.sliderCount = sliderCount;
 
-    const float pad = 14.0f;
+    const float pad = 18.0f;
     const float left = box.rect.left + pad;
     const float right = box.rect.right - pad;
 
-    // The paging column is reserved OUT of the grid, the way the shell's flyout does it: the dots and the two
-    // arrows sit in a narrow strip against the card's right edge, and the tiles stop short of it.
+    // The paging controls live in the card's right PADDING, not in the grid. Subtracting a pager column from
+    // the grid made the three tiles visibly left-heavy; overlaying the arrows in the margin keeps the grid
+    // symmetric while leaving every real control where the reference has it.
     const float pagingWidth = paging ? 20.0f : 0.0f;
-    const float gridRight = right - pagingWidth;
+    const float gridRight = right;
     const float innerWidth = gridRight - left;
 
-    // The output-device button, at the right of the volume row. Part of the row rather than of the
-    // slider, so the slider can stop short of it. The shell's own flyout has exactly this: a slider,
-    // then the device that is playing out of it, then an arrow into the page that lists the others.
-    // 40 DIP: the mark is a 20 DIP square and the chevron needs its own 14 beside it. Measured off the
-    // first version at 34 -- the two overlapped into one blob.
-    const float deviceButtonWidth = 40.0f;
-
-    // The settings button, on the card's bottom right.
-    const float gearSize = 28.0f;
-    layout.gearButton.right = right;
-    layout.gearButton.left = right - gearSize;
-    layout.gearButton.bottom = box.rect.bottom - pad;
-    layout.gearButton.top = layout.gearButton.bottom - gearSize;
-
-    // The sliders, stacked upward from the gear row.
-    const float sliderHeight = 22.0f;
-    const float sliderGap = 8.0f;
-
-    for (int i = sliderCount - 1; i >= 0; --i) {
-        const float bottom = layout.gearButton.top - sliderGap -
-                             static_cast<float>(sliderCount - 1 - i) * (sliderHeight + sliderGap);
-        layout.sliders[i].left = left + 26.0f;   // clear of the speaker glyph
-        // The VOLUME row stops short of the output-device button, which owns its right end. The brightness
-        // row has no such button, so its track uses the whole width -- and it is the row that is drawn
-        // second, which is why the two cannot share one right edge.
-        layout.sliders[i].right = i == 0 ? right - deviceButtonWidth - 6.0f : right;
-        layout.sliders[i].bottom = bottom;
-        layout.sliders[i].top = bottom - sliderHeight;
+    // THE FOOTER, pinned to the card's bottom edge: the battery plate at the left and three 32 DIP
+    // round buttons at the right. Their hit regions are wider than their visible circles.
+    const float footerButton = 32.0f;
+    const float footerButtonHit = 40.0f;
+    const float footerGap = 8.0f;
+    const float footerHeight = 60.0f;
+    layout.footer.left = left;
+    layout.footer.right = right;
+    layout.footer.bottom = box.rect.bottom - pad;
+    layout.footer.top = layout.footer.bottom - footerHeight;
+    for (int i = 0; i < 3; ++i) {
+        const float buttonRight =
+            right - 14.0f - static_cast<float>(2 - i) * (footerButton + footerGap);
+        const float buttonTop = (layout.footer.top + layout.footer.bottom - footerButton) * 0.5f;
+        layout.footerButtons[i].left = buttonRight - footerButton;
+        layout.footerButtons[i].right = buttonRight;
+        layout.footerButtons[i].top = buttonTop;
+        layout.footerButtons[i].bottom = buttonTop + footerButton;
+        const float centreX = (layout.footerButtons[i].left + layout.footerButtons[i].right) * 0.5f;
+        layout.footerButtonHits[i].left = centreX - footerButtonHit * 0.5f;
+        layout.footerButtonHits[i].right = centreX + footerButtonHit * 0.5f;
+        layout.footerButtonHits[i].top =
+            (layout.footer.top + layout.footer.bottom - footerButtonHit) * 0.5f;
+        layout.footerButtonHits[i].bottom = layout.footerButtonHits[i].top + footerButtonHit;
     }
+    layout.gearButton = layout.footerButtons[2];
+    layout.footerBattery.left = layout.footer.left;
+    layout.footerBattery.right = layout.footerButtonHits[0].left - 4.0f;
+    layout.footerBattery.top = layout.footer.top;
+    layout.footerBattery.bottom = layout.footer.bottom;
+    layout.footerText.left = left + 14.0f;
+    layout.footerText.right = layout.footerBattery.right - 14.0f;
+    const float footerCentreY = (layout.footer.top + layout.footer.bottom) * 0.5f;
+    layout.footerText.top = footerCentreY - 20.0f;
+    layout.footerText.bottom = footerCentreY - 2.0f;
+    layout.footerSubText.left = layout.footerText.left + 30.0f;
+    layout.footerSubText.right = layout.footerText.right;
+    layout.footerSubText.top = footerCentreY + 2.0f;
+    layout.footerSubText.bottom = footerCentreY + 20.0f;
 
-    // The speaker glyph, at the left of the first slider.
-    if (sliderCount > 0) {
-        const float centreY = (layout.sliders[0].top + layout.sliders[0].bottom) * 0.5f;
-        layout.speakerIcon.left = left;
-        layout.speakerIcon.right = left + 20.0f;
-        layout.speakerIcon.top = centreY - 10.0f;
-        layout.speakerIcon.bottom = centreY + 10.0f;
-
-        layout.volumeButton.right = right;
-        layout.volumeButton.left = right - deviceButtonWidth;
-        layout.volumeButton.top = centreY - 12.0f;
-        layout.volumeButton.bottom = centreY + 12.0f;
-    }
-
-    // The sun, at the left of the brightness row.
-    if (sliderCount > 1) {
-        const float centreY = (layout.sliders[1].top + layout.sliders[1].bottom) * 0.5f;
-        layout.brightnessIcon.left = left;
-        layout.brightnessIcon.right = left + 20.0f;
-        layout.brightnessIcon.top = centreY - 10.0f;
-        layout.brightnessIcon.bottom = centreY + 10.0f;
-    }
-
-    // The tile grid, filling the space that is left above the controls.
+    // THE TILE GRID, from the card's top: two rows of 74 DIP tiles, with the name and the state INSIDE
+    // each tile. The grid stops short of the paging column when there is one.
     const int rows = (tileCount + kSystemTileColumns - 1) / kSystemTileColumns;
+    const float gridTop = box.rect.top + pad;
+    float gridBottom = gridTop;
+    layout.tileArea.left = left;
+    layout.tileArea.right = right;
+    layout.tileArea.top = gridTop;
     if (rows > 0) {
-        const float gridBottom =
-            (sliderCount > 0 ? layout.sliders[0].top : layout.gearButton.top) - 10.0f;
-        const float gridTop = box.rect.top + pad;
-        const float available = gridBottom - gridTop;
-
-        // The paging column: the dots in the middle of the grid, the up arrow above them and the down arrow
-        // below, so the group is centred on the grid it pages.
-        if (paging) {
-            const float centreY = (gridTop + gridBottom) * 0.5f;
-            const float dotRadius = 2.5f;
-            const float dotGap = 9.0f;
-            const int dots = pageCount < 4 ? pageCount : 4;
-            layout.pageDotCount = dots;
-            layout.pageIndex = pageIndex;
-            const float dotsTop = centreY - (static_cast<float>(dots - 1) * dotGap) * 0.5f;
-            const float columnCentreX = gridRight + pagingWidth * 0.5f;
-            for (int i = 0; i < dots; ++i) {
-                const float cy = dotsTop + static_cast<float>(i) * dotGap;
-                layout.pageDots[i].left = columnCentreX - dotRadius;
-                layout.pageDots[i].right = columnCentreX + dotRadius;
-                layout.pageDots[i].top = cy - dotRadius;
-                layout.pageDots[i].bottom = cy + dotRadius;
-            }
-            const float arrow = 14.0f;
-            layout.pageUp.left = columnCentreX - arrow * 0.5f;
-            layout.pageUp.right = columnCentreX + arrow * 0.5f;
-            layout.pageUp.bottom = dotsTop - 6.0f;
-            layout.pageUp.top = layout.pageUp.bottom - arrow;
-            layout.pageDown.left = layout.pageUp.left;
-            layout.pageDown.right = layout.pageUp.right;
-            layout.pageDown.top = dotsTop + static_cast<float>(dots - 1) * dotGap + 6.0f;
-            layout.pageDown.bottom = layout.pageDown.top + arrow;
-        }
-        // The tiles SHARE the space that is left, instead of taking their designed height and leaving the
-        // remainder empty.
-        //
-        // The designed height was being used as a ceiling. On the card's fixed 250 DIP the six tiles needed
-        // 98 of the 154 DIP available, so the panel wore a 56 DIP band of nothing between the grid and the
-        // slider -- which is the difference between "a grid of controls" and "a grid of controls with a hole
-        // under it". Sharing the space is also what the shell's own quick settings does: the tiles are as
-        // tall as the flyout allows.
-        float tileHeight =
-            (available - static_cast<float>(rows - 1) * kSystemTileGapDip) / static_cast<float>(rows);
-        if (tileHeight < 20.0f) tileHeight = 20.0f;
-        if (tileHeight > kSystemTileMaxHeightDip) tileHeight = kSystemTileMaxHeightDip;
-
-        const float tileWidth = (innerWidth -
-                                 static_cast<float>(kSystemTileColumns - 1) * kSystemTileGapDip) /
-                                static_cast<float>(kSystemTileColumns);
-
-        // A slot is a BOX with a CAPTION under it, which is how the shell's own quick settings is built: the
-        // box carries the glyph (and a chevron where the tile opens something) and the caption under it carries
-        // the state or the name.
-        const float captionHeight = 18.0f;
-        const float captionGap = 5.0f;
-        const float boxHeight = tileHeight - captionHeight - captionGap;
-
+        const float tileWidth =
+            (innerWidth - static_cast<float>(kSystemTileColumns - 1) * kSystemTileGapDip) /
+            static_cast<float>(kSystemTileColumns);
         for (int i = 0; i < tileCount; ++i) {
             const int row = i / kSystemTileColumns;
             const int column = i % kSystemTileColumns;
             const float tileLeft =
                 left + static_cast<float>(column) * (tileWidth + kSystemTileGapDip);
-            const float slotTop =
-                gridTop + static_cast<float>(row) * (tileHeight + kSystemTileGapDip);
+            const float tileTop =
+                gridTop + static_cast<float>(row) * (kSystemTileHeightDip + kSystemTileGapDip);
+            RectF& tile = layout.tiles[i];
+            tile.left = tileLeft;
+            tile.right = tileLeft + tileWidth;
+            tile.top = tileTop;
+            tile.bottom = tileTop + kSystemTileHeightDip;
 
-            layout.tiles[i].left = tileLeft;
-            layout.tiles[i].right = tileLeft + tileWidth;
-            layout.tiles[i].top = slotTop;
-            layout.tiles[i].bottom = slotTop + boxHeight;
-
-            // The glyph at the box's LEFT, vertically centred -- not in a corner. The box is a control, and its
-            // picture belongs where the eye starts reading it.
+            // The glyph at the tile's TOP LEFT, at the size the reference draws it.
             const float glyphSize = 20.0f;
-            const float boxCentreY = (layout.tiles[i].top + layout.tiles[i].bottom) * 0.5f;
             layout.tileIcons[i].left = tileLeft + 12.0f;
             layout.tileIcons[i].right = layout.tileIcons[i].left + glyphSize;
-            layout.tileIcons[i].top = boxCentreY - glyphSize * 0.5f;
+            layout.tileIcons[i].top = tileTop + 12.0f;
             layout.tileIcons[i].bottom = layout.tileIcons[i].top + glyphSize;
 
-            // The caption, CENTRED under the box, filling the rest of the slot.
-            layout.tileLabels[i].left = tileLeft;
-            layout.tileLabels[i].right = tileLeft + tileWidth;
-            layout.tileLabels[i].top = layout.tiles[i].bottom + captionGap;
-            layout.tileLabels[i].bottom = slotTop + tileHeight;
+            // The name and the state, stacked at the tile's BOTTOM LEFT: 18 DIP for the bold name and
+            // 14 for the dim line under it, with the same 16 DIP inset the glyph uses.
+            layout.tileSubLabels[i].left = tileLeft + 12.0f;
+            layout.tileSubLabels[i].right = tile.right - 12.0f;
+            layout.tileSubLabels[i].bottom = tile.bottom - 8.0f;
+            layout.tileSubLabels[i].top = layout.tileSubLabels[i].bottom - 12.0f;
+            layout.tileLabels[i].left = layout.tileSubLabels[i].left;
+            layout.tileLabels[i].right = layout.tileSubLabels[i].right;
+            layout.tileLabels[i].bottom = layout.tileSubLabels[i].top;
+            layout.tileLabels[i].top = layout.tileLabels[i].bottom - 16.0f;
         }
+        gridBottom = gridTop + static_cast<float>(rows) * kSystemTileHeightDip +
+                     static_cast<float>(rows - 1) * kSystemTileGapDip;
+    }
+    layout.tileArea.bottom = gridBottom;
+
+    // THE INSET PANEL, directly under the grid: its own rounded surface, holding the volume row and the
+    // brightness row when the display answers for one.
+    const float headerHeight = 18.0f;
+    const float headerGap = 4.0f;
+    const float trackRowHeight = 32.0f;
+    const float rowGap = 8.0f;
+    const float panelInset = 20.0f;
+    const float rowHeight = headerHeight + headerGap + trackRowHeight;
+    constexpr float kSliderPanelHeight = 132.0f;
+    if (sliderCount > 0) {
+        layout.sliderPanel.left = left;
+        layout.sliderPanel.right = right;
+        layout.sliderPanel.bottom = layout.footer.top - 12.0f;
+        layout.sliderPanel.top = layout.sliderPanel.bottom - kSliderPanelHeight;
+
+        const float rowsHeight = static_cast<float>(sliderCount) * rowHeight +
+                                 static_cast<float>(sliderCount - 1) * rowGap;
+        const float rowsTop =
+            layout.sliderPanel.top + (kSliderPanelHeight - rowsHeight) * 0.5f;
+
+        for (int i = 0; i < sliderCount; ++i) {
+            const float rowTop = rowsTop + static_cast<float>(i) * (rowHeight + rowGap);
+            const float headerTop = rowTop;
+            const float headerBottom = headerTop + headerHeight;
+            const float centreY = (headerTop + headerBottom) * 0.5f;
+
+            RectF& icon = i == 0 ? layout.speakerIcon : layout.brightnessIcon;
+            icon.left = left + panelInset;
+            icon.right = icon.left + 20.0f;
+            icon.top = centreY - 10.0f;
+            icon.bottom = centreY + 10.0f;
+
+            layout.sliderLabels[i].left = icon.right + 10.0f;
+            layout.sliderLabels[i].right = right - panelInset - 70.0f;
+            layout.sliderLabels[i].top = headerTop;
+            layout.sliderLabels[i].bottom = headerBottom;
+
+            layout.sliderValues[i].right = right - panelInset;
+            layout.sliderValues[i].left = layout.sliderValues[i].right - 60.0f;
+            layout.sliderValues[i].top = headerTop;
+            layout.sliderValues[i].bottom = headerBottom;
+
+            layout.sliders[i].left = left + panelInset;
+            layout.sliders[i].right = right - panelInset;
+            layout.sliders[i].top = headerBottom + headerGap;
+            layout.sliders[i].bottom = layout.sliders[i].top + trackRowHeight;
+            layout.sliderHitRows[i].left = layout.sliders[i].left;
+            layout.sliderHitRows[i].right = layout.sliders[i].right;
+            layout.sliderHitRows[i].top = layout.sliders[i].top - 2.0f;
+            layout.sliderHitRows[i].bottom = layout.sliders[i].bottom + 2.0f;
+        }
+
+        // The output-device button takes the RIGHT END of the volume header, and the volume reading stops
+        // short of it. The brightness row has no such button, so its reading uses the full width.
+        layout.volumeButton.right = right - panelInset;
+        layout.volumeButton.left = layout.volumeButton.right - 40.0f;
+        layout.volumeButton.top = layout.sliderLabels[0].top + 3.0f;
+        layout.volumeButton.bottom = layout.sliderLabels[0].bottom - 3.0f;
+        layout.sliderValues[0].right = layout.volumeButton.left - 8.0f;
+        layout.sliderValues[0].left = layout.sliderValues[0].right - 60.0f;
+        layout.sliderLabels[0].right = layout.sliderValues[0].left - 10.0f;
+    }
+
+    // The paging column: the dots in the middle of the grid, the up arrow above them and the down arrow
+    // below, so the group is centred on the grid it pages.
+    if (paging) {
+        const float centreY = (gridTop + gridBottom) * 0.5f;
+        const float dotRadius = 2.5f;
+        const float dotGap = 9.0f;
+        const int dots = pageCount < 4 ? pageCount : 4;
+        layout.pageDotCount = dots;
+        layout.pageIndex = pageIndex;
+        const float dotsTop = centreY - (static_cast<float>(dots - 1) * dotGap) * 0.5f;
+        const float columnCentreX = gridRight + pagingWidth * 0.5f;
+        for (int i = 0; i < dots; ++i) {
+            const float cy = dotsTop + static_cast<float>(i) * dotGap;
+            layout.pageDots[i].left = columnCentreX - dotRadius;
+            layout.pageDots[i].right = columnCentreX + dotRadius;
+            layout.pageDots[i].top = cy - dotRadius;
+            layout.pageDots[i].bottom = cy + dotRadius;
+        }
+        const float arrow = 14.0f;
+        layout.pageUp.left = columnCentreX - arrow * 0.5f;
+        layout.pageUp.right = columnCentreX + arrow * 0.5f;
+        layout.pageUp.bottom = dotsTop - 6.0f;
+        layout.pageUp.top = layout.pageUp.bottom - arrow;
+        layout.pageDown.left = layout.pageUp.left;
+        layout.pageDown.right = layout.pageUp.right;
+        layout.pageDown.top = dotsTop + static_cast<float>(dots - 1) * dotGap + 6.0f;
+        layout.pageDown.bottom = layout.pageDown.top + arrow;
     }
 
     return layout;
@@ -1156,6 +1648,13 @@ enum class SystemPanelTarget {
     PageUp,
     PageDown,
     Gear,
+    // The battery/status plate at the left of the footer.
+    BatterySettings,
+    // The moon button: Night Light.
+    NightLight,
+    // The speaker button in the footer. The speaker at the left of the volume row remains the same
+    // mute action; both report and read the one AudioVolume state.
+    FooterMute,
     // The output-device button at the right of the volume row: it opens the "声音输出" page, which is
     // where the devices and the per-application mixer live.
     VolumeDevice,
@@ -1207,12 +1706,11 @@ inline SystemPanelHit SystemPanelHitFor(const RoundedBox& card, int tileCount, i
         return hit;
     }
     for (int i = 0; i < layout.sliderCount; ++i) {
-        // The track's own height is 4 DIP, which is far too thin to aim at. The row it sits in is the
-        // target, and the fraction is taken from the track -- so a press near the edge of the row still
-        // lands somewhere sensible on the bar instead of being ignored.
+        // The track row is 32 DIP high; the hit row extends two DIP beyond it without reaching the header
+        // or the neighbouring row. Fraction still comes from the visible track.
         const RectF& track = layout.sliders[i];
-        const RectF row = {track.left, track.top, track.right, track.bottom};
-        if (x >= row.left && x <= row.right && y >= row.top && y <= row.bottom) {
+        const RectF& hitRow = layout.sliderHitRows[i];
+        if (x >= hitRow.left && x <= hitRow.right && y >= hitRow.top && y <= hitRow.bottom) {
             const float width = track.right - track.left;
             float fraction = width > 0.0f ? (x - track.left) / width : 0.0f;
             if (fraction < 0.0f) fraction = 0.0f;
@@ -1223,10 +1721,32 @@ inline SystemPanelHit SystemPanelHitFor(const RoundedBox& card, int tileCount, i
             return hit;
         }
     }
-    if (inside(layout.gearButton)) {
+    if (inside(layout.footerBattery)) {
+        hit.target = SystemPanelTarget::BatterySettings;
+        return hit;
+    }
+    if (inside(layout.footerButtonHits[0])) {
+        hit.target = SystemPanelTarget::NightLight;
+        return hit;
+    }
+    if (inside(layout.footerButtonHits[1])) {
+        hit.target = SystemPanelTarget::FooterMute;
+        return hit;
+    }
+    if (inside(layout.footerButtonHits[2])) {
         hit.target = SystemPanelTarget::Gear;
     }
     return hit;
+}
+
+// A wheel notch moves one tile page: positive is up, negative is down. Boundaries clamp rather than
+// wrap, so scrolling past the last page cannot unexpectedly return to the first.
+inline int SystemPanelPageAfterWheel(int pageIndex, int pageCount, int notches) {
+    if (pageCount <= 1) return 0;
+    int page = pageIndex - notches;
+    if (page < 0) page = 0;
+    if (page >= pageCount) page = pageCount - 1;
+    return page;
 }
 
 // The tile a point lands on, or -1. Kept as a convenience for the callers that only care about the tiles, and
@@ -1623,7 +2143,7 @@ inline MusicCardLayout MusicCardFor(const RoundedBox& box) {
 
     layout.subtitle.left = layout.title.left;
     layout.subtitle.right = layout.title.right;
-    layout.subtitle.top = layout.title.bottom - 2.0f;
+    layout.subtitle.top = layout.title.bottom;
     layout.subtitle.bottom = layout.subtitle.top + 20.0f;
 
     layout.lyricCurrent.left = layout.title.left;

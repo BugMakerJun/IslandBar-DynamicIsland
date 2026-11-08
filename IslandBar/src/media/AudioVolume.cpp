@@ -46,10 +46,11 @@ bool AudioVolume::Start() {
     if (running_) return true;
 
     writeEvent_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);   // auto-reset
+    peakEvent_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);    // auto-reset
     // Stop() rather than a bare return: it is the one place that ends whatever exists, whether that is
     // nothing, one event, or a thread that is already running. The copies this class used to have each
     // unwound a different part of this by hand (see platform/WorkerThread.h).
-    if (!worker_.Prepare() || !writeEvent_) {
+    if (!worker_.Prepare() || !writeEvent_ || !peakEvent_) {
         Stop();
         return false;
     }
@@ -61,6 +62,7 @@ bool AudioVolume::Start() {
         return false;
     }
     worker_.Attach(thread);
+    LogLine(L"  volume: peak meter demand=off cadence=%lu ms", kPollIntervalMs);
 
     // Wait for the first read, so Start() returning true means the level is known and the
     // control can be drawn on the very first frame rather than popping in half a second later.
@@ -82,6 +84,11 @@ void AudioVolume::Stop() {
         CloseHandle(writeEvent_);
         writeEvent_ = nullptr;
     }
+    if (peakEvent_) {
+        CloseHandle(peakEvent_);
+        peakEvent_ = nullptr;
+    }
+    peakMeterActive_.store(false, std::memory_order_relaxed);
     running_ = false;
 }
 
@@ -111,6 +118,15 @@ bool AudioVolume::Peak(float* level) const {
     *level = peak_;
     lock_.Leave();
     return true;
+}
+
+void AudioVolume::SetPeakMeterActive(bool active) {
+    if (!worker_.Prepared()) return;
+    const bool previous = peakMeterActive_.exchange(active, std::memory_order_relaxed);
+    if (previous == active) return;
+    SetEvent(peakEvent_);
+    LogLine(L"  volume: peak meter demand=%ls cadence=%lu ms",
+            active ? L"on" : L"off", active ? kPeakIntervalMs : kPollIntervalMs);
 }
 
 unsigned long long AudioVolume::Revision() const {
@@ -262,11 +278,14 @@ void AudioVolume::Run() {
     if (haveApartment) ReadFromDevice();
 
     while (true) {
-        HANDLE waits[2] = {worker_.StopEvent(), writeEvent_};
-        // The wait is the PEAK interval, not the volume's: the loop wakes often and does the cheap peak read
-        // every time, while the volume re-read (which opens the device) only happens on its own slower clock.
-        const DWORD signalled = WaitForMultipleObjects(2, waits, FALSE, kPeakIntervalMs);
+        HANDLE waits[3] = {worker_.StopEvent(), writeEvent_, peakEvent_};
+        // A visible meter needs the fast interval; otherwise the worker sleeps until the next volume read.
+        // The volume re-read (which opens the device) stays on its own slower clock in either mode.
+        const bool peakDemand = peakMeterActive_.load(std::memory_order_relaxed);
+        const DWORD signalled =
+            WaitForMultipleObjects(3, waits, FALSE, peakDemand ? kPeakIntervalMs : kPollIntervalMs);
         if (signalled == WAIT_OBJECT_0) break;   // stop
+        if (signalled == WAIT_FAILED) break;
 
         if (!haveApartment) break;
 
@@ -322,10 +341,12 @@ void AudioVolume::Run() {
             }
         }
 
-        // The PEAK every tick, which is one call on an interface this worker already owns; the VOLUME on its
-        // own slower clock, because that one opens the device and walking it thirty times a second to catch a
-        // change that happens when somebody presses a volume key would be work for nothing.
-        ReadPeakFromDevice();
+        // The PEAK every fast tick, but only while a meter is on screen. The VOLUME keeps its own slower
+        // clock, because that one opens the device and walking it thirty times a second to catch a volume-key
+        // change would be work for nothing.
+        if (peakMeterActive_.load(std::memory_order_relaxed)) {
+            ReadPeakFromDevice();
+        }
         if (GetTickCount64() - lastVolumeRead_ >= kPollIntervalMs) {
             lastVolumeRead_ = GetTickCount64();
             // Re-read afterwards, so a change made elsewhere (the keyboard, the shell flyout) still shows up.

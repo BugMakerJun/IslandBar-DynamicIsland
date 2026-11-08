@@ -47,6 +47,22 @@
 //  that draws nothing while it cannot see the tray is worse than one that draws a cell it
 //  is not yet sure about.
 //
+//  ONE ICON, ONE CELL, and that is the rule this card exists to keep. The registry is not a
+//  set: one icon can be stored under two entries (NVIDIA's nvcontainer.exe and
+//  NVDisplay.Container.exe, WeChat's GUID entry and its uid 0 one), and drawing the entries
+//  instead of the icons is what the user saw on 2026-11-06 -- two WeChat cells and two NVIDIA
+//  cells where the tray shows one of each. Two registry entries that name the same
+//  registration are one cell (domain/TrayLedger.h: SameTrayIcon).
+//
+//  WHAT THE LEDGER ALONE CANNOT SEE, and why there is still a fallback. A ledger is complete
+//  only while the module sits in the shell and feeds it: before the first learning pass, and
+//  after a shell that replaced Explorer, it is a snapshot, and an application that registers
+//  afterwards is missing from it. So the card trusts it alone only when the last pass said the
+//  module is resident (LiveTrayObserverResident); otherwise it draws the registry list and
+//  says in the log that the list may be wider than the tray. The per-entry union that used to
+//  combine the two ("or its process is running") was what re-introduced the duplicates, and it
+//  is gone: the question "is this icon in the tray" has one answer, and it is the ledger's.
+//
 //  AND WHAT EACH ONE *IS*, for pressing it. The same registry entry the icon is drawn from carries the
 //  identity the shell itself uses for that icon -- an IconGuid, or a UID belonging to one of the
 //  application's windows -- and Shell_NotifyIconGetRect answers WHERE the icon is from that identity
@@ -61,6 +77,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace island {
@@ -106,7 +123,7 @@ struct TrayIcon {
 class TrayIcons {
 public:
     // Reads the registry and keeps the icons the shell is holding. Returns how many.
-    int Refresh();
+    int Refresh(bool upgradeLowResolutionIcons = false);
 
     int Count() const { return static_cast<int>(entries_.size()); }
     // The CONTIGUOUS list, which is what the renderer walks: `icons[i]` has to be the i-th icon, and the
@@ -147,6 +164,7 @@ private:
     struct Entry {
         TrayIcon icon;
         std::wstring exePath;
+        std::wstring tooltip;       // the registry's InitialTooltip, read once: it is the fallback match too
         std::vector<uint8_t> png;   // the storage `icon.png` points into
         long long writtenAt = 0;    // the subkey's last write, for the newest-first order
     };
@@ -168,9 +186,19 @@ private:
     // The entries the shell is not holding a registration for, and whether the ledger decided that at all.
     std::vector<std::wstring> notLive_;
     bool liveFilter_ = false;
+    // The ledger alone decided this pass: seeded, and the module is resident in the shell (see the header).
+    bool ledgerOnly_ = false;
+    // Registry entries that named a registration already drawn -- one icon, one cell.
+    int collapsed_ = 0;
+    // How many registrations the shell holds, for the log line (an icon can be one of several).
+    int liveRegistrations_ = 0;
     // The identities already put in the list this pass, so several registry entries naming one icon make one
-    // cell (see TrayIcons.cpp).
+    // cell. Used by the two fallback rules, where the registry's own identity is all there is (see
+    // TrayIcons.cpp); the ledger rule keys on the shell's registration instead (SameTrayIcon).
     std::vector<std::wstring> seenIdentities;
+    // Registry snapshots are frequently 16x16. Application executables usually carry a much better icon, so
+    // the UI-thread refresh can substitute one after the first successful extraction and keep that work cached.
+    std::unordered_map<std::wstring, std::vector<std::uint8_t>> upgradedIcons_;
 };
 
 } // namespace island

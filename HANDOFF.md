@@ -14289,3 +14289,53 @@ region 的直边把阴影的圆角外圈切掉，四个角就留下**方形暗�
 
 剩下：把实时折射接回来（轻模糊 σ≈1、edge scale≈26/band≈18、scrim≈0.10）。
 
+---
+
+## 8.181 **性能低功耗闸：全屏停止抓屏，电平表按需采样**（2026-11-08）
+
+用户报告「打开这玩游戏卡」。稳定空闲实测：玻璃主题约 **11.6% 单核 CPU / private 131.3 MB /
+VRAM 70.4 MB**；同一构建切到无捕获的默认主题后约 **5.5% / 108.3 MB / 17.2 MB**。日志同时显示
+WGC 以 2560x1440、30 Hz 启动，而镜头最多按 12.5 Hz 消费；已有的 `fullscreenApp` 只让 UI 退场，
+没有停止捕获，所以边框全屏游戏仍可能被抓取。
+
+本轮只做两片，均已按现有层级实现：
+
+1. `Renderer::SetBackdropSuspended(true)` 由 `UpdateFullscreenStandDown` 调用。全屏时停止 WGC 和
+   屏幕亮度采样；`BackdropCapture::Stop()` 现在释放 stable texture、device context 和尺寸状态。
+   退出全屏时 `TakeLensFrame()` 只额外要一帧，由正常渲染路径重新发现背后窗口并启动捕获。
+2. `AudioVolume::SetPeakMeterActive` 根据“音乐波纹或通话条是否可见”切换峰值采样。不可见时 worker
+   每 500 ms 醒来读取主音量，不再每 33 ms 调一次 `GetPeakValue`；纯规则
+   `AudioPeakMeterNeedsSampling` 有自检断言。
+
+日志：`lens: suspended for full screen -- capture stopped`、
+`lens: resumed after full screen`、`volume: peak meter demand=off cadence=500 ms`。
+验证：Debug/Release 全量构建 `/WX` 零告警；两配置 smoke PASS；运行时自检 PASS。
+回退边界：全屏相关只碰 backdrop work，不改栏的退场/AppBar 策略；音频只改峰值节拍，不改音量读写与按钮。
+
+---
+
+## 8.182 **“外观”磁贴打开独立设置窗口**（2026-11-08）
+
+用户要求系统卡片里的“外观”不再直接循环主题，而是打开类似 BrimDeck 的 IslandBar 设置界面。
+ChatGPT 与 Gemini 的当前版本审核结论一致：采用独立、可激活的 Win32 窗口；懒创建、关闭销毁；
+首版只开放有真实实现和持久化的设置，性能页保持只读。
+
+实现：
+
+* `domain/SettingsLayout.h`：四页、控件矩形、命中测试和键盘焦点顺序，全部是纯逻辑。
+* `render/SettingsRenderer.{h,cpp}`：Direct2D + DirectWrite 的两栏设置界面。
+* `app/SettingsWindow.{h,cpp}`：普通 `WS_EX_APPWINDOW` 顶层窗口，自定义标题栏/拖动/关闭、DPI、
+  最小尺寸、键盘 Tab/Enter/Escape；关闭时释放本窗口的 D2D 资源。
+* `app/BarLoop.cpp`：外观磁贴发出 `OpenAppearanceSettings`；形态/主题命令由 frame loop 应用并
+  持久化。主题切换同时同步实时玻璃捕获的启停。
+* 删除旧的、无处可打开的卡片内 SettingsPage，避免两套设置实现并存。
+
+实测与验收：
+
+* 冷启动到首帧：`settings: first-paint_ms=78`，目标 ≤150 ms。
+* 四页与胶囊/刘海、四个主题、配置/日志路径全部通过实际窗口点击检查；关于页重叠已修。
+* `settings: closed reason=user ... hwnd_destroyed=1 resources_released=1`。
+* Debug/Release `/WX` 零告警；两配置 smoke PASS；运行时自检 PASS，并新增设置布局命中断言。
+* 诊断 `ISLANDBAR_OPEN_SETTINGS=appearance` 可自动打开设置页用于截图；默认不生效。
+* 回退 `ISLANDBAR_LEGACY_APPEARANCE_CYCLE=1` 时外观磁贴恢复旧的直接换主题行为。
+

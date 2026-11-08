@@ -4,6 +4,9 @@
 #include "shell/TrayIcons.h"
 
 #include "core/Log.h"
+#include "shell/StartApps.h"
+// The identity of a registration, for "one icon, one cell" (see SameTrayIcon).
+#include "domain/TrayLedger.h"
 // The ledger of registrations the shell is holding: this file is the one place that decides what to draw
 // from it (see the header, and domain/TrayLedger.h for the rule itself).
 #include "shell/TrayLearn.h"
@@ -68,6 +71,23 @@ std::wstring FirstLine(const std::wstring& text) {
     std::wstring line = cut == std::wstring::npos ? text : text.substr(0, cut);
     while (!line.empty() && (line.back() == L' ' || line.back() == L'\t')) line.pop_back();
     return line;
+}
+
+int PngSide(const std::vector<std::uint8_t>& png) {
+    if (png.size() < 24 || png[0] != 0x89 || png[1] != 0x50) return 0;
+    const int width = (static_cast<int>(png[16]) << 24) | (static_cast<int>(png[17]) << 16) |
+                      (static_cast<int>(png[18]) << 8) | static_cast<int>(png[19]);
+    const int height = (static_cast<int>(png[20]) << 24) | (static_cast<int>(png[21]) << 16) |
+                       (static_cast<int>(png[22]) << 8) | static_cast<int>(png[23]);
+    return width < height ? width : height;
+}
+
+bool UseExecutableIcon(const std::wstring& exePath) {
+    if (exePath.empty()) return false;
+    const std::wstring leaf = FileName(exePath);
+    return _wcsicmp(leaf.c_str(), L"explorer.exe") != 0 &&
+           _wcsicmp(leaf.c_str(), L"ShellExperienceHost.exe") != 0 &&
+           _wcsicmp(leaf.c_str(), L"StartMenuExperienceHost.exe") != 0;
 }
 
 // The identity of one registration, as a key: the same identity the liveness question is asked with (a guid
@@ -141,15 +161,29 @@ long long KeyLastWriteTime(const std::wstring& subKey) {
 
 } // namespace
 
-int TrayIcons::Refresh() {
-    std::vector<std::wstring> running;
-    RunningProcessNames(&running);
-    processesSeen_ = static_cast<int>(running.size());
-    // Whether this pass draws what the shell is holding, or falls back to the older rule (see the header).
-    // The pass has to have finished once: before that the ledger is only what happened to arrive so far.
+int TrayIcons::Refresh(bool upgradeLowResolutionIcons) {
+    // THE TWO ANSWERS, decided once per pass (see the header).
+    //
+    // `liveFilter_`: a pass has finished, so there IS a ledger to ask. `ledgerOnly_`: that ledger is also
+    // being kept up to date, because the module is resident in the shell -- the only case in which the card
+    // may be the ledger alone. Before the first pass, and after a shell that replaced Explorer, the ledger
+    // is a snapshot and the registry list is the wider, safer answer.
     liveFilter_ = LiveTraySeeded() && LiveTrayCount() > 0;
+    ledgerOnly_ = liveFilter_ && LiveTrayObserverResident();
+    liveRegistrations_ = liveFilter_ ? LiveTrayCount() : 0;
+
+    // The process snapshot is the FALLBACK's question ("is the executable running"), and only that: a card
+    // that trusts the ledger does not pay for a snapshot of hundreds of processes on every refresh.
+    std::vector<std::wstring> running;
+    processesSeen_ = 0;
+    if (!ledgerOnly_) {
+        RunningProcessNames(&running);
+        processesSeen_ = static_cast<int>(running.size());
+    }
+
     notLive_.clear();
     seenIdentities.clear();
+    collapsed_ = 0;
 
     HKEY root = nullptr;
     if (RegOpenKeyExW(HKEY_CURRENT_USER, SettingsKeyPath(), 0, KEY_READ, &root) != ERROR_SUCCESS) {
@@ -161,6 +195,9 @@ int TrayIcons::Refresh() {
     }
 
     std::vector<Entry> fresh;
+    // The registrations already drawn this pass, so a second registry entry naming the same icon makes no
+    // second cell (see SameTrayIcon; NVIDIA's two entries and WeChat's two are the measured cases).
+    std::vector<TrayLiveRegistration> drawn;
     examined_ = 0;
     kept_ = 0;
 
@@ -179,6 +216,21 @@ int TrayIcons::Refresh() {
         Entry entry;
         ReadStringValue(subKey, L"ExecutablePath", &entry.exePath);
         ReadBinaryValue(subKey, L"IconSnapshot", &entry.png);
+        if (upgradeLowResolutionIcons && PngSide(entry.png) < 40 &&
+            UseExecutableIcon(entry.exePath)) {
+            std::wstring cacheKey = entry.exePath;
+            std::transform(cacheKey.begin(), cacheKey.end(), cacheKey.begin(), ::towlower);
+            auto cached = upgradedIcons_.find(cacheKey);
+            if (cached == upgradedIcons_.end()) {
+                std::vector<std::uint8_t> upgraded;
+                StartAppIconPng(entry.exePath.c_str(), 64, &upgraded);
+                cached = upgradedIcons_.emplace(cacheKey, std::move(upgraded)).first;
+            }
+            if (!cached->second.empty()) entry.png = cached->second;
+        }
+        // Read here, once: it is the label the card shows AND the second chance at matching a registration
+        // whose executable name is not the one the registry stored (see TrayLedger::FindByTip).
+        ReadStringValue(subKey, L"InitialTooltip", &entry.tooltip);
 
         DWORD promoted = 0;
         DWORD promotedSize = sizeof(promoted);
@@ -225,34 +277,56 @@ int TrayIcons::Refresh() {
 
         // THE FILTER, which is the whole point of this file: is the shell holding this registration now?
         // A guid identifies one on its own; a uid needs the executable to agree with it (two applications
-        // register uid 3 on this machine -- see domain/TrayLedger.h).
+        // register uid 3 on this machine -- see domain/TrayLedger.h), or the tooltip when the registry's
+        // executable is not the process that registered the icon (TrayLedger::FindByTip).
         const std::wstring leaf = FileName(entry.exePath);
         std::wstring wanted = leaf;
         std::transform(wanted.begin(), wanted.end(), wanted.begin(), ::towlower);
-        std::wstring liveTip;
-        if (liveFilter_) {
+        // An entry with neither identity cannot name a registration at all -- and asking with uid 0 would
+        // match somebody else's icon (the probe registrar's uid is 7, WeChat registers uid 0).
+        const bool identified = entry.icon.hasUid || entry.icon.hasGuid;
+
+        // The registration this entry names, copied out: the ledger's storage can be reallocated by the
+        // learning worker between two calls (see TrayLearn.h).
+        TrayLiveRegistration registration;
+        bool live = false;
+        if (liveFilter_ && identified) {
             // The guid goes over as its 16 BYTES: that is what the registration carried across the ring, and
             // the registry's "{...}" string was parsed back into the same layout (see TrayLearn.cpp).
-            const bool live = LiveTrayFind(wanted.c_str(), entry.icon.uid, entry.icon.hasGuid,
-                                           reinterpret_cast<const unsigned char*>(&entry.icon.guid),
-                                           &liveTip);
-            // ... OR IT IS SIMPLY RUNNING. The ledger is the better answer when it is complete, but it is
-            // only as complete as the ring that feeds it, and the ring is only fed while the shell hook is
-            // installed. Measured 2026-10-18: the hook did not load on this machine
-            // ("the observer did NOT report ready"), the ledger held 43 registrations captured during the
-            // learning pass, and the filter matched 8 of the 14 entries the registry lists -- so the tray
-            // card drew eight icons where the tray itself showed fourteen. Reported as "托盘卡片里面的应用
-            // 显示的不全".
+            const unsigned char* guidBytes =
+                entry.icon.hasGuid ? reinterpret_cast<const unsigned char*>(&entry.icon.guid) : nullptr;
+            live = LiveTrayFind(wanted.c_str(), entry.icon.uid, entry.icon.hasGuid, guidBytes,
+                                entry.tooltip.c_str(), &registration);
+        }
+
+        if (ledgerOnly_) {
+            // THE LEDGER ALONE, which is the rule that makes this card the tray's list (ROADMAP F5). A
+            // registry entry the shell holds no registration for is not an icon in the tray: it is the second
+            // entry of one icon (NVIDIA's two executable names, WeChat's GUID entry beside its uid 0 one), or
+            // an icon the application took out while its process kept running. Drawing it is exactly the
+            // duplicate the user saw on 2026-11-06 -- two WeChat cells and two NVIDIA cells.
+            if (!live) {
+                notLive_.push_back(leaf);
+                continue;
+            }
+            const bool alreadyDrawn =
+                std::any_of(drawn.begin(), drawn.end(), [&registration](const TrayLiveRegistration& shown) {
+                    return SameTrayIcon(shown, registration);
+                });
+            if (alreadyDrawn) {
+                ++collapsed_;   // one icon, one cell
+                continue;
+            }
+            drawn.push_back(registration);
+        } else if (liveFilter_) {
+            // THE OBSERVER IS NOT RESIDENT, so the ledger is a snapshot: answering "not in the tray" from it
+            // alone would under-draw, which is the failure the per-entry union was written for (2026-10-18:
+            // the hook did not load and the ledger matched 8 of the 14 entries). The union is kept for this
+            // state only, and the log says the list may be wider than the tray.
             //
-            // The union is the right bias: a process that is running may legitimately have registered an
-            // icon the ledger has not seen, while an entry whose process is gone cannot be showing anything.
-            //
-            // IDENTITY IS REQUIRED AS WELL, and that is not a detail: a press is sent to what the
-            // application registered (see TrayPress), so an entry with neither a UID nor a GUID is a tile
-            // that could only open this bar's own menu. The self-test states the rule as "every icon in the
-            // card carries the identity an application registers it with", and an entry that cannot be
-            // pressed must not be drawn as if it could.
-            const bool identified = entry.icon.hasUid || entry.icon.hasGuid;
+            // IDENTITY IS REQUIRED AS WELL, and that is not a detail: a press is sent to what the application
+            // registered (see TrayPress), so an entry with neither a UID nor a GUID is a tile that could only
+            // open this bar's own menu.
             if (!live && (!identified || !IsRunning(running, entry.exePath))) {
                 notLive_.push_back(leaf);
                 continue;
@@ -261,31 +335,27 @@ int TrayIcons::Refresh() {
             continue;
         }
 
-        // ... AND ONE CELL PER IDENTITY: entries that name the same icon ARE the same icon (see IdentityKey).
-        const std::wstring identity =
-            IdentityKey(entry.icon.hasGuid, entry.icon.guid, wanted, entry.icon.uid);
-        if (std::find(seenIdentities.begin(), seenIdentities.end(), identity) != seenIdentities.end()) {
-            continue;
+        // ... AND ONE CELL PER ICON under the two fallback rules, where the registry's own identity is what
+        // there is to compare (see IdentityKey). The ledger rule above keys on the shell's registration.
+        if (!ledgerOnly_) {
+            const std::wstring identity =
+                IdentityKey(entry.icon.hasGuid, entry.icon.guid, wanted, entry.icon.uid);
+            if (std::find(seenIdentities.begin(), seenIdentities.end(), identity) != seenIdentities.end()) {
+                ++collapsed_;
+                continue;
+            }
+            seenIdentities.push_back(identity);
         }
-        seenIdentities.push_back(identity);
         ++kept_;
 
-        // The name: what the application called itself, or failing that its file name. Read after the
-        // filter so the registry is not walked twice for icons nobody will see.
-        //
-        // The name: the registry's, then the registration's own tip, then the file name -- see TrayIcon for
-        // why the stable one goes first. Read after the filter so the registry is not walked twice for icons
-        // nobody will see.
-        std::wstring tooltip;
-        HKEY subKeyAgain = nullptr;
-        if (RegOpenKeyExW(root, subKeyName, 0, KEY_READ, &subKeyAgain) == ERROR_SUCCESS) {
-            ReadStringValue(subKeyAgain, L"InitialTooltip", &tooltip);
-            RegCloseKey(subKeyAgain);
-        }
-        if (tooltip.empty()) tooltip = liveTip;
-        if (tooltip.empty()) tooltip = leaf;
-        tooltip = FirstLine(tooltip);
-        wcsncpy_s(entry.icon.name, 96, tooltip.c_str(), _TRUNCATE);
+        // The name: the registry's InitialTooltip first, then the tip the application sent the shell, then the
+        // file name -- see TrayIcon for why the stable one goes first. Only the first line: a cell is one line
+        // wide, and an application's tip is live status text rather than a label.
+        std::wstring name = entry.tooltip;
+        if (name.empty() && live) name = registration.tip;
+        if (name.empty()) name = leaf;
+        name = FirstLine(name);
+        wcsncpy_s(entry.icon.name, 96, name.c_str(), _TRUNCATE);
         entry.icon.pngSize = entry.png.size();
         entry.writtenAt = KeyLastWriteTime(subKeyName);
 
@@ -356,8 +426,22 @@ std::wstring TrayIcons::SourceClause() const {
         names += more;
     }
     if (names.empty()) names = L"nothing";
-    _snwprintf_s(text, 640, _TRUNCATE, L"-- %d live of %d registry entr(ies) (not shown: %ls)", kept_,
-                 examined_, names.c_str());
+    if (ledgerOnly_) {
+        // The card IS the shell's list: how many entries that list matched, how many it collapsed as one
+        // icon, and how many the shell is not holding at all. The three numbers are what let the reader check
+        // "the card draws nine" against "the shell holds nine icons (in thirty-two registrations)".
+        _snwprintf_s(text, 640, _TRUNCATE,
+                     L"-- %d matched of %d registry entr(ies) (the shell holds %d registration(s)); "
+                     L"%d duplicate(s) collapsed; not in the tray: %ls",
+                     kept_, examined_, liveRegistrations_, collapsed_, names.c_str());
+        return text;
+    }
+    // Seeded but the observer is not resident: the ledger is a snapshot, so this is the registry list with
+    // the union, and the clause has to say that the count may be wider than the tray's.
+    _snwprintf_s(text, 640, _TRUNCATE,
+                 L"-- %d of %d registry entr(ies) drawn (the shell's observer is not resident, so the ledger "
+                 L"is a snapshot and running entries are drawn too); not shown: %ls",
+                 kept_, examined_, names.c_str());
     return text;
 }
 

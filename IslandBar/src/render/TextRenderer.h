@@ -21,6 +21,7 @@
 #include <unordered_map>
 
 #include "domain/Geometry.h"      // RoundedBox: the text is laid out inside the pill's box
+#include "domain/StartSearch.h"   // unified application/settings/file results
 #include "media/MusicSession.h"  // the now-playing field capacities
 #include "domain/CardLayout.h"    // where the card's controls go
 #include "domain/TaskStripLayout.h"  // where the tray sits, and how many icons fit
@@ -85,6 +86,19 @@ public:
     // jump independently reads as noise, while one that keeps its shape and breathes reads as sound. Pure so
     // the shape can be asserted (it must never be flat, and it must never exceed 1).
     static float CallBarFraction(int index, int count, float level);
+
+    // Where the music card's twelve-step meter puts a linear PEAK reading, as 0..1 of the meter.
+    //
+    // The steps were spaced LINEARLY over 0..1 until 2026-11-05, and the reading is a linear amplitude
+    // that a player at an ordinary volume keeps in the bottom tenth of it: measured on this machine
+    // (QQ Music at 34%, ten seconds, 213 samples at 30 Hz) every sample lit the SAME one of the twelve
+    // steps, so the bar was redrawn thirty times a second and looked dead -- "右侧的随音乐跳动的
+    // 不跳了". The steps are therefore laid out in DECIBELS, -42..0, which is where a level meter's
+    // steps belong: the same thirty seconds of the same track then lit six different steps -- 2..7, and
+    // 173 changes instead of 39.
+    //
+    // Pure, like CallBarFraction, so the curve is asserted rather than eyeballed.
+    static float MusicMeterFraction(float peak);
     TextRenderer() = default;
     ~TextRenderer();
 
@@ -139,21 +153,35 @@ public:
 
         const StartApp* list = nullptr;
         int listCount = 0;
+        // Optional permutation of `list` (search results). Null means the list is already in display order.
+        const int* listOrder = nullptr;
         int pickerScrollRow = 0;
         // One PNG per entry of `list`, for the all-applications grid (the text picker ignores them).
         const uint8_t* const* listIcons = nullptr;
         const size_t* listIconSizes = nullptr;
+        // While searchActive, this is the unified Apps + Settings + Files result list. Application rows
+        // use listIcons[sourceIndex]; file/settings rows use iconPng when one is available.
+        const StartSearchResult* searchResults = nullptr;
+        int searchResultCount = 0;
+        int hoveredSearchResult = -1;
+        int selectedSearchResult = -1;
+        bool searchPending = false;
+        bool searchFilesComplete = false;
 
-        // 0 = the pins, 1 = the picker, 2 = the power list. A page rather than three flags, because only
-        // one of them can be showing and the hit tests have to ask the same question the drawing did.
+        // 0 = the pins, 1 = the all-applications/search grid.
         int page = 0;
+        bool searchActive = false;
+        bool searchInputVisible = false;
+        const wchar_t* searchQuery = nullptr;
         int hoveredPin = -1;
         int hoveredPickerRow = -1;
-        int hoveredPowerRow = -1;
-        bool powerButtonHovered = false;
-        // The 全部 button's highlight, and whether the picker was opened by it (its rows then launch
-        // instead of pinning -- the footer says which).
+        int hoveredPowerButton = -1;
+        // The search field's and page controls' highlights, and whether the pointer is on the dashed add
+        // tile at the end of the pins.
+        bool searchHovered = false;
         bool allAppsHovered = false;
+        bool pinnedTabHovered = false;
+        bool addTileHovered = false;
         bool allAppsMode = false;
         // How far each item's highlight has come up, 0 to 1, one entry per item in the same order as
         // `pins`, `list` and the power rows. Spring-animated by the frame loop, for the reason the deck's
@@ -165,9 +193,10 @@ public:
         const float* pinWashes = nullptr;
         const float* rowWashes = nullptr;
         const float* powerWashes = nullptr;
-        // The power row waiting for a second press (see the click handler): the three that lose unsaved
-        // work do not act on the first click, and this is which one is armed.
-        int powerConfirmRow = -1;
+        // The footer power button waiting for a second press (see the click handler). Restart and shutdown
+        // lose unsaved work, so they act only on the second click inside their confirmation window.
+        int powerConfirmButton = -1;
+        const wchar_t* powerConfirmHint = nullptr;
 
         const wchar_t* accountName = nullptr;
         const uint8_t* avatarPng = nullptr;
@@ -177,12 +206,30 @@ public:
     void DrawStartPage(ID2D1DeviceContext2* context, const RoundedBox& card, const StartCardText& text,
                        float opacity);
 
-    // The card's tray page: the icons in a wrapping grid, each with the wash the other buttons get.
+    // What the tray page says -- the fields that change with the machine, supplied by the caller the way
+    // SystemPanelText is. The page's fixed captions (its section labels and the two footer words) are drawn
+    // where they belong, like the panel's 音量 and 显示亮度; these three come from the frame.
+    //
+    // `nowTitle` is UTF-8, as every other string out of the media stack is, and empty means NO now-playing
+    // row: the page skips it rather than showing a well with a made-up track in it (the reference has the
+    // row because the reference's machine had a song up).
+    struct TrayPageText {
+        const wchar_t* title = nullptr;     // 系统后台托盘; empty draws no header title
+        const char* nowTitle = nullptr;     // the track the pill is showing
+        const char* nowArtist = nullptr;    // ... and its artist, when the source names one
+        bool nowPlaying = false;            // 正在播放 rather than 已暂停
+        bool taskManagerHovered = false;
+    };
+
+    // The card's tray page: the header, the section row, the icons in a five-column grid, the now-playing
+    // well and the footer -- the reference at the shared card's size.
     //
     // `revision` is the list's own, so a decoded bitmap is kept until the icons themselves change: the bar
     // draws at the compositor's rate and a PNG decode per frame per icon would be the most expensive thing
-    // on it. `hoveredIndex` is a cell of the grid (see TrayPageFor).
-    void DrawTrayPage(ID2D1DeviceContext2* context, const RoundedBox& card, const wchar_t* title,
+    // on it. `hoveredIndex` is a cell of the grid (see TrayPageFor). The row that is left out when
+    // `text.nowTitle` is empty still has a rectangle (the layout is fixed), so the footer and the grid
+    // cannot move with the music.
+    void DrawTrayPage(ID2D1DeviceContext2* context, const RoundedBox& card, const TrayPageText& text,
                       const TrayIcon* icons, int count, unsigned long long revision, float opacity,
                       int hoveredIndex, bool moving = false);
 
@@ -522,6 +569,8 @@ public:
         // than a list page, for the panel's own reason: every other tile applies its change here and
         // says what it is now, and the caption under this one names the theme that is in force.
         CycleTheme,
+        // Opens the separate IslandBar settings window on its Appearance page.
+        OpenAppearanceSettings,
     };
 
     // One tile of the system panel, as the caller has decided it.
@@ -562,12 +611,11 @@ public:
         // (the caller assembles the slice), so the layout only needs these two for the paging dots.
         int pageIndex = 0;
         int pageCount = 1;
+        // True only on the tiles level. The window uses this to route the wheel to tile paging without
+        // stealing it from the sound page, Start picker, sliders, or footer.
+        bool tilesPageShown = false;
         float volume = 0.0f;      // 0..1, for the slider
         bool muted = false;
-        // Whether to print the volume as a percentage beside the slider. The shell shows the number while
-        // the slider is being used and hides it again, and the number is the only exact reading on the
-        // panel -- a handle at 40% of its travel says nothing about whether that is 40 or 45.
-        bool showVolumePercent = false;
 
         // The brightness row, under the volume row, and only when the display answers for it.
         //
@@ -577,7 +625,23 @@ public:
         // from an actual read (DisplayBrightness.h).
         bool hasBrightness = false;
         float brightness = 0.0f;        // 0..1, the same scale as the volume
-        bool showBrightnessPercent = false;
+        // Whether a row is the one in hand: hovered, being dragged, or used within the last second.
+        // The reference prints the reading all the time, so these only brighten it -- which is how the
+        // panel answers "the pointer is on this row" without the number appearing and disappearing.
+        bool volumeHighlighted = false;
+        bool brightnessHighlighted = false;
+
+        // The footer's power line. A desktop has no battery to report, but the panel deliberately keeps
+        // the familiar 100% face while its secondary line says that this is a desktop on AC power.
+        bool batteryPresent = false;
+        int batteryPercent = -1;
+        bool charging = false;
+        bool nightLightOn = false;
+
+        // Footer feedback. Values map to 0 battery, 1 moon, 2 speaker, 3 gear; -1 means none. Hover and
+        // press are separate so an active Night Light or mute state is not confused with pointer feedback.
+        int footerHovered = -1;
+        int footerPressed = -1;
 
         // WHETHER A SLIDER IS THE CONTROL IN HAND, per row (0 the volume, 1 the brightness): hovered or
         // being dragged. The handle grows a little when it is, which is what every slider of this kind
@@ -748,6 +812,7 @@ private:
         ID2D1Bitmap1* bitmap = nullptr;
         unsigned long long revision = 0;
         int index = -1;
+        float sourceSide = 0.0f;
     };
     TrayIconSlot trayIconSlots_[kMaxTrayIcons];
 
@@ -856,6 +921,8 @@ private:
     // The Start card's two faces: the label under a pinned tile (centred, small) and one line of a list.
     IDWriteTextFormat*   startLabelFormat_ = nullptr;
     IDWriteTextFormat*   startRowFormat_ = nullptr;
+    IDWriteTextFormat*   startCaptionFormat_ = nullptr;
+    IDWriteTextFormat*   startSearchFormat_ = nullptr;
     // The music card's top row, which needs a different size and alignment from the notification
     // header that appFormat_ serves: the source name is left aligned beside the icon, and the
     // volume readout is right aligned at the far end of the same row.
@@ -877,6 +944,12 @@ private:
     IDWriteTextFormat*   glyphFormat_         = nullptr;
     IDWriteTextFormat*   inputMethodFormat_   = nullptr;
     IDWriteTextFormat*   gearGlyphFormat_ = nullptr;
+    // The system panel's three faces, from the reference: a 13 DIP semibold tile name, an 11 DIP dim
+    // line for the tile's state and the slider rows' titles and the footer, and an 18 DIP icon face for
+    // the tiles' glyphs and the footer's round buttons (the 12 DIP face made them specks).
+    IDWriteTextFormat*   panelLabelFormat_ = nullptr;
+    IDWriteTextFormat*   panelSubFormat_   = nullptr;
+    IDWriteTextFormat*   panelIconFormat_  = nullptr;
 
     SYSTEMTIME time_{};
     wchar_t timeText_[16]  = {};   // L"hh:mm"

@@ -89,6 +89,7 @@ bool ScreenInk::Start() {
 }
 
 void ScreenInk::Request(const RECT* rects, int count) {
+    if (paused_.load(std::memory_order_relaxed)) return;
     if (!rects || count <= 0) return;
     if (!Start()) return;
     count = std::min(count, kMaxRects);
@@ -104,6 +105,10 @@ void ScreenInk::Request(const RECT* rects, int count) {
     if (same) return;
     for (int i = 0; i < count; ++i) state_->rects[i] = rects[i];
     state_->count = count;
+}
+
+void ScreenInk::SetPaused(bool paused) {
+    paused_.store(paused, std::memory_order_relaxed);
 }
 
 float ScreenInk::Grey(int index) const {
@@ -123,6 +128,11 @@ void ScreenInk::Run() {
     // The first reading is taken at once rather than after a full interval: the bar draws its first
     // frame before the thread would otherwise wake, and until then the ink falls back to the lens.
     while (true) {
+        if (paused_.load(std::memory_order_relaxed)) {
+            if (WaitForSingleObject(state.worker.StopEvent(), kSampleIntervalMs) != WAIT_TIMEOUT) break;
+            continue;
+        }
+
         RECT rects[kMaxRects] = {};
         int count = 0;
         {

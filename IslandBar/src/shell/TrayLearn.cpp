@@ -28,6 +28,7 @@
 #include <tlhelp32.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <mutex>
@@ -42,6 +43,11 @@ namespace island {
 // returns how many it took. Declared here (and not inside the anonymous namespace below, which is where its
 // callers live) because its definition is a public function of this module; see platform/TrayRing.h.
 int DrainTrayRing(TrayLearnResult* result);
+
+// What the last pass concluded about the module in the shell (see LiveTrayObserverResident): a module that is
+// resident keeps feeding the ledger, while a pass that could not land one leaves it a snapshot. Read on the
+// frame loop's tray tick while a pass writes it on the learning worker, hence atomic.
+std::atomic<bool> g_liveTrayObserverResident{false};
 
 // Defined with the ledger further down, and called by the pass when it has asked every application to
 // register again -- which is the moment the ledger stops being a partial picture (see TrayLearn.h).
@@ -879,6 +885,12 @@ TrayLearnResult LearnTrayCallbacks(const TrayIcons& icons, bool broadcast) {
 
     HarvestReport(&result);
 
+    // WHETHER THE LEDGER KEEPS BEING FED, which is a different question from whether it is seeded: a module
+    // that is resident in the shell sees every registration from now on, while a pass that could not land one
+    // leaves the ledger a snapshot of the moment it ran. The card draws the ledger alone only in the first
+    // case (see TrayIcons.cpp).
+    g_liveTrayObserverResident = result.observerReady || result.observerResident;
+
     // THE LEDGER CAN BE BELIEVED FROM HERE: every running tray application has just been asked to register
     // again, and everything that answered has been drained above. Until this line the card draws the
     // registry list instead of a ledger that only holds whatever happened to arrive first (see TrayLearn.h).
@@ -1042,11 +1054,14 @@ void FeedLiveTray(const TrayRegistration& registration, unsigned ownerPid, const
 }
 
 bool LiveTrayFind(const wchar_t* exeLeaf, unsigned uid, bool hasGuid, const unsigned char* guid,
-                  std::wstring* tipOut) {
+                  const wchar_t* registryTip, TrayLiveRegistration* registrationOut) {
     std::lock_guard<std::mutex> lock(g_liveTrayLock);
     const TrayLiveRegistration* live = g_liveTray.Find(exeLeaf, uid, hasGuid, guid);
+    // The second chance, and only for a uid: a guid is an identity of its own, and an entry that has one has
+    // already been answered above (see TrayLedger::FindByTip).
+    if (!live && !hasGuid) live = g_liveTray.FindByTip(uid, registryTip);
     if (!live) return false;
-    if (tipOut) *tipOut = live->tip;
+    if (registrationOut) *registrationOut = *live;
     return true;
 }
 
@@ -1064,11 +1079,16 @@ void ResetLiveTray() {
     std::lock_guard<std::mutex> lock(g_liveTrayLock);
     g_liveTray.Reset();
     g_liveTraySeeded = false;
+    g_liveTrayObserverResident = false;
 }
 
 bool LiveTraySeeded() {
     std::lock_guard<std::mutex> lock(g_liveTrayLock);
     return g_liveTraySeeded;
+}
+
+bool LiveTrayObserverResident() {
+    return g_liveTrayObserverResident.load();
 }
 
 // Called by the pass itself once it has asked every application to register again: until then the ledger is

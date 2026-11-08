@@ -1,0 +1,72 @@
+IslandBar settings-window review request
+Date: 2026-11-08
+
+Context
+-------
+IslandBar is a native Win32 + DirectComposition + Direct2D DirectWrite desktop bar.
+Hard constraints: one executable plus its existing hook DLL, static CRT, no third-party
+UI framework or runtime, Debug and Release must build with warnings as errors, and the
+runtime self-test plus island_smoke must pass.
+
+Current behaviour:
+
+- The system panel has an "Appearance" tile.
+- Pressing that tile currently calls CycleTheme(), so each click immediately changes the
+  whole bar to the next theme.
+- The panel also has a local SettingsPage layout with only two controls: capsule/notch
+  shape and a theme-cycle chip. No code currently sets that page open, so it is effectively
+  unreachable.
+- The footer gear currently launches the Windows Settings app, not IslandBar's settings.
+- There is no separate IslandBar settings window.
+
+Requested change:
+
+Clicking "Appearance" should open a full settings UI for the dynamic island, visually
+similar in information architecture to BrimDeck's settings window: left navigation,
+grouped rows, switches/chips, and a title bar. This should no longer cycle the theme on
+click.
+
+Proposed first version:
+
+- Add a normal, activating Win32 top-level settings window owned by IslandBar.
+- Paint it with the existing Direct2D/DirectWrite infrastructure, not WinUI, WPF, WebView2,
+  or another runtime.
+- Open it lazily from the Appearance tile. Destroy its HWND and device resources when the
+  window closes so the feature adds no resident thread and no steady-state redraw.
+- Keep the bar's own NOACTIVATE top strip unchanged.
+- Pages containing only backed settings:
+  1. General: native-taskbar handling and full-screen backdrop suspension status.
+  2. Collapsed appearance: capsule/notch, theme selection, real-time glass capture toggle.
+  3. Performance: glass capture cadence/current state and whether the audio peak meter is
+     sampled on demand.
+  4. About: version, config/log paths.
+- Persist settings in the existing user-level text settings files, with backward
+  compatibility for shape=capsule|notch.
+- Keep ISLANDBAR_LEGACY_APPEARANCE_CYCLE=1 as a rollback switch.
+
+Proposed acceptance:
+
+- A click on Appearance opens the settings window in <=300 ms.
+- Log line: settings: opened source=panel-appearance page=appearance
+- Every visible control's hit rectangle matches its painted rectangle in self-tests.
+- Shape/theme changes apply immediately and survive restart.
+- Closed-state added threads = 0 and added redraw rate = 0/s.
+- Open-state added private memory target <=15 MB.
+- Debug/Release zero warnings; self-test and smoke pass.
+
+Questions
+---------
+1. Do you agree with a separate activating settings window, or should this stay as an
+   in-card page? State one recommendation.
+2. What is the smallest first milestone that still feels like the BrimDeck settings UI
+   rather than a placeholder?
+3. Should the window be created lazily and destroyed on close, or kept hidden for faster
+   reopening? Consider memory, input focus, monitor/DPI changes, and device-loss recovery.
+4. Which layer should own navigation state, layout, rendering, and persistence so the
+   existing domain/core/app/render/media/shell/platform/services/cli boundaries remain
+   intact?
+5. What are the main risks of adding a second activating HWND to this process (focus,
+   z-order, taskbar/AppBar ownership, full-screen suppression, DPI, shutdown)?
+6. Give one numeric acceptance metric and one log line beyond those proposed above.
+7. Explicitly call out anything in the proposal that should be removed to avoid scope
+   creep or fake settings that have no backing implementation.

@@ -44,10 +44,15 @@
 
 #include <windows.h>
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
+#include <mutex>
 #include <string>
 #include <vector>
+
+#include "platform/WorkerThread.h"
 
 namespace island {
 
@@ -61,6 +66,11 @@ struct StartApp {
 
 class StartApps {
 public:
+    StartApps() = default;
+    ~StartApps();
+    StartApps(const StartApps&) = delete;
+    StartApps& operator=(const StartApps&) = delete;
+
     // Reads `shell:AppsFolder` into the list. Takes a few hundred milliseconds; call it off the UI thread.
     // Returns how many applications were found (0 also means "could not be read").
     int RefreshList();
@@ -88,6 +98,17 @@ public:
     const uint8_t* PinIconPng(int index, size_t* sizeOut) const;
     // The same for one entry of the ALL-APPLICATIONS list, which the 全部 grid draws as icons too.
     const uint8_t* ListIconPng(int index, size_t* sizeOut) const;
+    // Applies completed icon work on the UI thread. The worker never mutates the vectors whose storage the
+    // renderer points into; it publishes copies and this call is the only writer.
+    void DrainIconResults();
+    // Starts extracting only the icons that are still missing. Called when the Start card opens so the closed
+    // card has no icon worker and no queued icon payloads.
+    void RequestMissingIcons();
+    // Puts one current search result at the FRONT of the icon queue. Search results should become concrete
+    // before the 121-entry all-applications grid finishes loading.
+    void PrioritizeListIcon(int index);
+    // Cancels and joins icon work when the Start card closes.
+    void StopIconLoading();
 
     // Bumped whenever the list or the pins change, so the renderer can re-decode what it has cached.
     unsigned long long Revision() const { return revision_; }
@@ -99,8 +120,21 @@ public:
     static void PinsFolderSettingPath(wchar_t* out, size_t capacity);
 
 private:
-    void ResolveIconAsync(const wchar_t* target);
-    void ResolveListIconsAsync();
+    struct IconRequest {
+        std::wstring target;
+        bool pin = false;
+    };
+    struct IconResult {
+        std::wstring target;
+        bool pin = false;
+        std::vector<uint8_t> png;
+    };
+
+    void ResolveIconAsync(const wchar_t* target, bool pin);
+    bool StartIconWorker();
+    void StopIconWorker();
+    static unsigned long __stdcall IconThreadEntry(void* self);
+    void RunIconWorker();
     // Reads the folder into the pins, without touching the shell's application list.
     void ReadPinsFolder(const wchar_t* folder);
 
@@ -116,6 +150,15 @@ private:
     std::wstring pinsFolder_;
     unsigned long long revision_ = 1;
     unsigned long long iconRevision_ = 1;
+    WorkerThread iconWorker_;
+    HANDLE iconWakeEvent_ = nullptr;
+    std::mutex iconMutex_;
+    std::deque<IconRequest> iconQueue_;
+    std::deque<IconResult> iconCompleted_;
+    std::atomic<bool> iconWorkerRunning_{false};
+    std::atomic<int> iconRequested_{0};
+    std::atomic<int> iconResolved_{0};
+    std::atomic<int> iconFailed_{0};
 };
 
 // One AppsFolder item's icon as a PNG of `side` x `side` pixels. False when the item has no image.

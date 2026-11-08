@@ -91,9 +91,16 @@ bool FullScreenAppInFront(const RECT& monitor) {
     // shell hides its own taskbar in exactly those cases and publishes the answer here: QUNS_BUSY for a
     // general full-screen application, QUNS_RUNNING_D3D_FULL_SCREEN for an exclusive one. The geometry
     // below stays as the fallback for a borderless full screen the shell does not consider one.
+    // EXCLUSIVE FULL SCREEN IS TRUSTED ON ITS OWN; "BUSY" IS ONLY A HINT.
+    //
+    // QUNS_BUSY means "a general full-screen application", and it lags: measured 2026-10-19, the bar
+    // reported "an application has the screen" and "over" 250 ms apart on an EMPTY desktop, and while it
+    // believed that it drew the island alone -- reported as "当屏幕上没有应用后 他也默认是全部的模式了". A
+    // D3D exclusive game has no such ambiguity, so that answer stands; everything else has to agree with
+    // the geometry below before the bar stands down.
     QUERY_USER_NOTIFICATION_STATE state = QUNS_ACCEPTS_NOTIFICATIONS;
     if (SUCCEEDED(SHQueryUserNotificationState(&state))) {
-        if (state == QUNS_RUNNING_D3D_FULL_SCREEN || state == QUNS_BUSY) return true;
+        if (state == QUNS_RUNNING_D3D_FULL_SCREEN) return true;
     }
 
     const HWND foreground = GetForegroundWindow();

@@ -3,7 +3,7 @@
 //
 //  MOVED HERE VERBATIM from main.cpp on 2026-10-16. Nothing was re-typed and nothing was
 //  reordered: the phases sit in the order they are called in, RunBar follows them, and the
-//  two helpers that only the bar uses (the power list, the CALL icon's decoded pixels) came
+//  two helpers that only the bar uses (the power actions, the CALL icon's decoded pixels) came
 //  with it because the compiler would not have let them stay behind unused.
 //
 //  WHAT DOES NOT BELONG HERE: anything the entry point does before or instead of running the
@@ -16,6 +16,7 @@
 
 #include <cstdio>
 #include <cmath>        // fabs: comparing the last pushed slider fraction
+#include <algorithm>    // stable_sort: exact/prefix/contains search ranking
 #include <cstring>
 #include <cwchar>       // wcstoul / wcstol / wcstof: the diagnostic environment settings
 #include <cwctype>      // towlower: comparing an executable's name with a window's process image
@@ -25,9 +26,11 @@
 #include <vector>
 
 #include "app/AppBar.h"
+#include "app/BarSettings.h"   // the bar's own settings (the collapsed shape) from bar.txt
 #include "app/BarState.h"
 #include "app/BarSystems.h"    // the window, the renderer, and one object per channel     // the bar's own state: slice 1 is the tray card and its menu
 #include "shell/StartMenu.h"
+#include "shell/SettingsCatalog.h"
 #include "domain/TaskStripLayout.h"
 #include "platform/WindowList.h"
 #include "media/AudioVolume.h"
@@ -38,7 +41,7 @@
 #include "platform/Monitor.h"
 #include <dwmapi.h>
 #include <thread>
-#include <powrprof.h>   // SetSuspendState, for the Start card's power list
+#include <powrprof.h>   // SetSuspendState, for the Start card's sleep button
 // `security.h` refuses to be included without one of its targets defined (its own #error says so), and
 // SECURITY_WIN32 is the one for a user-mode application.
 #define SECURITY_WIN32
@@ -60,10 +63,12 @@
 #include "shell/TrayPress.h"
 #include "shell/WallpaperTint.h"
 #include "platform/DisplayBrightness.h"   // the brightness row: DDC/CI, the only interface this machine has
+#include "platform/AutoStart.h"
 #include "shell/SystemToggles.h"       // Bluetooth / night light / live captions: the tiles that switch
 #include "render/Theme.h"               // the material: colours and edges, switchable, plus themes\*.txt
 #include "services/WeChatWatch.h"
 #include "domain/StatePolicy.h"
+#include "domain/StartSearch.h"
 #include "media/SoundOutput.h"
 #include "shell/SystemStatus.h"
 #include "media/WicImage.h"
@@ -106,13 +111,11 @@ island::PreviewStyle PreviewStyleFor(const island::Theme& theme, const D2D1_COLO
 
 namespace {
 
-// --- the Start card's power list -------------------------------------------------------------------
+// --- the Start card's direct power controls --------------------------------------------------------
 //
-// The five things the shell's own Start offers behind its power button, in the order the card draws them.
-// The three that can lose unsaved work are marked as needing a second press: the list appears where the
-// user was already reaching for the power button, and signing him out on the way past is not a reasonable
-// reading of a mis-click.
-enum class PowerAction { Lock = 0, Sleep = 1, SignOut = 2, Restart = 3, ShutDown = 4 };
+// The four round buttons map directly to these actions, left to right. Restart and shutdown can lose
+// unsaved work, so they require a second press inside a five-second confirmation window.
+enum class PowerAction { Lock = 0, Sleep = 1, Restart = 2, ShutDown = 3 };
 
 // WHAT THE ENTRY IS CALLED, and whether it can lose work. They were declared here and defined 5,800 lines
 // further down with the tray commands until 2026-10-15, when the move of those commands took the definitions
@@ -122,7 +125,6 @@ const wchar_t* PowerActionName(PowerAction action) {
     switch (action) {
         case PowerAction::Lock: return L"锁定";
         case PowerAction::Sleep: return L"睡眠";
-        case PowerAction::SignOut: return L"注销";
         case PowerAction::Restart: return L"重启";
         case PowerAction::ShutDown: return L"关机";
     }
@@ -130,12 +132,12 @@ const wchar_t* PowerActionName(PowerAction action) {
 }
 
 bool PowerActionLosesWork(PowerAction action) {
-    return action == PowerAction::SignOut || action == PowerAction::Restart ||
-           action == PowerAction::ShutDown;
+    return action == PowerAction::Restart || action == PowerAction::ShutDown;
 }
 // Does it. False when Windows refused -- a refusal is reported with the error, because "nothing happened"
 // from a power menu is otherwise indistinguishable from a click that never arrived.
 bool RunPowerAction(PowerAction action);
+static bool LaunchSearchResult(const island::StartSearchResult& result, island::BarSystems& systems);
 // Builds the system panel's tiles.
 //
 // Ordered the way the shell orders them -- Wi-Fi, Bluetooth, airplane mode -- and assembled here rather
@@ -211,6 +213,12 @@ int BuildSystemPanel(const island::SystemStatus& status, int installedLayoutCoun
     out->tileCount = 0;
     out->volume = volumeKnown ? volume : static_cast<float>(status.volumePercent) / 100.0f;
     out->muted = volumeKnown ? muted : status.muted;
+    // The footer keeps the requested 100% face on a desktop, but preserves the hardware distinction in
+    // `batteryPresent` so the secondary line can say this is a desktop on mains power.
+    out->batteryPresent = island::ShouldDrawBattery(status);
+    out->batteryPercent = out->batteryPresent ? status.batteryPercent : 100;
+    out->charging = out->batteryPresent && status.onAcPower;
+    out->nightLightOn = status.nightLightOn;
 
     // The whole set is built here and the requested PAGE is copied out of it, because the shell's flyout pages
     // through its tiles and a page is a window over the set rather than a different set.
@@ -383,12 +391,17 @@ int BuildSystemPanel(const island::SystemStatus& status, int installedLayoutCoun
                 island::TextRenderer::PanelAction::OpenSettings, L"ms-settings:typing");
     }
 
-    // 外观 -- the material, as a list the user can walk (Theme.h). On the panel's second page with the
-    // other "how the bar looks" controls rather than among the system switches, and captioned with the
-    // theme that is IN FORCE, so the tile answers "which one am I on" without opening anything.
+    // 外观 -- an entry into the separate settings window. The old cycle-theme action survives only
+    // behind the documented rollback switch.
+    wchar_t legacyAppearance[8] = {};
+    const bool legacyCycle =
+        GetEnvironmentVariableW(L"ISLANDBAR_LEGACY_APPEARANCE_CYCLE", legacyAppearance, 8) > 0 &&
+        legacyAppearance[0] == L'1';
     addTile(L"\u5916\u89C2", island::CurrentTheme().name,   // 外观
-            island::TextRenderer::IndicatorIcon::Settings, 0, false, false,
-            island::TextRenderer::PanelAction::CycleTheme, nullptr);
+            island::TextRenderer::IndicatorIcon::Settings, 0, false, true,
+            legacyCycle ? island::TextRenderer::PanelAction::CycleTheme
+                        : island::TextRenderer::PanelAction::OpenAppearanceSettings,
+            nullptr);
 
     if (island::ShouldDrawBattery(status)) {
         static wchar_t percent[8] = {};
@@ -584,6 +597,9 @@ static bool CreateBarWindowAndClaimAppBar(bool claimAppBar, const island::Monito
     // knowing anything about bars.
     // `barThicknessPx` is RunBar's: it is the same measurement the full-screen exit re-claims with, so it
     // stays where both uses can see it and comes in as a parameter (see the call).
+    // THE BAR'S OWN SETTINGS, read before the window exists: the shape decides where the island sits, and
+    // Create() lays its anchor out from it (see app/BarSettings.cpp).
+    systems.window.SetBarShape(island::LoadBarShape());
     if (!systems.window.Create(monitor, /*show=*/true)) return false;
 
     systems.window.SetAppBar(&systems.appBar);
@@ -1089,6 +1105,12 @@ struct BarRuntime {
     int whyStatusStrip = 0;
     int whyStartHover = 0;
     int whyStartWash = 0;
+    int whyStartSearch = 0;
+    int whyStartPower = 0;
+    // The tray page's pointer, on the same footing: a cell or a menu row changed, or the menu opened or
+    // closed. It exists as a counter for the same reason (`clock=4` with everything else zero is the
+    // evidence that started the hunt for the missing term).
+    int whyTrayPage = 0;
     // The frame times of the interval being measured, described and reset by the same report.
     island::FrameStats liveStats;
     // --- the memory line's own clock ------------------------------------------------------------------
@@ -1200,10 +1222,11 @@ static void ReportIntervalAndThrottle(BarRuntime& runtime, island::BarSystems& s
                             intervalSummary);
         island::LogAndPrint("  redraws: animating=%d clock=%d notify=%d music=%d "
                             "lyrics=%d progress=%d strip=%d first=%d startHover=%d "
-                            "startWash=%d",
+                            "startWash=%d startSearch=%d startPower=%d trayPage=%d",
                             runtime.whyAnimating, runtime.whyClock, runtime.whyNotification, runtime.whyMusic,
                             runtime.whyLyrics, runtime.whyProgress, runtime.whyStatusStrip, runtime.whyFirst,
-                            runtime.whyStartHover, runtime.whyStartWash);
+                            runtime.whyStartHover, runtime.whyStartWash, runtime.whyStartSearch,
+                            runtime.whyStartPower, runtime.whyTrayPage);
         // Reported beside the frame intervals because the two are the same question: a region
         // re-applied per frame is a window-manager call inside the animation's own loop. A
         // hundred of them in a 4 s window containing one 0.36 s transition means the transition
@@ -1227,6 +1250,9 @@ static void ReportIntervalAndThrottle(BarRuntime& runtime, island::BarSystems& s
         runtime.whyAnimating = runtime.whyClock = runtime.whyNotification = runtime.whyMusic = 0;
         runtime.whyLyrics = runtime.whyProgress = runtime.whyFirst = runtime.whyStatusStrip = 0;
         runtime.whyStartHover = runtime.whyStartWash = 0;
+        runtime.whyStartSearch = 0;
+        runtime.whyStartPower = 0;
+        runtime.whyTrayPage = 0;
     }
 }
 
@@ -1462,9 +1488,10 @@ static void UpdateCardOwner(BarRuntime& runtime, island::FrameState& frame, isla
     runtime.cardOwner = island::NextCardOwner(runtime.cardOwner, frame.outerCardUp, cardWanted,
                                               bar.systemPanelOpen, active != nullptr, musicPresent);
     frame.cardOwner = runtime.cardOwner;
+    frame.cardSize = island::CardFaceSizeFor(runtime.cardOwner, bar.panelLevel);
     // ... and the WINDOW is told too, because the cursor is decided there (WM_SETCURSOR) and it
     // has to know which card's controls are the ones on screen. See SetCardOwner.
-    systems.window.SetCardOwner(runtime.cardOwner);
+    systems.window.SetCardOwner(runtime.cardOwner, frame.cardSize);
 
     // The message the card is showing, held for the whole life of the card.
     if (active) {
@@ -1786,6 +1813,8 @@ static void UpdateFullscreenStandDown(island::BarState& bar, island::BarSystems&
         bar.fullscreenLast = fullscreenNow;
 
         if (fullscreenNow) {
+            systems.renderer.SetBackdropSuspended(true);
+            island::LogAndPrint("  lens: suspended for full screen -- capture stopped");
             if (systems.appBar.IsRegistered()) {
                 systems.appBar.Release();
                 island::LogAndPrint("  fullscreen: space released; the bar fills the band");
@@ -1793,6 +1822,8 @@ static void UpdateFullscreenStandDown(island::BarState& bar, island::BarSystems&
                 island::LogAndPrint("  fullscreen: the bar stands down");
             }
         } else if (systems.appBarResult == island::AppBarResult::Registered) {
+            systems.renderer.SetBackdropSuspended(false);
+            island::LogAndPrint("  lens: resumed after full screen");
             // Reclaimed only if it had been claimed: `--keep-taskbar` never claims, and
             // claiming on the way out of full-screen would reserve space never asked for.
             systems.appBarResult =
@@ -1800,10 +1831,54 @@ static void UpdateFullscreenStandDown(island::BarState& bar, island::BarSystems&
             island::LogAndPrint("  fullscreen: over, space re-claimed -- %ls",
                                 island::AppBarResultName(systems.appBarResult));
         } else {
+            systems.renderer.SetBackdropSuspended(false);
+            island::LogAndPrint("  lens: resumed after full screen");
             island::LogAndPrint("  fullscreen: over, back to the pill");
         }
         std::fflush(stdout);
     }
+}
+
+// The settings window is a separate activating surface, so the frame loop owns the two commands it
+// can produce and feeds the read-only runtime state back into it. Nothing in the window writes config
+// files or changes the bar by itself.
+static void ApplySettingsWindowCommands(island::BarSystems& systems, bool& redraw) {
+    island::BarShape shape = island::BarShape::Capsule;
+    if (systems.settingsWindow.TakeShapeCommand(&shape)) {
+        systems.window.SetBarShape(shape);
+        const bool saved = island::SaveBarShape(shape);
+        redraw = true;
+        island::LogAndPrint(L"  settings: applied section=appearance shape=%ls persist=%ls",
+                            island::BarShapeName(shape), saved ? L"success" : L"FAILED");
+    }
+
+    int theme = -1;
+    if (systems.settingsWindow.TakeThemeCommand(&theme)) {
+        if (island::SelectTheme(theme)) {
+            systems.text.ClearBrushCache();
+            systems.renderer.OnThemeChanged();
+            redraw = true;
+            island::LogAndPrint(L"  settings: applied section=appearance theme=%ls persist=success",
+                                island::CurrentTheme().name);
+        } else {
+            island::LogAndPrint("  settings: theme index %d REFUSED", theme);
+        }
+    }
+}
+
+static void SyncSettingsWindow(island::BarSystems& systems, const island::BarState& bar,
+                               bool hideNativeTaskbar, bool keepNativeTray) {
+    island::SettingsRuntimeStatus status;
+    status.hidesNativeTaskbar = hideNativeTaskbar;
+    status.keepsNativeTray = keepNativeTray;
+    status.fullscreenSuppressed = bar.fullscreenAppInFront;
+    status.glassCaptureEnabled = island::CurrentTheme().lens && !bar.fullscreenAppInFront;
+    status.peakMeterOnDemand = true;
+    status.autoStartEnabled = systems.settingsWindow.AutoStartEnabled();
+    status.shape = systems.window.Shape();
+    status.themeIndex = island::CurrentThemeIndex();
+    status.themeCount = island::ThemeCount();
+    systems.settingsWindow.SetStatus(status);
 }
 
 // --- re-hiding the shell's taskbar, and giving the strip back again, on a slow cadence ---
@@ -2136,7 +2211,7 @@ static void ApplyPointerShapePolicy(island::BarState& bar, island::BarSystems& s
     }
 }
 
-// --- the wheel, for the two lists that scroll ---
+// --- the wheel, for the card levels that scroll ---
 //
 // Moved out of the frame loop verbatim (indentation aside). It touches nothing but BarState and the window,
 // which is why it needs no other parameters.
@@ -2147,15 +2222,28 @@ static void ApplyWheelScroll(island::BarState& bar, island::BarSystems& systems)
     // back, so there is still only one offset in play.
     {
         int wheelNotches = 0;
-        if (bar.soundPageOpen && systems.window.TakeSoundWheel(&wheelNotches)) {
+        if (bar.panelLevel == island::PanelLevel::Tiles &&
+            systems.window.TakeCardWheel(&wheelNotches)) {
+            const island::TextRenderer::SystemPanelText& panel = systems.window.SystemPanel();
+            const int pages = panel.pageCount;
+            if (pages > 1) {
+                const int from = panel.pageIndex;
+                const int to = island::SystemPanelPageAfterWheel(from, pages, wheelNotches);
+                bar.systemPanelPage = to;
+                island::LogAndPrint(
+                    "  system card: wheel notches=%d page=%d->%d pages=%d clamped=%d\n",
+                    wheelNotches, from, to, pages, to != from - wheelNotches ? 1 : 0);
+                std::fflush(stdout);
+            }
+        } else if (bar.soundPageOpen && systems.window.TakeCardWheel(&wheelNotches)) {
             bar.soundPageScroll -= static_cast<float>(wheelNotches) * 60.0f;
             systems.window.SetSoundPageScroll(bar.soundPageScroll);
             bar.soundPageScroll = systems.window.SoundPageScroll();
             island::LogAndPrint("  sound page: wheel %d -> scroll %.0f\n", wheelNotches,
                                 bar.soundPageScroll);
             std::fflush(stdout);
-        } else if (bar.startPageOpen && bar.startPageState == 1 &&
-                   systems.window.TakeSoundWheel(&wheelNotches)) {
+        } else if (bar.startPageOpen && bar.startPageState == 1 && !bar.startSearchActive &&
+                   systems.window.TakeCardWheel(&wheelNotches)) {
             // The picker scrolls one NOTCH per row, not in pixels: 121 applications at 34 DIP a row
             // is 4,114 DIP of list, and a pixel-per-notch wheel would take a minute to reach the
             // end alphabetically. Clamped so the last screenful is the last thing reachable.
@@ -2233,12 +2321,20 @@ static void ApplyStartCardPress(island::BarState& bar, island::BarSystems& syste
             break;
         }
         case island::IslandWindow::StartHitTarget::PickerRow: {
-            if (startHit.index >= 0 && startHit.index < bar.startAppCount) {
-                const island::StartApp& app = systems.startApps.ListAt(startHit.index);
+            if (bar.startSearchActive) {
+                if (startHit.index >= 0 &&
+                    startHit.index < static_cast<int>(bar.startSearchResults.size())) {
+                    LaunchSearchResult(bar.startSearchResults[static_cast<size_t>(startHit.index)],
+                                       systems);
+                    DismissPanelSurface(bar, systems, active, resting);
+                }
+                break;
+            }
+            const int listIndex = startHit.index;
+            if (listIndex >= 0 && listIndex < bar.startAppCount) {
+                const island::StartApp& app = systems.startApps.ListAt(listIndex);
                 if (bar.startAllApps) {
-                    // THE 全部 VIEW OPENS THE APPLICATION. The same list has one meaning per door: the
-                    // 全部 button launches, the empty grid pins, and neither has to explain itself in the
-                    // footer. This is the user's "点击应用可以打开".
+                    // The all-applications grid and search results launch; the add-shortcut grid pins.
                     island::LogAndPrint("  start: launching '%ls'\n", app.name);
                     island::LaunchStartApp(app.target);
                     DismissPanelSurface(bar, systems, active, resting);
@@ -2257,36 +2353,40 @@ static void ApplyStartCardPress(island::BarState& bar, island::BarSystems& syste
             }
             break;
         }
-        case island::IslandWindow::StartHitTarget::PowerRow: {
-            const int row = startHit.index;
-            if (row >= 0 && row <= 4) {
-                const PowerAction action = static_cast<PowerAction>(row);
-                if (PowerActionLosesWork(action) && bar.startPowerConfirm != row) {
-                    // Armed, not done: the list appears above a button the user was already
-                    // reaching for, and a mis-click there must not sign him out.
-                    bar.startPowerConfirm = row;
-                    island::LogAndPrint("  power: '%ls' armed (a second press does it)\n",
-                                        PowerActionName(action));
-                } else {
-                    island::LogAndPrint("  power: '%ls' pressed\n",
-                                        PowerActionName(action));
-                    bar.startPowerConfirm = -1;
-                    DismissPanelSurface(bar, systems, active, resting);
-                    RunPowerAction(action);
-                }
-            }
-            break;
-        }
         case island::IslandWindow::StartHitTarget::PowerButton: {
-            if (bar.startPageState == 1) {
-                bar.startPageState = 0;   // the × on the picker: back to the pins
-                bar.startAllApps = false;
+            const int index = startHit.index;
+            if (index < 0 || index >= island::kStartPowerButtons) break;
+            systems.window.EndStartSearch(true, false);
+            const PowerAction action = static_cast<PowerAction>(index);
+            const ULONGLONG now = GetTickCount64();
+            const bool destructive = PowerActionLosesWork(action);
+            const bool armed =
+                destructive && bar.startPowerConfirm == index && now < bar.startPowerConfirmUntil;
+            if (destructive && !armed) {
+                bar.startPowerConfirm = index;
+                bar.startPowerConfirmUntil = now + 5000;
+                bar.startSearchActive = false;
+                island::LogAndPrint(
+                    "  power: '%ls' armed (click the same button again within 5 s)\n",
+                    PowerActionName(action));
             } else {
-                bar.startPageState = bar.startPageState == 2 ? 0 : 2;
+                island::LogAndPrint("  power: '%ls' pressed\n", PowerActionName(action));
+                bar.startPowerConfirm = -1;
+                bar.startPowerConfirmUntil = 0;
+                DismissPanelSurface(bar, systems, active, resting);
+                RunPowerAction(action);
             }
-            bar.startPowerConfirm = -1;
             break;
         }
+        case island::IslandWindow::StartHitTarget::Search:
+            systems.window.BeginStartSearch();
+            island::LogAndPrint("  start: search focused\n");
+            break;
+        case island::IslandWindow::StartHitTarget::ClearSearch:
+            systems.window.SetStartSearchText(L"");
+            systems.window.BeginStartSearch();
+            island::LogAndPrint("  start: search cleared\n");
+            break;
         case island::IslandWindow::StartHitTarget::EmptyGrid: {
             // The empty upper area is the way to fill it, which is what "上面的应该可以让用户
             // 手动添加" asks for: the card itself is the control.
@@ -2297,14 +2397,45 @@ static void ApplyStartCardPress(island::BarState& bar, island::BarSystems& syste
                                 bar.startAppCount);
             break;
         }
+        case island::IslandWindow::StartHitTarget::AddTile: {
+            // The dashed "+ 添加快捷键" tile at the end of the pins: the same door as the empty grid, and
+            // it is a tile so that the way to add something is visible without trying the blank area.
+            bar.startPageState = 1;
+            bar.startAllApps = false;
+            bar.startPickerScroll = 0;
+            island::LogAndPrint("  start: add tile -> picker (%d application(s))\n",
+                                bar.startAppCount);
+            break;
+        }
+        case island::IslandWindow::StartHitTarget::PinnedTab: {
+            // 固定常用: back to the pins from all applications or search. The card
+            // stays up -- this is a page switch.
+            systems.window.EndStartSearch(true, false);
+            bar.startPageState = 0;
+            bar.startAllApps = false;
+            bar.startPickerScroll = 0;
+            bar.startPowerConfirm = -1;
+            bar.startPowerConfirmUntil = 0;
+            island::LogAndPrint("  start: tab -> the pinned grid\n");
+            break;
+        }
         case island::IslandWindow::StartHitTarget::AllApps: {
-            // The 全部 button at the card's top-right: the same list, but a row OPENS the application
-            // rather than pinning it (see PickerRow). Reset the scroll so the list starts at the top.
+            // The page row's grid button: the all-applications grid, where a cell launches the app.
+            systems.window.EndStartSearch(true, false);
             bar.startPageState = 1;
             bar.startAllApps = true;
             bar.startPickerScroll = 0;
             bar.startPowerConfirm = -1;
+            bar.startPowerConfirmUntil = 0;
             island::LogAndPrint("  start: all applications (%d)\n", bar.startAppCount);
+            break;
+        }
+        case island::IslandWindow::StartHitTarget::Chrome: {
+            // The card's own body -- the account line and the room between the controls. It is NOT a
+            // control and nothing happens, but the press STOPS HERE: the panel
+            // is laid out in the same rectangle one level down, and letting this fall through closed the
+            // card (its "click elsewhere" branch) or fired the tile that happened to lie underneath.
+            island::LogAndPrint("  start: press on the card's own surface (no control)\n");
             break;
         }
         case island::IslandWindow::StartHitTarget::None:
@@ -2543,7 +2674,7 @@ static void ApplyPressesAndClicks(island::BarState& bar, island::BarSystems& sys
             // application's processes and gives it no chance to save -- so the first press only says
             // what the second will do (the row's own label changes; see TrayMenuArmedLabel) and the
             // menu stays open, so the second press is the same gesture in the same place. The Start
-            // card's power list is arranged the same way, for the same reason.
+            // card's destructive power buttons use the same acknowledgement pattern.
             if (row >= 0 && row < bar.trayMenuActionCount &&
                 bar.trayMenuActions[row] == island::TrayMenuAction::QuitApplication &&
                 !bar.trayQuitArmed) {
@@ -2654,11 +2785,24 @@ static void ApplyPressesAndClicks(island::BarState& bar, island::BarSystems& sys
             bar.systemPanelOpen = opening;
             bar.systemPanelPage = 0;
             bar.soundPageOpen = false;
+            // ... and the Start card, the fourth level of the same card. Left set, it made the next
+            // press of the SYSTEM button draw the Start level instead of the tiles (2026-11-05, the
+            // same report as the note on that branch below).
+            bar.startPageOpen = false;
             bar.panelSliderDrag = false;
             bar.mixerSliderDragRow = -1;
             bar.mixerSliderDragPid = 0;
             island::LogAndPrint("  tray: %ls\n", opening ? L"card open" : L"card closed");
             std::fflush(stdout);
+        } else if (island::LevelAnswersInput(bar.panelLevel, island::PanelLevel::Tray) &&
+                   systems.window.TrayTaskManagerAtScreen(cursor)) {
+            const HINSTANCE opened =
+                ShellExecuteW(nullptr, L"open", L"taskmgr.exe", nullptr, nullptr, SW_SHOWNORMAL);
+            island::LogAndPrint(
+                L"  tray: task manager -> %s (%lld)\n",
+                reinterpret_cast<INT_PTR>(opened) > 32 ? L"ok" : L"FAILED",
+                static_cast<long long>(reinterpret_cast<INT_PTR>(opened)));
+            DismissPanelSurface(bar, systems, active, resting);
         } else if (island::LevelAnswersInput(bar.panelLevel, island::PanelLevel::Start) &&
                    systems.window.StartHitHovered().target !=
                        island::IslandWindow::StartHitTarget::None) {
@@ -2684,10 +2828,20 @@ static void ApplyPressesAndClicks(island::BarState& bar, island::BarSystems& sys
             // application's window or menu is what the user is waiting for.
             DismissPanelSurface(bar, systems, active, resting);
         } else if (systems.window.SystemButtonAtScreen(cursor)) {
-            // The system panel is a TOGGLE, like the shell's own flyout: pressing the control
-            // again closes what it opened. Without that the only way out would be to click
+            // The system panel is a TOGGLE of its OWN level, like the shell's own flyout: pressing the
+            // control again closes what it opened. Without that the only way out would be to click
             // somewhere unrelated, which is not a way out a user can guess.
-            bar.systemPanelOpen = !bar.systemPanelOpen;
+            //
+            // AND THE START CARD IS A LEVEL OF THE SAME CARD, which is what this branch used to forget
+            // (2026-11-05): "点击开始菜单按钮弹出卡片后 再点击系统按钮 不会弹窗 而且是关闭开始菜单卡片".
+            // `systemPanelOpen` is the shared "a card is wanted" request -- the Start level sets it, so
+            // it can hardly tell the two apart -- and a plain toggle therefore put the card away instead
+            // of switching it, while `startPageOpen` stayed set and made the NEXT press of this button
+            // draw the Start level again. One card, one level, and the flags kept in step: the rule the
+            // tray page and the Start card already follow.
+            const bool startWasShown = bar.startPageOpen;
+            bar.systemPanelOpen = island::SystemButtonWantsTiles(bar.systemPanelOpen, startWasShown);
+            bar.startPageOpen = false;
             bar.systemPanelPage = 0;   // always opens on the first page, like the shell's flyout
             // ... and the tray's page is a level of the same card, so it goes with it.
             bar.trayPageOpen = false;
@@ -2697,8 +2851,20 @@ static void ApplyPressesAndClicks(island::BarState& bar, island::BarSystems& sys
             bar.soundPageOpen = false;
             bar.mixerSliderDragRow = -1;
             bar.mixerSliderDragPid = 0;
-            island::LogAndPrint("  system panel: %ls\n",
-                                bar.systemPanelOpen ? L"open" : L"closed");
+            // WHY it opened is part of the line, because "it opened the wrong page" and "it opened
+            // the right one" are the same two characters otherwise -- which is how the report above
+            // reads from outside.
+            if (bar.systemPanelOpen) {
+                island::LogAndPrint("  system panel: open (%ls)\n",
+                                    startWasShown ? L"the tiles replace the start card"
+                                                  : L"the panel was closed");
+                island::LogAndPrint(
+                    "  [QuickPanel] size=480x408 tile=74x2+8 tile_total=156 slider_panel=132 "
+                    "row=54 track=32 hit=36 footer=60 wheel=tiles_only dpi=%u\n",
+                    systems.window.Monitor().dpi);
+            } else {
+                island::LogAndPrint("  system panel: closed\n");
+            }
             std::fflush(stdout);
         } else if (island::LevelAnswersInput(bar.panelLevel, island::PanelLevel::Sound)) {
             // The 声音输出 page own controls. The phase lives above RunBar; the dismiss call inside
@@ -2775,17 +2941,38 @@ static void ApplyPressesAndClicks(island::BarState& bar, island::BarSystems& sys
             island::LogAndPrint("  sound page: open\n");
             std::fflush(stdout);
         } else if (bar.systemPanelOpen && panelHit.target ==
-                                          island::SystemPanelTarget::Gear) {
-            // The settings button, which has been drawn since the panel was built and has never had an
-            // action. It opens the sound settings, which is where this panel's own contents live.
-            const HINSTANCE opened = ShellExecuteW(nullptr, L"open", L"ms-settings:sound",
+                                          island::SystemPanelTarget::BatterySettings) {
+            const HINSTANCE opened = ShellExecuteW(nullptr, L"open", L"ms-settings:batterysaver",
                                                    nullptr, nullptr, SW_SHOWNORMAL);
-            island::LogAndPrint("  system panel: gear -> ms-settings:sound (result %lld)\n",
+            island::LogAndPrint("  battery: open ms-settings:batterysaver (result %lld)\n",
                                 static_cast<long long>(reinterpret_cast<INT_PTR>(opened)));
-            // Same rule as the tiles that take the user elsewhere: the page they asked for is opening,
-            // so the panel gets out of the way.
-            DismissPanelSurface(bar, systems, active, resting);
             std::fflush(stdout);
+            DismissPanelSurface(bar, systems, active, resting);
+        } else if (bar.systemPanelOpen && panelHit.target ==
+                                          island::SystemPanelTarget::NightLight) {
+            const bool wanted = !systems.systemStatus.nightLightOn;
+            const bool started = island::RequestNightLight(wanted);
+            island::LogAndPrint(
+                "  footer: night light %s (%s; Windows Settings is used because there is no API)\n",
+                wanted ? "on" : "off",
+                started ? "request started" : "a switch is already running");
+            std::fflush(stdout);
+        } else if (bar.systemPanelOpen && panelHit.target ==
+                                          island::SystemPanelTarget::FooterMute) {
+            if (volumeAvailable) {
+                systems.volume.ToggleMute();
+                bar.panelVolumeEchoUntil = GetTickCount64() + 1200;
+                island::LogAndPrint("  footer: mute toggled\n");
+                std::fflush(stdout);
+            }
+        } else if (bar.systemPanelOpen && panelHit.target ==
+                                          island::SystemPanelTarget::Gear) {
+            const HINSTANCE opened = ShellExecuteW(nullptr, L"open", L"ms-settings:", nullptr, nullptr,
+                                                   SW_SHOWNORMAL);
+            island::LogAndPrint("  footer: gear -> ms-settings: (result %lld)\n",
+                                static_cast<long long>(reinterpret_cast<INT_PTR>(opened)));
+            std::fflush(stdout);
+            DismissPanelSurface(bar, systems, active, resting);
         } else if (bar.systemPanelOpen && panelHit.target ==
                                           island::SystemPanelTarget::Tile) {
             // A tile was pressed. What it does is carried ON the tile, so this does not have to
@@ -2931,6 +3118,21 @@ static void ApplyPressesAndClicks(island::BarState& bar, island::BarSystems& sys
                             L"  tile %d '%ls' -> Win+Ctrl+L (result %d; the tile's caption comes"
                             L" from whether LiveCaptions.exe is running)\n",
                             tileIndex, tile.label ? tile.label : L"?", sent ? 1 : 0);
+                        break;
+                    }
+
+                    case island::TextRenderer::PanelAction::OpenAppearanceSettings: {
+                        island::SettingsRuntimeStatus status;
+                        status.fullscreenSuppressed = bar.fullscreenAppInFront;
+                        status.glassCaptureEnabled =
+                            island::CurrentTheme().lens && !bar.fullscreenAppInFront;
+                        status.autoStartEnabled = island::IsAutoStartEnabled();
+                        status.shape = systems.window.Shape();
+                        status.themeIndex = island::CurrentThemeIndex();
+                        status.themeCount = island::ThemeCount();
+                        systems.settingsWindow.Open(systems.window.Handle(),
+                                                    island::SettingsPage::Appearance, status);
+                        DismissPanelSurface(bar, systems, active, resting);
                         break;
                     }
 
@@ -3123,7 +3325,11 @@ static bool DecideNeedDraw(BarRuntime& runtime, island::BarState& bar, island::B
                            bool musicChanged, bool lyricsScrolling, bool lyricLineChanged,
                            bool lyricLineAnimating, bool musicResting, bool volumeAvailable,
                            bool soundOutputStarted, bool haveDrawn, bool& progressChanged,
-                           bool& weatherChanged, bool& musicMeterDue, bool& startHoverChanged) {
+                           bool& weatherChanged, bool& musicMeterDue, bool& startHoverChanged,
+                           bool& startSearchChanged, bool& startPowerChanged,
+                           bool& trayPageChanged) {
+    // The application row's hovered button, answered below; declared here because the return reads it.
+    bool taskHoverChanged = false;
     // Does the card's printed position need to change?
     //
     // The bar and the elapsed time advance locally, so without this they would only be
@@ -3193,6 +3399,52 @@ static bool DecideNeedDraw(BarRuntime& runtime, island::BarState& bar, island::B
         bar.lastStartHitIndex = hit.index;
         bar.lastStartScrollDip = bar.startPickerScroll;
     }
+    const unsigned long long searchRevision = systems.window.StartSearchRevision();
+    startSearchChanged =
+        startSearchChanged || searchRevision != bar.lastStartSearchRevision;
+    bar.lastStartSearchRevision = searchRevision;
+    const unsigned long long iconRevision = systems.startApps.IconRevision();
+    if (iconRevision != bar.lastStartIconRevision) {
+        bar.lastStartIconRevision = iconRevision;
+        startSearchChanged = true;
+    }
+    startPowerChanged = bar.startPowerConfirm != bar.lastStartPowerConfirm;
+    bar.lastStartPowerConfirm = bar.startPowerConfirm;
+
+    // THE TRAY PAGE'S OWN POINTER, and this is the third time the same rule has to be written out: a value the
+    // window computes from the pointer is not one of the states the loop watches, so a frame has to be asked
+    // for when it CHANGES. The Start card's is above; the tray page's was missing, and the measurement is the
+    // report from 2026-11-06: with the card open and the pointer crossing its cells,
+    // `redraws: animating=0 clock=4 notify=0 ... startHover=0 startWash=0` -- four frames in four seconds,
+    // all of them the clock -- so a highlight followed the pointer a second late ("鼠标移动时高亮跟得慢")
+    // and the right-click menu was DRAWN a second after it had been opened ("点格子或右键后响应慢").
+    //
+    // Three answers rather than one, because the page has three pointer-driven visuals: the hovered cell, the
+    // hovered row of its menu, and the menu itself appearing or going away. The menu's cell is not one of them:
+    // it is chosen by the click, and a click is already a reason to draw.
+    {
+        const int cell = systems.window.TrayCellHovered();
+        const int row = systems.window.TrayMenuRowHovered();
+        const bool menuOpen = systems.window.TrayMenuIsOpen();
+        const bool taskManagerHovered = systems.window.TrayTaskManagerHovered();
+        trayPageChanged = cell != bar.lastTrayCellHovered || row != bar.lastTrayMenuRow ||
+                          menuOpen != bar.lastTrayMenuOpen ||
+                          taskManagerHovered != bar.lastTrayTaskManagerHovered;
+        bar.lastTrayCellHovered = cell;
+        bar.lastTrayMenuRow = row;
+        bar.lastTrayMenuOpen = menuOpen;
+        bar.lastTrayTaskManagerHovered = taskManagerHovered;
+    }
+
+    // ... AND THE APPLICATION ROW'S HOVERED BUTTON, the same lesson a fourth time (2026-11-06). The row's
+    // widening is an ANIMATION, and an animation needs a frame: without this the button widened on the next
+    // clock tick at best, and not at all when the pointer moved off first -- reported as "鼠标移到图标中间
+    // 的时候 再移入图标就不会展开".
+    {
+        const int taskHovered = systems.window.HoveredIcon();
+        taskHoverChanged = taskHovered != bar.lastTaskHovered;
+        bar.lastTaskHovered = taskHovered;
+    }
 
     return animating || clockChanged || notificationChanged ||
            musicChanged || lyricsScrolling || lyricLineChanged ||
@@ -3204,7 +3456,11 @@ static bool DecideNeedDraw(BarRuntime& runtime, island::BarState& bar, island::B
            // this loop watches anywhere else, and without them the highlight and the
            // list moved only on the next clock tick -- measured, that is ONE redraw
            // per second while idle, which is what "鼠标移上去卡卡的" was.
-           startHoverChanged || bar.startWashAnimating ||
+           startHoverChanged || startSearchChanged || startPowerChanged || bar.startWashAnimating ||
+           // ... and the tray page's, for the same measured failure (see the note above it).
+           trayPageChanged ||
+           // ... and the application row's hovered button (see the block above the return).
+           taskHoverChanged ||
            systems.renderer.TakeLensFrame() ||
            !haveDrawn;
 }
@@ -3431,6 +3687,7 @@ static void FillTrayAndPanelFrame(BarRuntime& runtime, island::FrameState& frame
                                                   : island::kMaxTrayIcons;
     frame.trayRevision = systems.trayIcons.Revision();
     frame.trayHoveredIndex = systems.window.TrayCellHovered();
+    frame.trayPage.taskManagerHovered = systems.window.TrayTaskManagerHovered();
     // ... AND WHETHER THE CARD'S SURFACE IS MOVING, which decides how much of the material is
     // drawn this frame: the shadow and the grain are skipped while the card animates or while a
     // moving pointer keeps changing which cell is hovered, and come back on the first frame that
@@ -3491,8 +3748,21 @@ static void FillTrayAndPanelFrame(BarRuntime& runtime, island::FrameState& frame
     // whole of the exit, and drawing the request is what put the tiles under a shrinking tray
     // page. See NextPanelLevel.
     frame.trayPageOpen = trayPageShown;
-    frame.trayPageTitle = trayPageShown ? L"\u6258\u76d8" : nullptr;   // 托盘
+    if (trayPageShown) {
+        // The page's own heading, supplied here because the renderer holds no user-facing strings of its own.
+        frame.trayPage.title = L"\u7cfb\u7edf\u540e\u53f0\u6258\u76d8";   // 系统后台托盘
+        // ... AND WHAT IS PLAYING, for the row under the grid: the same track the pill is showing, borrowed
+        // from BarState rather than from FrameState::music. That pointer is only filled while the MEDIA card
+        // owns the card, and the tray page is a level of the panel -- so it is always null here, and a row
+        // built from it would always be empty. Empty means the row is not drawn at all (see TrayPageText).
+        if (bar.activePresent && bar.activeTitle[0] != '\0') {
+            frame.trayPage.nowTitle = bar.activeTitle;
+            frame.trayPage.nowArtist = bar.activeArtist;
+            frame.trayPage.nowPlaying = bar.activePlaying;
+        }
+    }
     systems.window.SetTrayIconCount(frame.trayIconCount);
+    systems.window.SetTrayPageOpen(trayPageShown);
 
     frame.systemPanelOpen = bar.systemPanelOpen;
     // ... and WHICH CONTROL SHOULD LOOK OPEN, which is a question about the level and not about
@@ -3500,10 +3770,292 @@ static void FillTrayAndPanelFrame(BarRuntime& runtime, island::FrameState& frame
     // exist), so asking that flag lit the SYSTEM button's chevron for the tray page, for the
     // Start card and for everything else. Reported as "点击 ⊞ 系统按钮也跟着变".
     {
-        const island::ControlLit lit =
-            island::ControlLitFor(bar.panelLevel, frame.outerCardUp);
+        // ... AND WITH THE CARD'S OWNER, not merely "a card is up": the music card and a notification are
+        // cards too, and neither was opened by this button. With `outerCardUp` alone the chevron flipped
+        // whenever a song's card appeared (reported 2026-11-06: "当音乐卡片弹出来的时候 系统按钮图标也在动").
+        const bool panelCardUp = frame.outerCardUp && frame.cardOwner == island::CardOwner::SystemPanel;
+        const island::ControlLit lit = island::ControlLitFor(bar.panelLevel, panelCardUp);
         frame.systemButtonOpen = lit.system;
         frame.startButtonOpen = lit.start;
+    }
+}
+
+// --- the Start card's search, and the application under one displayed cell ---
+static bool LaunchSearchResult(const island::StartSearchResult& result, island::BarSystems& systems) {
+    switch (result.kind) {
+        case island::SearchResultKind::Application:
+            if (result.sourceIndex >= 0 && result.sourceIndex < systems.startApps.ListCount()) {
+                const island::StartApp& app = systems.startApps.ListAt(result.sourceIndex);
+                island::LogAndPrint(L"  start search: launching application '%ls'\n", app.name);
+                return island::LaunchStartApp(app.target);
+            }
+            return false;
+        case island::SearchResultKind::Setting: {
+            const HINSTANCE opened =
+                ShellExecuteW(nullptr, L"open", result.target.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            const bool ok = reinterpret_cast<INT_PTR>(opened) > 32;
+            island::LogAndPrint(L"  start search: setting '%ls' -> %ls (%s)\n", result.title.c_str(),
+                                result.target.c_str(), ok ? "ok" : "FAILED");
+            return ok;
+        }
+        case island::SearchResultKind::File: {
+            const HINSTANCE opened =
+                ShellExecuteW(nullptr, L"open", result.target.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            const bool ok = reinterpret_cast<INT_PTR>(opened) > 32;
+            island::LogAndPrint(L"  start search: file '%ls' -> %ls (%s)\n", result.title.c_str(),
+                                result.target.c_str(), ok ? "ok" : "FAILED");
+            return ok;
+        }
+    }
+    return false;
+}
+
+static void BuildLocalSearchResults(island::BarState& bar, island::BarSystems& systems,
+                                    const wchar_t* query) {
+    bar.startSearchResults.clear();
+
+    struct RankedApp {
+        int index = -1;
+        int score = 0;
+    };
+    std::vector<RankedApp> apps;
+    for (int i = 0; i < systems.startApps.ListCount(); ++i) {
+        const int score = island::StartSearchScore(query, systems.startApps.ListAt(i).name);
+        if (score >= 0) apps.push_back({i, score});
+    }
+    std::stable_sort(apps.begin(), apps.end(), [&](const RankedApp& a, const RankedApp& b) {
+        if (a.score != b.score) return a.score < b.score;
+        return _wcsicmp(systems.startApps.ListAt(a.index).name,
+                        systems.startApps.ListAt(b.index).name) < 0;
+    });
+
+    std::vector<island::StartSearchResult> applicationResults;
+    applicationResults.reserve(apps.size());
+    for (const RankedApp& ranked : apps) {
+        const island::StartApp& app = systems.startApps.ListAt(ranked.index);
+        island::StartSearchResult result;
+        result.kind = island::SearchResultKind::Application;
+        result.sourceIndex = ranked.index;
+        result.score = ranked.score;
+        result.title = app.name;
+        result.subtitle = L"\u5E94\u7528";
+        result.target = app.target;
+        applicationResults.push_back(std::move(result));
+    }
+
+    std::vector<island::StartSearchResult> settingResults;
+    island::SearchSettingsCatalog(query, &settingResults);
+    std::stable_sort(settingResults.begin(), settingResults.end(), island::SearchResultBefore);
+    std::stable_sort(applicationResults.begin(), applicationResults.end(),
+                     island::SearchResultBefore);
+
+    // Keep all three sources visible before filling the list: four applications, two settings and two
+    // files. A common substring can otherwise produce six applications and hide the one matching file.
+    const auto appendUnique = [&](const std::vector<island::StartSearchResult>& source,
+                                  int sourceLimit) {
+        int added = 0;
+        for (const island::StartSearchResult& candidate : source) {
+            if (added >= sourceLimit ||
+                static_cast<int>(bar.startSearchResults.size()) >=
+                    island::kStartSearchMaxResults) {
+                break;
+            }
+            bool duplicate = false;
+            for (const island::StartSearchResult& existing : bar.startSearchResults) {
+                if (existing.kind == candidate.kind &&
+                    _wcsicmp(existing.target.c_str(), candidate.target.c_str()) == 0) {
+                    duplicate = true;
+                    break;
+                }
+            }
+            if (!duplicate) {
+                bar.startSearchResults.push_back(candidate);
+                ++added;
+            }
+        }
+    };
+    appendUnique(applicationResults, 4);
+    appendUnique(settingResults, 2);
+    appendUnique(bar.startSearchFileResults, 2);
+
+    // A query that matches only one kind should still use the whole list rather than leave the card
+    // half empty. This second pass is grouped by source and still deduplicated by target.
+    appendUnique(applicationResults, island::kStartSearchMaxResults);
+    appendUnique(settingResults, island::kStartSearchMaxResults);
+    appendUnique(bar.startSearchFileResults, island::kStartSearchMaxResults);
+
+    std::stable_sort(bar.startSearchResults.begin(), bar.startSearchResults.end(),
+                     island::SearchResultBefore);
+    bar.startSearchKinds.clear();
+    bar.startSearchKinds.reserve(bar.startSearchResults.size());
+    for (const island::StartSearchResult& result : bar.startSearchResults) {
+        bar.startSearchKinds.push_back(result.kind);
+        if (result.kind == island::SearchResultKind::Application && result.sourceIndex >= 0) {
+            systems.startApps.PrioritizeListIcon(result.sourceIndex);
+        }
+    }
+    if (bar.startSearchResults.empty()) {
+        bar.startSearchSelected = -1;
+    } else if (bar.startSearchSelected < 0) {
+        bar.startSearchSelected = 0;
+    } else if (bar.startSearchSelected >= static_cast<int>(bar.startSearchResults.size())) {
+        bar.startSearchSelected = static_cast<int>(bar.startSearchResults.size()) - 1;
+    }
+}
+
+static bool RefreshStartSearch(island::BarState& bar, island::BarSystems& systems) {
+    if (!bar.startPageOpen) {
+        systems.fileSearch.Stop();
+        return false;
+    }
+
+    const wchar_t* query = systems.window.StartSearchText();
+    const unsigned long long appRevision = systems.startApps.Revision();
+    const bool queryChanged = std::wcscmp(query, bar.startSearchQuery) != 0;
+    bool changed = false;
+    if (queryChanged) {
+        wcsncpy_s(bar.startSearchQuery, 64, query, _TRUNCATE);
+        island::LogAndPrint(L"  start.search.input query='%ls'\n", bar.startSearchQuery);
+        bar.startSearchChangedAt = GetTickCount64();
+        bar.startSearchPending = query[0] != L'\0';
+        bar.startSearchActive = query[0] != L'\0';
+        bar.startSearchResults.clear();
+        bar.startSearchFileResults.clear();
+        bar.startSearchFilesCompleted = false;
+        bar.startSearchSelected = -1;
+        bar.startSearchKinds.clear();
+        changed = true;
+    }
+
+    std::uint64_t fileSequence = 0;
+    std::vector<island::StartSearchResult> fileResults;
+    bool filesCompleted = false;
+    if (systems.fileSearch.Take(&fileSequence, &fileResults, &filesCompleted)) {
+        if (fileSequence == bar.startSearchSequence) {
+            bar.startSearchFileResults = std::move(fileResults);
+            bar.startSearchFilesCompleted = filesCompleted;
+            changed = true;
+        }
+    }
+
+    const bool hasQuery = bar.startSearchQuery[0] != L'\0';
+    if (!hasQuery) {
+        if (queryChanged) {
+            systems.fileSearch.Stop();
+            bar.startSearchActive = false;
+            bar.startPageState = 0;
+            bar.startAllApps = false;
+            bar.startPickerScroll = 0;
+            bar.startSearchPending = false;
+            bar.startSearchAppliedQuery[0] = L'\0';
+            bar.startSearchSelected = -1;
+            bar.startSearchKinds.clear();
+        }
+        if (changed) {
+            island::LogAndPrint(
+                L"  [StartMenu] icon=44 grid=6x3 search_query='' results=0 mode=pinned "
+                L"power_confirm=5s footer=lock,sleep,restart,shutdown\n");
+        }
+        return changed;
+    }
+
+    // The Start application list arrives from its own worker. A query may be typed before that list is
+    // ready; once both the file provider and the application list have an answer, recompute the unified
+    // list so the application results do not stay missing forever.
+    if (!bar.startSearchPending && bar.startSearchFilesCompleted &&
+        appRevision != bar.startSearchAppsRevision) {
+        bar.startSearchPending = true;
+        bar.startSearchChangedAt = GetTickCount64() - 200;
+        changed = true;
+    }
+
+    const ULONGLONG now = GetTickCount64();
+    if (bar.startSearchPending && now - bar.startSearchChangedAt >= 200) {
+        bar.startSearchPending = false;
+        bar.startSearchStartedAt = now;
+        wcsncpy_s(bar.startSearchAppliedQuery, 64, bar.startSearchQuery, _TRUNCATE);
+        bar.startSearchAppsRevision = appRevision;
+        bar.startSearchFileResults.clear();
+        bar.startSearchFilesCompleted = false;
+        ++bar.startSearchSequence;
+        BuildLocalSearchResults(bar, systems, bar.startSearchQuery);
+
+        systems.fileSearch.Request(bar.startSearchQuery, bar.startSearchSequence);
+        bar.startPageState = 1;
+        bar.startAllApps = true;
+        bar.startPickerScroll = 0;
+        changed = true;
+    } else if (!bar.startSearchPending &&
+               (appRevision != bar.startSearchAppsRevision || changed)) {
+        bar.startSearchAppsRevision = appRevision;
+        BuildLocalSearchResults(bar, systems, bar.startSearchQuery);
+    }
+
+    if (queryChanged) {
+        bar.startRowWashes.clear();
+        bar.startRowWashValues.clear();
+        bar.startWashAnimating = false;
+    }
+    if (!bar.startSearchPending && (!bar.startSearchResults.empty() || bar.startSearchFilesCompleted)) {
+        static wchar_t lastLoggedQuery[64] = {};
+        static bool lastLoggedComplete = false;
+        const bool newlyComplete = bar.startSearchFilesCompleted && !lastLoggedComplete;
+        if (std::wcscmp(lastLoggedQuery, bar.startSearchAppliedQuery) != 0 || newlyComplete) {
+            wcsncpy_s(lastLoggedQuery, 64, bar.startSearchAppliedQuery, _TRUNCATE);
+            lastLoggedComplete = bar.startSearchFilesCompleted;
+            int applicationCount = 0;
+            int settingCount = 0;
+            int fileCount = 0;
+            for (const island::StartSearchResult& result : bar.startSearchResults) {
+                if (result.kind == island::SearchResultKind::Application) ++applicationCount;
+                if (result.kind == island::SearchResultKind::Setting) ++settingCount;
+                if (result.kind == island::SearchResultKind::File) ++fileCount;
+            }
+            const ULONGLONG elapsed = bar.startSearchStartedAt
+                                          ? GetTickCount64() - bar.startSearchStartedAt
+                                          : 0;
+            island::LogAndPrint(
+                L"  start.search.complete seq=%llu scope=apps,settings,files latency_ms=%llu "
+                L"results=%zu apps=%d settings=%d files=%d stale=0\n",
+                bar.startSearchSequence, elapsed, bar.startSearchResults.size(), applicationCount,
+                settingCount, fileCount);
+        }
+    }
+    return changed;
+}
+
+static void ApplyStartSearchCommand(island::BarState& bar, island::BarSystems& systems,
+                                    const island::Notification* active,
+                                    island::IslandState resting) {
+    const int navigation = systems.window.TakeStartSearchNavigation();
+    if (navigation != 0 && bar.startSearchActive && !bar.startSearchResults.empty()) {
+        bar.startSearchSelected = island::MoveSearchSelection(
+            bar.startSearchSelected, navigation,
+            static_cast<int>(bar.startSearchResults.size()));
+    }
+    if (systems.window.TakeStartSearchEnter() && bar.startSearchActive &&
+        !bar.startSearchResults.empty()) {
+        if (bar.startSearchSelected < 0 ||
+            bar.startSearchSelected >= static_cast<int>(bar.startSearchResults.size())) {
+            bar.startSearchSelected = 0;
+        }
+        LaunchSearchResult(
+            bar.startSearchResults[static_cast<size_t>(bar.startSearchSelected)], systems);
+        DismissPanelSurface(bar, systems, active, resting);
+    }
+    if (systems.window.TakeStartSearchCancel()) {
+        bar.startSearchActive = false;
+        bar.startSearchQuery[0] = L'\0';
+        bar.startSearchAppliedQuery[0] = L'\0';
+        bar.startSearchResults.clear();
+        bar.startSearchFileResults.clear();
+        bar.startSearchPending = false;
+        bar.startSearchSelected = -1;
+        bar.startSearchKinds.clear();
+        systems.fileSearch.Stop();
+        bar.startPageState = 0;
+        bar.startAllApps = false;
+        bar.startPickerScroll = 0;
     }
 }
 
@@ -3534,6 +4086,9 @@ static void FillStartCardFrame(island::FrameState& frame, island::BarState& bar,
             // newest tile the one tile with no highlight.
             bar.startPinCount = systems.startApps.PinCount();
             bar.startAppCount = systems.startApps.ListCount();
+            const int shownListCount =
+                bar.startSearchActive ? static_cast<int>(bar.startSearchResults.size())
+                                      : bar.startAppCount;
             const island::IslandWindow::StartHit hover = systems.window.StartHitHovered();
             const int pinHover = hover.target == island::IslandWindow::StartHitTarget::Pin
                                      ? hover.index
@@ -3542,8 +4097,8 @@ static void FillStartCardFrame(island::FrameState& frame, island::BarState& bar,
                 hover.target == island::IslandWindow::StartHitTarget::PickerRow ? hover.index
                                                                                 : -1;
             const int powerHover =
-                hover.target == island::IslandWindow::StartHitTarget::PowerRow ? hover.index
-                                                                               : -1;
+                hover.target == island::IslandWindow::StartHitTarget::PowerButton ? hover.index
+                                                                                  : -1;
             const auto resize = [](std::vector<island::WashSlot>& slots,
                                    std::vector<float>& values, int count) {
                 if (static_cast<int>(slots.size()) != count) {
@@ -3552,8 +4107,8 @@ static void FillStartCardFrame(island::FrameState& frame, island::BarState& bar,
                 }
             };
             resize(bar.startPinWashes, bar.startPinWashValues, bar.startPinCount);
-            resize(bar.startRowWashes, bar.startRowWashValues, bar.startAppCount);
-            resize(bar.startPowerWashes, bar.startPowerWashValues, 5);
+            resize(bar.startRowWashes, bar.startRowWashValues, shownListCount);
+            resize(bar.startPowerWashes, bar.startPowerWashValues, island::kStartPowerButtons);
             bar.startWashAnimating = false;
             const auto step = [&](std::vector<island::WashSlot>& slots,
                                   std::vector<float>& values, int hovered) {
@@ -3567,7 +4122,8 @@ static void FillStartCardFrame(island::FrameState& frame, island::BarState& bar,
                 }
             };
             step(bar.startPinWashes, bar.startPinWashValues, pinHover);
-            step(bar.startRowWashes, bar.startRowWashValues, rowHover);
+            step(bar.startRowWashes, bar.startRowWashValues,
+                 bar.startSearchActive && rowHover < 0 ? bar.startSearchSelected : rowHover);
             step(bar.startPowerWashes, bar.startPowerWashValues, powerHover);
         }
         const island::IslandWindow::StartHit startHit = systems.window.StartHitHovered();
@@ -3575,24 +4131,50 @@ static void FillStartCardFrame(island::FrameState& frame, island::BarState& bar,
         card.pins = bar.startPinCount > 0 ? &systems.startApps.PinAt(0) : nullptr;
         card.pinCount = bar.startPinCount;
         card.list = bar.startAppCount > 0 ? &systems.startApps.ListAt(0) : nullptr;
-        card.listCount = bar.startAppCount;
+        card.listCount = bar.startSearchActive ? static_cast<int>(bar.startSearchResults.size())
+                                               : bar.startAppCount;
+        card.listOrder = nullptr;
+        card.searchResults =
+            bar.startSearchActive && !bar.startSearchResults.empty()
+                ? bar.startSearchResults.data()
+                : nullptr;
+        card.searchResultCount =
+            bar.startSearchActive ? static_cast<int>(bar.startSearchResults.size()) : 0;
         card.pickerScrollRow = bar.startPickerScroll;
         card.page = bar.startPageState;
+        card.searchActive = bar.startSearchActive;
+        card.searchInputVisible = systems.window.StartSearchInputVisible();
+        card.searchQuery = bar.startSearchQuery;
         card.hoveredPin =
             startHit.target == island::IslandWindow::StartHitTarget::Pin ? startHit.index : -1;
         card.hoveredPickerRow =
             startHit.target == island::IslandWindow::StartHitTarget::PickerRow
                 ? startHit.index
                 : -1;
-        card.hoveredPowerRow =
-            startHit.target == island::IslandWindow::StartHitTarget::PowerRow
+        card.hoveredSearchResult = card.hoveredPickerRow;
+        card.selectedSearchResult = bar.startSearchSelected;
+        card.searchPending = bar.startSearchPending;
+        card.searchFilesComplete = bar.startSearchFilesCompleted;
+        card.hoveredPowerButton =
+            startHit.target == island::IslandWindow::StartHitTarget::PowerButton
                 ? startHit.index
                 : -1;
-        card.powerButtonHovered =
-            startHit.target == island::IslandWindow::StartHitTarget::PowerButton;
+        card.searchHovered = startHit.target == island::IslandWindow::StartHitTarget::Search;
         card.allAppsHovered = startHit.target == island::IslandWindow::StartHitTarget::AllApps;
+        card.pinnedTabHovered = startHit.target == island::IslandWindow::StartHitTarget::PinnedTab;
+        card.addTileHovered = startHit.target == island::IslandWindow::StartHitTarget::AddTile;
         card.allAppsMode = bar.startAllApps;
-        card.powerConfirmRow = bar.startPowerConfirm;
+        if (bar.startPowerConfirm >= 0 && GetTickCount64() >= bar.startPowerConfirmUntil) {
+            bar.startPowerConfirm = -1;
+            bar.startPowerConfirmUntil = 0;
+        }
+        card.powerConfirmButton = bar.startPowerConfirm;
+        card.powerConfirmHint =
+            bar.startPowerConfirm == static_cast<int>(PowerAction::Restart)
+                ? L"\u518D\u6B21\u70B9\u51FB\u786E\u8BA4\u91CD\u542F"
+                : (bar.startPowerConfirm == static_cast<int>(PowerAction::ShutDown)
+                       ? L"\u518D\u6B21\u70B9\u51FB\u786E\u8BA4\u5173\u673A"
+                       : nullptr);
         card.pinWashes = bar.startPinWashValues.empty() ? nullptr : bar.startPinWashValues.data();
         card.rowWashes = bar.startRowWashValues.empty() ? nullptr : bar.startRowWashValues.data();
         card.powerWashes =
@@ -3631,8 +4213,12 @@ static void FillStartCardFrame(island::FrameState& frame, island::BarState& bar,
             bar.startListIconSizes.empty() ? nullptr : bar.startListIconSizes.data();
     }
     // ... and the window, which answers "what is the pointer on" with the same geometry.
-    systems.window.SetStartState(startPageShown, bar.startPageState, bar.startPinCount, bar.startAppCount,
-                         bar.startPickerScroll, bar.startAllApps);
+    systems.window.SetStartState(
+        startPageShown, bar.startPageState, bar.startPinCount,
+        bar.startSearchActive ? static_cast<int>(bar.startSearchResults.size())
+                              : bar.startAppCount,
+        bar.startPickerScroll, bar.startSearchActive, bar.startSearchKinds.data(),
+        static_cast<int>(bar.startSearchKinds.size()));
 }
 
 // --- the panel content, level by level ---
@@ -3685,11 +4271,11 @@ static void FillPanelFrame(BarRuntime& runtime, island::FrameState& frame, islan
             BuildSystemPanel(systems.systemStatus, systems.statusReader.InstalledLayoutCount(), liveKnown,
                              liveLevel, systems.volume.IsMuted(), &frame.systemPanel,
                              bar.systemPanelPage);
+            frame.systemPanel.tilesPageShown = !bar.startPageOpen;
 
-            // The volume's own percentage, shown while the slider is the control in hand: being
-            // dragged, used within the last second, or simply hovered. The handle's position is
-            // the only reading the slider carries by itself, and "about three quarters along" is
-            // not an answer to "how loud is it".
+            // The row's own reading, brightened while it is the control in hand: being dragged, used
+            // within the last second, or simply hovered. The number is printed all the time now (the
+            // reference's arrangement), so this is emphasis rather than show-and-hide.
             {
                 POINT echoPoint = {};
                 GetCursorPos(&echoPoint);
@@ -3699,6 +4285,25 @@ static void FillPanelFrame(BarRuntime& runtime, island::FrameState& frame, islan
                 // the bar.track mid-drag would be the slider losing the control being held.
                 const island::SystemPanelHit echoHit =
                     systems.window.SystemPanelHitAtScreen(echoPoint);
+                switch (echoHit.target) {
+                    case island::SystemPanelTarget::BatterySettings:
+                        frame.systemPanel.footerHovered = 0;
+                        break;
+                    case island::SystemPanelTarget::NightLight:
+                        frame.systemPanel.footerHovered = 1;
+                        break;
+                    case island::SystemPanelTarget::FooterMute:
+                        frame.systemPanel.footerHovered = 2;
+                        break;
+                    case island::SystemPanelTarget::Gear:
+                        frame.systemPanel.footerHovered = 3;
+                        break;
+                    default:
+                        frame.systemPanel.footerHovered = -1;
+                        break;
+                }
+                frame.systemPanel.footerPressed =
+                    systems.window.LeftButtonDown() ? frame.systemPanel.footerHovered : -1;
                 const bool onSlider =
                     echoHit.target == island::SystemPanelTarget::Slider;
                 const bool onVolumeRow =
@@ -3725,7 +4330,7 @@ static void FillPanelFrame(BarRuntime& runtime, island::FrameState& frame, islan
                     }
                     frame.systemPanel.sliderEmphasis[row] = bar.sliderHandleGrowth[row];
                 }
-                frame.systemPanel.showVolumePercent =
+                frame.systemPanel.volumeHighlighted =
                     bar.panelSliderDrag || onSlider ||
                     GetTickCount64() < bar.panelVolumeEchoUntil;
                 // The panel's handle is drawn at the chased value too, and at the pointer's own
@@ -3762,7 +4367,7 @@ static void FillPanelFrame(BarRuntime& runtime, island::FrameState& frame, islan
                 frame.systemPanel.brightness =
                     draggingBrightness ? dragged
                                        : static_cast<float>(bar.brightnessPercent) / 100.0f;
-                frame.systemPanel.showBrightnessPercent =
+                frame.systemPanel.brightnessHighlighted =
                     draggingBrightness || onBrightnessRow ||
                     GetTickCount64() < bar.panelBrightnessEchoUntil;
             }
@@ -3817,12 +4422,12 @@ static void FillPanelFrame(BarRuntime& runtime, island::FrameState& frame, islan
         const float anchorCentre = (runtime.cardOwner == island::CardOwner::SystemPanel)
                                        ? buttonCentre
                                        : islandCentre;
-        const float anchorLeft = anchorCentre - island::kExpandedWidthDip * 0.5f;
+        const float anchorLeft = anchorCentre - frame.cardSize.widthDip * 0.5f;
         const float windowWidthDipNow =
             static_cast<float>(systems.window.Monitor().screen.right -
                                systems.window.Monitor().screen.left) /
             systems.window.Scale();
-        frame.cardLeftDip = island::CardLeftFor(anchorLeft, island::kExpandedWidthDip,
+        frame.cardLeftDip = island::CardLeftFor(anchorLeft, frame.cardSize.widthDip,
                                                 windowWidthDipNow);
     }
 }
@@ -4214,14 +4819,17 @@ static void FillHoverPreview(BarRuntime& runtime, island::FrameState& frame, isl
         const island::RoundedBox animated = frame.pill.box;
         const float animatedHeight = animated.rect.bottom - animated.rect.top;
         const float cardTopDip = frame.restingPill.rect.bottom + island::kCardTopGapDip;
+        const float cardFaceHeight = frame.cardSize.heightDip;
+        const float cardReveal =
+            island::CardRevealDipForHeight(animatedHeight, cardFaceHeight);
         const RECT applied = systems.window.AppliedRegion();
         island::LogAndPrint("  card dt=%5.1fms eased=%.3f h=%5.1f left=%.0f "
                             "rect=[%.0f,%.0f %.0f,%.0f] cardOpacity=%.2f barOpacity=%.2f "
                             "region=[%ld,%ld %ld,%ld] panel=%d state=%ls",
                             dt * 1000.0f, systems.window.EasedProgress(), animatedHeight,
                             frame.cardLeftDip, frame.cardLeftDip, cardTopDip,
-                            frame.cardLeftDip + island::kExpandedWidthDip,
-                            cardTopDip + animatedHeight, frame.cardOpacity,
+                            frame.cardLeftDip + frame.cardSize.widthDip,
+                            cardTopDip + cardReveal, frame.cardOpacity,
                             frame.contentOpacity,
                             applied.left, applied.top, applied.right, applied.bottom,
                             static_cast<int>(frame.cardOwner),
@@ -4650,7 +5258,7 @@ static void TickTray(island::BarState& bar, island::BarSystems& systems,
         // cannot see either (see shell/TrayLearn.h). Swept BEFORE the refresh, so the list the
         // card is about to draw has already lost it.
         island::ForgetDeadTrayWindows();
-        const int trayNow = systems.trayIcons.Refresh();
+        const int trayNow = systems.trayIcons.Refresh(true);
         if (trayNow != bar.lastTrayCount) {
             bar.lastTrayCount = trayNow;
             island::LogAndPrint(L"  tray: %d icon(s) %ls", trayNow,
@@ -4831,12 +5439,6 @@ bool RunPowerAction(PowerAction action) {
             const BOOLEAN slept = SetSuspendState(FALSE, TRUE, FALSE);
             island::LogAndPrint("  power: sleep -> %s\n", slept ? "ok" : "FAILED");
             return slept != FALSE;
-        }
-        case PowerAction::SignOut: {
-            const BOOL done = ExitWindowsEx(EWX_LOGOFF | EWX_FORCEIFHUNG, 0);
-            island::LogAndPrint("  power: sign out -> %s (error %lu)\n", done ? "ok" : "FAILED",
-                                done ? 0UL : GetLastError());
-            return done != FALSE;
         }
         case PowerAction::Restart: {
             enableShutdownPrivilege();
@@ -5156,9 +5758,10 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
             }
             // ... and the Start card's own page, for the same reason: the card is behind a click on a
             // control this machine's scripting cannot press, so without this there is no way to photograph
-            // it. The value IS the page: 0 the pins, 1 the picker, 2 the power list.
+            // it. The value IS the page: 0 the pins, 1 the all-applications grid.
             if (GetEnvironmentVariableW(L"ISLANDBAR_START_PAGE", setting, 32) > 0) {
                 bar.startPageState = static_cast<int>(wcstol(setting, nullptr, 10));
+                if (bar.startPageState < 0 || bar.startPageState > 1) bar.startPageState = 0;
                 bar.startPageOpen = true;
                 bar.systemPanelOpen = true;
                 island::LogAndPrint("  diagnostic: the Start card is opened on page %d\n", bar.startPageState);
@@ -5306,6 +5909,35 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
         const DWORD diagnosticStart = GetTickCount();
         bool autoPanelOpened = false;
         bool autoPanelClosed = false;
+        bool autoSearchApplied = false;
+        wchar_t autoSearchText[64] = {};
+        const bool autoSearchRequested =
+            GetEnvironmentVariableW(L"ISLANDBAR_SEARCH_TEXT", autoSearchText, 64) > 0 &&
+            autoSearchText[0] != L'\0';
+
+        // ISLANDBAR_OPEN_SETTINGS=appearance opens the separate settings window once at startup.
+        // It exists for visual and lifecycle tests, because the production entry point is a click
+        // on the panel's Appearance tile and synthetic input cannot reliably reach that tile here.
+        {
+            wchar_t settingsStartup[32] = {};
+            if (GetEnvironmentVariableW(L"ISLANDBAR_OPEN_SETTINGS", settingsStartup, 32) > 0 &&
+                (_wcsicmp(settingsStartup, L"appearance") == 0 ||
+                 _wcsicmp(settingsStartup, L"general") == 0)) {
+                const island::SettingsPage startupPage =
+                    _wcsicmp(settingsStartup, L"general") == 0 ? island::SettingsPage::General
+                                                               : island::SettingsPage::Appearance;
+                island::SettingsRuntimeStatus status;
+                status.hidesNativeTaskbar = hideNativeTaskbar;
+                status.keepsNativeTray = keepNativeTray;
+                status.fullscreenSuppressed = bar.fullscreenAppInFront;
+                status.glassCaptureEnabled = island::CurrentTheme().lens;
+                status.autoStartEnabled = island::IsAutoStartEnabled();
+                status.shape = systems.window.Shape();
+                status.themeIndex = island::CurrentThemeIndex();
+                status.themeCount = island::ThemeCount();
+                systems.settingsWindow.Open(systems.window.Handle(), startupPage, status);
+            }
+        }
 
         // Marquee speed. Slow enough to read a Chinese lyric line.
         constexpr float kLyricScrollDipPerSec = 26.0f;
@@ -5401,6 +6033,8 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
             // bar that is not in its usual place.
             UpdateFullscreenStandDown(bar, systems, monitor, noFullscreen, kFullscreenCheckMs,
                                       barThicknessPx);
+            ApplySettingsWindowCommands(systems, haveDrawn);
+            SyncSettingsWindow(systems, bar, hideNativeTaskbar, keepNativeTray);
 
             // --- the resting state ---
             //
@@ -5419,6 +6053,10 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
             const bool musicResting = bar.activePresent;
             const island::IslandState resting =
                 musicResting ? island::IslandState::MusicStrip : island::IslandState::Collapsed;
+            systems.volume.SetPeakMeterActive(
+                volumeAvailable &&
+                island::AudioPeakMeterNeedsSampling(musicResting && bar.activePlaying,
+                                                    IsCallNotification(systems, active)));
 
             // Puts the panel away -- and puts the SHAPE away with it.
             //
@@ -5652,6 +6290,28 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                                  fallbackLine, lyricsScrolling, lyricLineAnimating, lyricLineChanged,
                                  musicWavePhase);
 
+            // The native EDIT host is a separate top-level window and does not always receive
+            // WM_KILLFOCUS when the user clicks the desktop. The card flags are therefore the source of
+            // truth: once the Start level is closed, its editor cannot outlive the card.
+            if (!bar.startPageOpen || !bar.systemPanelOpen) {
+                systems.window.EndStartSearch(true, false);
+            }
+            const bool searchResultsChanged = RefreshStartSearch(bar, systems);
+            ApplyStartSearchCommand(bar, systems, active, resting);
+            systems.startApps.DrainIconResults();
+            const bool startShownForIcons = bar.panelLevel == island::PanelLevel::Start;
+            const unsigned long long iconSourceRevision = systems.startApps.Revision();
+            if (startShownForIcons &&
+                (!bar.startIconLoading ||
+                 iconSourceRevision != bar.startIconSourceRevision)) {
+                systems.startApps.RequestMissingIcons();
+                bar.startIconLoading = true;
+                bar.startIconSourceRevision = iconSourceRevision;
+            } else if (!startShownForIcons && bar.startIconLoading) {
+                systems.startApps.StopIconLoading();
+                bar.startIconLoading = false;
+            }
+
             // Does the card's printed position need to change, did a reading behind the strip move, is one of
             // the meters due -- and with all of that together, does ANYTHING ask for a frame this pass? The
             // phase lives above RunBar; the four answers the counters below read come back by reference, and
@@ -5660,12 +6320,16 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
             bool weatherChanged = false;
             bool musicMeterDue = false;
             bool startHoverChanged = false;
+            bool startSearchChanged = searchResultsChanged;
+            bool startPowerChanged = false;
+            bool trayPageChanged = false;
             const bool needDraw = DecideNeedDraw(runtime, bar, systems, animating, clockChanged,
                                                  notificationChanged, musicChanged, lyricsScrolling,
                                                  lyricLineChanged, lyricLineAnimating, musicResting,
                                                  volumeAvailable, soundOutputStarted, haveDrawn,
                                                  progressChanged, weatherChanged, musicMeterDue,
-                                                 startHoverChanged);
+                                                 startHoverChanged, startSearchChanged, startPowerChanged,
+                                                 trayPageChanged);
             if (needDraw) {
                 // Which condition forced this redraw, counted per report interval.
                 //
@@ -5684,7 +6348,10 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                 if (progressChanged) ++runtime.whyProgress;
                 if (bar.statusStripAnimating || weatherChanged) ++runtime.whyStatusStrip;
                 if (startHoverChanged) ++runtime.whyStartHover;
+                if (startSearchChanged) ++runtime.whyStartSearch;
+                if (startPowerChanged) ++runtime.whyStartPower;
                 if (bar.startWashAnimating) ++runtime.whyStartWash;
+                if (trayPageChanged) ++runtime.whyTrayPage;
                 if (!haveDrawn) ++runtime.whyFirst;
 
                 haveDrawn = true;
@@ -5736,6 +6403,15 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                 // The Start card as the frame and the window see it. The phase lives above RunBar; the order
                 // against the card-owner latch below is unchanged.
                 FillStartCardFrame(frame, bar, systems, startPageShown, dt);
+                if (autoSearchRequested && !autoSearchApplied && bar.startPageOpen) {
+                    systems.window.BeginStartSearch();
+                    if (systems.window.StartSearchInputVisible()) {
+                        systems.window.SetStartSearchText(autoSearchText);
+                        autoSearchApplied = true;
+                        island::LogAndPrint(L"  diagnostic: Start search set to '%ls'\n",
+                                            autoSearchText);
+                    }
+                }
 
                 // Who owns the card, and which message it is showing. The phase lives above RunBar; the two
                 // things it carries between frames are BarRuntime's.
@@ -5783,6 +6459,9 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                                             ? island::IslandState::NoticeStrip
                                             : island::IslandState::Collapsed,
                                         systems.window.CurrentAnchor());
+                // The MATERIAL box, one radius taller for the notch (see BarMaterialBoxFor). Only the pill's
+                // own fill uses it; the layout keeps `restingPill` above, the visible box.
+                frame.restingMaterial = island::BarMaterialBoxFor(frame.restingPill, systems.window.Shape());
                 // ... and WHAT the bar shows at rest, which is what the pill's own line is chosen by
                 // (see FrameState::restingState). A card does not change this, which is the point.
                 frame.restingState = resting;
@@ -6203,6 +6882,7 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
     systems.volume.Stop();
     systems.playerWindow.Stop();
     systems.music.Stop();
+    systems.fileSearch.Stop();
 
     // Give the reserved strip back while the window still exists.
     //
@@ -6214,6 +6894,7 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
         systems.appBar.Release();
     }
 
+    systems.settingsWindow.Destroy();
     systems.window.Destroy();
 
     // Put the shell's taskbar back before exiting. This runs on every normal exit

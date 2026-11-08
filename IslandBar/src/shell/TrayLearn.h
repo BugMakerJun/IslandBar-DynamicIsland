@@ -33,6 +33,7 @@
 // =====================================================================
 #pragma once
 
+#include "domain/TrayLedger.h"
 #include "shell/TrayIcons.h"
 
 namespace island {
@@ -147,8 +148,14 @@ int HarvestLearnedCallbacks();
 // `exeLeaf` is lower case and without its directory -- the caller has it from the registry, and the ledger
 // has it from the process that owns the tray window. A guid identifies a registration on its own; a uid does
 // NOT (ChatGPT and RazerAppEngine both register uid 3 here), so a uid counts only with the executable's name.
+//
+// `registryTip` is the entry's InitialTooltip, and it is a second chance rather than a second rule: an entry
+// whose executable name is not the one that registered it (NVIDIA's nvcontainer.exe against
+// NVDisplay.Container.exe) is still the same icon, and the tooltip the shell was given is what says so (see
+// TrayLedger::FindByTip). `registrationOut` receives a COPY of the registration, because the ledger's own
+// storage can be reallocated by the learning worker between two calls.
 bool LiveTrayFind(const wchar_t* exeLeaf, unsigned uid, bool hasGuid, const unsigned char* guid,
-                  std::wstring* tipOut);
+                  const wchar_t* registryTip, TrayLiveRegistration* registrationOut);
 // How many registrations are held. Zero is the fallback: the card then draws what the registry holds, as it
 // did before this existed, rather than showing nothing at all.
 int LiveTrayCount();
@@ -157,6 +164,11 @@ int LiveTrayCount();
 // arrive, so a card that trusted it showed ONE cell for the seconds the pass takes and then filled up. Until
 // then the card draws the registry list, as it always did.
 bool LiveTraySeeded();
+// Whether the module is resident in the shell this bar talks to, as the last learning pass concluded. A
+// seeded ledger with this false is a SNAPSHOT: an application that registers after the pass would be missing
+// from it, so the card falls back to the registry list rather than drawing less than the tray (see
+// TrayIcons.cpp). A shell that was replaced clears it with the ledger.
+bool LiveTrayObserverResident();
 // Registrations refused past the ledger's ceiling, so an application that re-registers in a loop shows up.
 int LiveTrayRefused();
 // The shell process was replaced, so nothing it held is registered in the new one.

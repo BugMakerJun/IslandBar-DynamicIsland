@@ -1,0 +1,100 @@
+IslandBar Start search and icon review request
+Date: 2026-11-08
+
+User report
+-----------
+"The search box is ugly, it cannot search globally, and the icons look ugly."
+The screenshot shows the Start card's search field as a double rounded capsule: a D2D outer
+field plus a dark native EDIT child inside it. Some pinned applications show their real
+icons, while several show generic/blank icons.
+
+Current implementation
+----------------------
+1. Search scope
+   - The only source is shell:AppsFolder, read into StartApps.
+   - Search only compares the query with each application's display name.
+   - StartSearchScore supports case-insensitive exact/prefix/substring matches and no
+     aliases, pinyin, settings, files, recent items, or shell results.
+   - Therefore it is an installed-application filter, not a Windows-wide search.
+
+2. Search field
+   - D2D draws the outer 44 DIP rounded field.
+   - BeginStartSearch creates a topmost WS_POPUP host over the field and a child EDIT
+     control inside it. The EDIT host uses an opaque RGB(23,26,35) brush, its own rounded
+     window region, and default EDIT painting.
+   - The visible result is a second dark inset capsule, doubled borders, and styling that
+     cannot follow the light glass card material.
+   - The native EDIT is still valuable for IME, clipboard, selection, and accessibility.
+
+3. Icons
+   - StartApps::ResolveListIconsAsync and ResolveIconAsync create detached std::threads.
+   - Those threads call SHCreateItemFromParsingName and IShellItemImageFactory but do not
+     call CoInitializeEx/CoUninitialize.
+   - LoadPins starts one detached thread per pinned app; RefreshList starts another thread.
+   - StartAppIconPng requests a 64x64 image with SIIGBF_ICONONLY, then reads the HBITMAP
+     through GetDIBits and encodes it as PNG.
+   - There is no explicit non-generic target/icon path fallback and no named placeholder
+     when extraction fails.
+
+Proposed direction
+------------------
+A. Search field
+   - Keep one native edit window for IME/accessibility but make its background a color-key
+     transparent layered window over the D2D field, so only text and selection are native.
+   - Draw exactly ONE rounded surface in D2D, using the active card material, with a
+     custom vector magnifier, clear button, subtle focus treatment, and correct light/dark
+     ink.
+   - Keep the edit's geometry tied to the same layout result the renderer uses.
+
+B. Global results
+   - Proposed local-only scopes: installed apps, Windows Settings pages, and indexed files.
+     Do not include web results in v1.
+   - Debounce input ~200 ms, run queries off the UI thread, cancel/supersede older queries,
+     and discard stale results by sequence number.
+   - Show grouped result rows rather than forcing every result into the pinned-app grid:
+     Applications / Settings / Files, each with icon, name, and a secondary path/type.
+   - Enter launches the first result; Arrow keys move selection; Escape restores pins.
+
+C. Icons
+   - Replace detached threads with one owned icon worker using a proper COM apartment,
+     stop event, queue, cancellation, and shutdown join.
+   - Request 64-96 px icon resources and downscale with high-quality interpolation.
+   - If shell image extraction fails, resolve the executable or icon resource path and try
+     SHGetFileInfo/ExtractIconEx before declaring failure.
+   - Never draw an empty slot: use a deterministic monogram tile until an icon arrives.
+   - Cache completed icons by target and revision; cap the cache.
+
+D. Architecture sketch
+   - domain: SearchQuery parsing, ranking, ResultKind, pure selection logic.
+   - services: global search worker and Windows Search/index provider.
+   - shell: AppsFolder provider and Shell icon acquisition.
+   - app: debounce/cancellation orchestration and result commands.
+   - render: one shared layout/hit-test model, search field, grouped result rows, icons.
+
+Questions
+---------
+1. Is Windows Search OLE DB the correct local file provider here, or is there a better
+   supported Shell API that preserves the single-EXE / no-runtime constraints?
+2. Should v1 include Settings search? Which exact result sources should be in or out?
+3. Is the layered native EDIT color-key design acceptable on Windows 11, or is another
+   IME-safe approach preferable? State one recommendation.
+4. What is the safest icon fallback chain for Win32 shortcuts, shell folders, and packaged
+   MSIX/AUMID applications?
+5. Give the smallest milestone that visibly fixes all three complaints without introducing
+   a second application framework or a resident search daemon.
+6. Supply one numeric acceptance target and one log line for:
+   - field visual correctness;
+   - global search latency/staleness;
+   - icon completeness and quality;
+   - idle CPU/memory after the search closes.
+7. Identify anything above that should be removed as scope creep or as a fake/unreliable
+   feature.
+
+Hard constraints
+----------------
+- Native C++20, Win32, Direct2D/DirectWrite, existing architecture layers.
+- No third-party UI framework or runtime.
+- Debug and Release zero warnings under /WX.
+- --self-test and island_smoke must pass.
+- No resident search daemon when the card is closed.
+- No network search or upload of query text in v1.

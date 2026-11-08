@@ -40,6 +40,7 @@
 #include "domain/TrayLedger.h"     // which registrations the shell is holding (see the tray checks)
 #include "platform/TrayRing.h"     // the channel the module publishes registrations on
 #include "domain/CardLayout.h"
+#include "domain/SettingsLayout.h"
 #include "domain/StatePolicy.h"
 #include "domain/TrayEncoding.h"   // the only place a tray click is encoded (see its header)
 #include "media/Lyrics.h"
@@ -58,6 +59,7 @@
 #include "app/IslandWindow.h"
 #include "platform/Monitor.h"
 #include "platform/NativeTaskbar.h"   // the three answers to "what happens to the shell's taskbar"
+#include "platform/AutoStart.h"
 #include "shell/SystemToggles.h"
 #include "render/Theme.h"
 #include "render/GlassMaterial.h"
@@ -242,6 +244,39 @@ int RunSelfTest() {
               L"a guid identifies a registration on its own");
         Check(ledger.Find(nullptr, 0, true, otherGuid) == nullptr, L"... and another guid is not it");
 
+        // THE MATCH THE EXECUTABLE ALONE CANNOT MAKE (2026-11-06). NVIDIA stores one icon under two registry
+        // entries -- nvcontainer.exe and NVDisplay.Container.exe -- because the registry names the installer's
+        // path while the shell names the process that registered. The tooltip the application sent is what
+        // links the second entry to the one registration the shell holds; the executable name cannot.
+        ledger.Apply(island::kTrayCopyAdd, 104, 0x2005, 1051, false, nullptr, L"NVIDIA 设置",
+                     L"nvdisplay.container.exe");
+        Check(ledger.Find(L"nvcontainer.exe", 1051, false, nullptr) == nullptr,
+              L"a registry entry whose executable is not the one that registered it does not match by name");
+        const island::TrayLiveRegistration* nvidia = ledger.FindByTip(1051, L"nvidia 设置");
+        Check(nvidia != nullptr && std::wcscmp(nvidia->exe, L"nvdisplay.container.exe") == 0,
+              L"... but the tooltip the application sent matches it, case-insensitively");
+        Check(ledger.FindByTip(1051, L"") == nullptr && ledger.FindByTip(3, L"NVIDIA 设置") == nullptr,
+              L"an empty tooltip, or another application's uid, is not a match");
+        if (nvidia) {
+            const island::TrayLiveRegistration firstLookup = *nvidia;
+            const island::TrayLiveRegistration* secondLookup = ledger.FindByTip(1051, L"NVIDIA 设置");
+            Check(secondLookup && island::SameTrayIcon(firstLookup, *secondLookup),
+                  L"two entries naming one registration are one icon, so they draw one cell");
+            const island::TrayLiveRegistration* chatgpt = ledger.Find(L"chatgpt.exe", 3, false, nullptr);
+            Check(chatgpt && !island::SameTrayIcon(*chatgpt, *secondLookup),
+                  L"... while two registrations of different windows are two icons");
+        }
+        ledger.ForgetWindow(0x2005);
+
+        // Only the FIRST LINE is compared: a registration carries live text (Task Manager sends four lines),
+        // and the registry holds a one-line label. Comparing the whole string would never match either.
+        ledger.Apply(island::kTrayCopyAdd, 105, 0x2006, 1060, false, nullptr,
+                     L"Clash Verge 2.5.8\n规则 12", L"clash-verge.exe");
+        Check(ledger.FindByTip(1060, L"clash verge 2.5.8") != nullptr &&
+                  ledger.FindByTip(1060, L"规则 12") == nullptr,
+              L"only the first line of a tooltip is compared");
+        ledger.ForgetWindow(0x2006);
+
         ledger.Apply(island::kTrayCopyDelete, 101, 0x2002, 3, false, nullptr, L"", L"");
         Check(ledger.Count() == 2 && ledger.Find(L"razerappengine.exe", 3, false, nullptr) == nullptr,
               L"a DELETE takes away exactly the registration it names");
@@ -264,6 +299,68 @@ int RunSelfTest() {
 
         ledger.Reset();
         Check(ledger.Count() == 0 && ledger.Refused() == 0, L"a replaced shell starts from nothing");
+    }
+
+    // --- the bar's own shapes, and its settings page (2026-11-06) ---
+    //
+    // Two pure pieces that the user sees directly: the collapsed SHAPE (capsule or notch) and the chips of
+    // the page that switches it. Both are functions, so both are asserted here rather than photographed.
+    Section(L"bar shape and settings");
+    {
+        island::BarShape shape = island::BarShape::Capsule;
+        Check(island::BarShapeFromText("notch", &shape) && shape == island::BarShape::Notch,
+              L"the settings file's 'notch' names the notch shape");
+        Check(island::BarShapeFromText("CAPSULE", &shape) && shape == island::BarShape::Capsule,
+              L"... and 'capsule' the capsule, whatever its case");
+        island::BarShape refused = island::BarShape::Capsule;
+        Check(!island::BarShapeFromText("nottch", &refused) && refused == island::BarShape::Capsule,
+              L"... and anything else is refused rather than taken as the default");
+        Check(island::BarShapeTopMarginDip(island::BarShape::Capsule) == island::kPillTopMarginDip &&
+                  island::BarShapeTopMarginDip(island::BarShape::Notch) == 0.0f,
+              L"the capsule keeps the margin and the notch is flush with the screen's edge");
+        const island::RoundedBox visible =
+            island::IslandBoxFor(1440.0f, 220.0f, 36.0f, island::BarShape::Notch);
+        const island::RoundedBox material = island::BarMaterialBoxFor(visible, island::BarShape::Notch);
+        Check(visible.rect.top == 0.0f && material.rect.top == -18.0f &&
+                  material.rect.bottom == visible.rect.bottom,
+              L"the notch's material starts one radius above the screen, which cuts its top corners");
+
+        const island::SettingsLayout settings =
+            island::SettingsLayoutFor(760.0f, 560.0f, 4);
+        const auto settingsHit = [&settings](const island::RectF& r) {
+            return island::SettingsHitAt(settings, island::SettingsPage::Appearance,
+                                         (r.left + r.right) * 0.5f,
+                                         (r.top + r.bottom) * 0.5f);
+        };
+        Check(settingsHit(settings.closeButton).kind == island::SettingsHitKind::Close &&
+                  settingsHit(settings.navigation[1]).kind == island::SettingsHitKind::Navigation &&
+                  settingsHit(settings.navigation[1]).index == 1 &&
+                  settingsHit(settings.shapeCapsule).kind == island::SettingsHitKind::ShapeCapsule &&
+                  settingsHit(settings.shapeNotch).kind == island::SettingsHitKind::ShapeNotch &&
+                  settingsHit(settings.themeButtons[2]).kind == island::SettingsHitKind::Theme &&
+                  settingsHit(settings.themeButtons[2]).index == 2,
+              L"every separate-settings control answers where it is drawn");
+        Check(island::SettingsHitAt(settings, island::SettingsPage::Appearance, 190.0f, 550.0f).kind ==
+                  island::SettingsHitKind::None,
+              L"... and empty space in the separate settings window answers nothing");
+        const auto generalHit = [&settings](const island::RectF& r) {
+            return island::SettingsHitAt(settings, island::SettingsPage::General,
+                                         (r.left + r.right) * 0.5f,
+                                         (r.top + r.bottom) * 0.5f);
+        };
+        Check(generalHit(settings.autoStartRow).kind ==
+                      island::SettingsHitKind::ToggleAutoStart &&
+                  generalHit(settings.quitRow).kind == island::SettingsHitKind::Quit,
+              L"the General page exposes real auto-start and full-exit controls");
+        const std::wstring autoStartCommand =
+            island::AutoStartCommandFor(L"C:\\Program Files\\IslandBar\\island_bar.exe");
+        Check(autoStartCommand ==
+                      L"\"C:\\Program Files\\IslandBar\\island_bar.exe\"" &&
+                  island::AutoStartCommandMatches(
+                      autoStartCommand, L"C:\\Program Files\\IslandBar\\island_bar.exe") &&
+                  !island::AutoStartCommandMatches(
+                      autoStartCommand, L"C:\\Elsewhere\\island_bar.exe"),
+              L"the startup command quotes the executable path and matches only this build");
     }
 
     {

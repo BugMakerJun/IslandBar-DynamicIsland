@@ -343,15 +343,57 @@ bool Renderer::Initialize(HWND hwnd, UINT widthPx, UINT heightPx, float scale) {
 }
 
 bool Renderer::TakeLensFrame() {
-    if (!lensActive_ || !capture_.HasNewFrame()) return false;
+    if (!lensActive_ || !CurrentTheme().lens || backdropSuspended_) return false;
+    if (lensRestartPending_) {
+        lensRestartPending_ = false;
+        return true;
+    }
+    if (!capture_.HasNewFrame()) return false;
     const ULONGLONG now = GetTickCount64();
     if (now < lensNextAt_) return false;
     lensNextAt_ = now + 80;
     return true;
 }
 
+void Renderer::OnThemeChanged() {
+    if (CurrentTheme().lens && !lensActive_ && d2dDevice_) {
+        lensActive_ = lens_.Initialize(d2dDevice_);
+    }
+    const bool wanted = lensActive_ && CurrentTheme().lens && !backdropSuspended_;
+    if (!wanted) {
+        capture_.Stop();
+        lensWindow_ = nullptr;
+        lensRetryAt_ = 0;
+        lensProbeAt_ = 0;
+        lensRestartPending_ = false;
+        return;
+    }
+    lensProbeAt_ = 0;
+    lensNextAt_ = 0;
+    lensRestartPending_ = true;
+}
+
+void Renderer::SetBackdropSuspended(bool suspended) {
+    if (backdropSuspended_ == suspended) return;
+    backdropSuspended_ = suspended;
+    ink_.SetPaused(suspended);
+    if (suspended) {
+        capture_.Stop();
+        lensWindow_ = nullptr;
+        lensRetryAt_ = 0;
+        lensProbeAt_ = 0;
+        lensRestartPending_ = false;
+    } else if (lensActive_) {
+        // One frame is needed to discover the window behind and start a fresh capture. TakeLensFrame asks
+        // for that frame once; the capture itself starts during the draw.
+        lensProbeAt_ = 0;
+        lensNextAt_ = 0;
+        lensRestartPending_ = true;
+    }
+}
+
 void Renderer::UpdateLensCapture(POINT at, POINT probe) {
-    if (!lensActive_ || !window_) return;
+    if (!lensActive_ || !CurrentTheme().lens || backdropSuspended_ || !window_) return;
     const ULONGLONG now = GetTickCount64();
     const bool lost = lensWindow_ && (!IsWindow(lensWindow_) || capture_.SizeChanged());
     // WALKING THE Z ORDER EVERY FRAME IS WASTED: which window is under the bar changes on a human
@@ -473,7 +515,7 @@ void Renderer::DrawDecks(const RoundedBox& island, const FrameState& frame) {
     // Whether a card is up OR ON ITS WAY, taken from the motion so it holds for the whole of both the
     // opening and the closing animation. See FrameState::outerCardUp.
     const float cardLeftDip = frame.outerCardUp ? frame.cardLeftDip : 0.0f;
-    const float cardWidthDip = frame.outerCardUp ? kExpandedWidthDip : 0.0f;
+    const float cardWidthDip = frame.outerCardUp ? frame.cardSize.widthDip : 0.0f;
 
     // THE ROW STARTS AFTER THE TRAY BUTTON, which stands immediately to the right of the island. Told to
     // the row as one moved edge rather than as a parameter through every one of its functions -- see
@@ -645,9 +687,17 @@ void Renderer::RenderFrame(const FrameState& frame) {
         // RowAnchorBox is the same rule the icon row, the deck, the region and the hit tests already use: a
         // shape wider than the pill and shorter than a card is the strip; the card and the full-screen bar are
         // excluded, so the dark band cannot come back.
+        // THE FILL'S OWN BOX, and the material one only when the caller supplied it: the self-test builds
+        // frames by hand from `restingPill' alone, and reading an empty `restingMaterial' there painted the
+        // pill from the ANIMATED box -- which is how three lyric assertions started failing the day the
+        // settings page landed.
+        const RoundedBox& fillPill =
+            (frame.restingMaterial.rect.right > frame.restingMaterial.rect.left)
+                ? frame.restingMaterial
+                : frame.restingPill;
         const RoundedBox& pillBox =
-            (frame.restingPill.rect.right > frame.restingPill.rect.left)
-                ? island::RowAnchorBox(pill.box, frame.restingPill)
+            (fillPill.rect.right > fillPill.rect.left)
+                ? island::RowAnchorBox(pill.box, fillPill)
                 : pill.box;
 
         // `box` is the ANIMATED shape for everything that is not the pill's own fill: the content, the
@@ -808,7 +858,7 @@ void Renderer::RenderFrame(const FrameState& frame) {
             }
         }
 
-        if (lensActive_ && !stripOnScreen) {
+        if (lensActive_ && CurrentTheme().lens && !stripOnScreen) {
             // A size change re-warps the LAST captured frame: the window behind did not change, so WGC
             // sends nothing new, and re-opening the session would hand back a blank first frame.
             const int pillW = static_cast<int>(std::lround((rounded.rect.right - rounded.rect.left) * scale_));
@@ -1165,9 +1215,8 @@ void Renderer::RenderFrame(const FrameState& frame) {
             // box is the single change that moves all three.
             RoundedBox card = box;
             if (frame.cardLeftDip > 0.0f) {
-                const float cardWidth = card.rect.right - card.rect.left;
                 card.rect.left = frame.cardLeftDip;
-                card.rect.right = frame.cardLeftDip + cardWidth;
+                card.rect.right = frame.cardLeftDip + frame.cardSize.widthDip;
             }
 
             // Where a card's CONTENT is composed, when that differs from where the card itself is.
@@ -1176,12 +1225,13 @@ void Renderer::RenderFrame(const FrameState& frame) {
             // laid out at their final size while their card grows. Everything else -- the music card
             // included -- composes into `card` itself, so this starts as a copy of it.
             RoundedBox panelCard = card;
+            const float cardFaceHeight = frame.cardSize.heightDip;
 
             // How tall the VISIBLE part of an outer card is, 0 when none of it is showing.
             //
             // Declared out here because the panel's draw has to skip itself at zero; see the assignment
             // in the outer-card block and OuterCardRevealDip in Motion.h.
-            float outerCardReveal = island::kExpandedHeightDip;
+            float outerCardReveal = cardFaceHeight;
 
             // The OUTER cards hang BELOW the bar rather than growing out of it.
             //
@@ -1226,7 +1276,8 @@ void Renderer::RenderFrame(const FrameState& frame) {
                 // The panel is uncovered in proportion to how far the box has grown PAST the pill, which
                 // is what makes it fully hidden at the near end instead of leaving a 36 DIP band of tile
                 // tops under the bar for the whole of the retraction's slow tail.
-                outerCardReveal = island::OuterCardRevealDip(animatedHeight);
+                outerCardReveal =
+                    island::CardRevealDipForHeight(animatedHeight, cardFaceHeight);
 
                 // The card's own rectangle: full width, top at its resting place, and as tall as what is
                 // REVEALED of it -- not as tall as the box.
@@ -1244,10 +1295,10 @@ void Renderer::RenderFrame(const FrameState& frame) {
                 // from behind the bar.
                 panelCard = card;
                 panelCard.rect.top = cardTop;
-                panelCard.rect.bottom = cardTop + island::kExpandedHeightDip;
+                panelCard.rect.bottom = cardTop + cardFaceHeight;
                 if (frame.cardLeftDip > 0.0f) {
                     panelCard.rect.left = frame.cardLeftDip;
-                    panelCard.rect.right = frame.cardLeftDip + island::kExpandedWidthDip;
+                    panelCard.rect.right = frame.cardLeftDip + frame.cardSize.widthDip;
                 }
             }
 
@@ -1334,7 +1385,7 @@ void Renderer::RenderFrame(const FrameState& frame) {
                     // Scoped to the clip rather than written onto `card` itself, so that the rectangle the
                     // CONTENT is composed in can stay at its final size while this one grows.
                     const float clipRight = (frame.cardLeftDip > 0.0f)
-                                                ? frame.cardLeftDip + island::kExpandedWidthDip
+                                                ? frame.cardLeftDip + frame.cardSize.widthDip
                                                 : card.rect.right;
                     // The BOTTOM edge is the reveal, not the box height: the box is 36 DIP taller than the
                     // panel can be revealed by, so using it left the band of tile tops described in
@@ -1360,7 +1411,7 @@ void Renderer::RenderFrame(const FrameState& frame) {
                     // tiles, the 声音输出 page the output-device button opens, or the tray page the tray
                     // button at the other end of the bar opens. Same card, same place, same animation.
                     if (frame.trayPageOpen) {
-                        text_->DrawTrayPage(d2dContext_, panelCard, frame.trayPageTitle,
+                        text_->DrawTrayPage(d2dContext_, panelCard, frame.trayPage,
                                             frame.trayIcons, frame.trayIconCount, frame.trayRevision,
                                             frame.cardOpacity, frame.trayHoveredIndex,
                                             frame.cardSurfaceMoving);

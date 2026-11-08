@@ -180,13 +180,22 @@ public:
                                     float cardLeftDip = 0.0f, bool fullscreenApp = false,
                                     int trayIconCount = 0,
                                     const RoundedBox& currentShape = RoundedBox{},
-                                    bool noticeStripUp = false);
+                                    bool noticeStripUp = false,
+                                    BarShape barShape = BarShape::Capsule,
+                                    float cardHeightDip = kExpandedHeightDip,
+                                    float cardWidthDip = kExpandedWidthDip);
 
     // Whether a call or a message is being announced. The window cannot work this out for itself: while a
     // card is open the state is Expanded, and a notice is not a state -- it is something the bar is SAYING.
     // Set once per frame by the frame loop, and read only to choose the box the bar's own controls are laid
     // out from (see the note in ShouldAcceptPointer).
     void SetNoticeStripUp(bool up) { noticeStripUp_ = up; }
+
+    // WHICH OF THE TWO COLLAPSED SHAPES THE BAR IS IN (see domain/BarShape.h). Set once at startup from
+    // bar.txt and again when the settings card switches it; the anchor carries it from there, so the pill,
+    // the region, the deck, the row and every hit test move together.
+    void SetBarShape(BarShape shape);
+    BarShape Shape() const { return shape_; }
 
     // Told by the frame loop, which measures it (see island::FullScreenAppInFront). The hit test is
     // answered here, so it has to be told the same thing the renderer was.
@@ -197,6 +206,8 @@ public:
     // is told rather than found out -- the same arrangement as the application icon count.
     void SetTrayIconCount(int count);
     int  TrayIconCount() const { return trayIconCount_; }
+    void SetTrayPageOpen(bool open);
+    bool TrayPageOpen() const { return trayPageOpen_; }
     bool TrayButtonHovered() const { return trayButtonHovered_; }
     // Whether a screen point is on the tray button. The frame loop's click handler asks this, because the
     // button is a control and the click has to land on the same rectangle that is drawn.
@@ -205,6 +216,8 @@ public:
     // only place that knows where the pointer is; the geometry comes from TrayPageFor, so the hit test and
     // the drawing agree.
     int  TrayCellHovered() const { return trayCellHovered_; }
+    bool TrayTaskManagerAtScreen(POINT screenPoint) const;
+    bool TrayTaskManagerHovered() const { return trayTaskManagerHovered_; }
 
     // The tray's own context menu, when one is up (see TrayMenuFor in CardLayout.h): the rows it was
     // opened with, in card-local DIP, told to the window by the frame loop -- the same arrangement as the
@@ -227,7 +240,21 @@ public:
     // the picker's scroll offset are TOLD to the window, the way the tray's count is: the window owns no
     // application list, but it is the only place that knows where the pointer is -- and a hit test against
     // geometry the drawing did not use is the defect this project has paid for more often than any other.
-    enum class StartHitTarget { None, Pin, PickerRow, PowerRow, PowerButton, EmptyGrid, AllApps };
+    //
+    // The values are APPENDED, never reordered: the frame loop and the self-test compare them as ints.
+    enum class StartHitTarget {
+        None,
+        Search,
+        Pin,
+        PickerRow,
+        PowerButton,
+        EmptyGrid,
+        AllApps,
+        PinnedTab,   // the 已固定常用 tab
+        AddTile,     // the dashed "+ 添加快捷键" tile at the end of the pins
+        Chrome,      // the card's own body: not a control, but presses here must not reach the panel below
+        ClearSearch,
+    };
     struct StartHit {
         StartHitTarget target = StartHitTarget::None;
         int index = -1;
@@ -235,12 +262,24 @@ public:
 
     // `pageOpen` false means the Start card is not the level that is up, and every hit test answers None.
     void SetStartState(bool pageOpen, int page, int pinCount, int listCount, int pickerScrollRow,
-                       bool allAppsMode);
+                       bool searchActive = false,
+                       const SearchResultKind* resultKinds = nullptr, int resultCount = 0);
     // Moves the picker's first visible row by `notches` and CLAMPS it, which is the window's job for the
     // same reason the sound page's scroll is: it is the one that knows the card's geometry, so the offset
     // the frame loop reads back cannot leave the list.
     void ScrollStartPicker(int notches);
     int  StartPickerScroll() const { return startPickerScroll_; }
+    // The Start search uses an owned native edit window for reliable keyboard input and IME while the
+    // main bar itself remains WS_EX_NOACTIVATE.
+    void BeginStartSearch();
+    void EndStartSearch(bool clearText, bool restoreForeground);
+    void SetStartSearchText(const wchar_t* text);
+    const wchar_t* StartSearchText() const { return startSearchText_; }
+    bool StartSearchInputVisible() const { return startSearchVisible_; }
+    unsigned long long StartSearchRevision() const { return startSearchRevision_; }
+    bool TakeStartSearchEnter();
+    bool TakeStartSearchCancel();
+    int  TakeStartSearchNavigation();
     StartHit StartHitAtScreen(POINT screenPoint) const;
     StartHit StartHitHovered() const { return startHit_; }
 
@@ -335,7 +374,13 @@ public:
     //
     // Measured without it: hovering the MEDIA card's cover reported a hand, because a panel TILE was behind
     // that point.
-    void SetCardOwner(CardOwner owner) { cardOwner_ = owner; }
+    void SetCardOwner(CardOwner owner, CardFaceSize size) {
+        cardOwner_ = owner;
+        cardWidthDip_ = size.widthDip;
+        cardHeightDip_ = size.heightDip;
+    }
+
+    CardFaceSize CardSize() const { return {cardWidthDip_, cardHeightDip_}; }
 
     // True when a screen point is over a CONTROL rather than over the bar's own surface.
     //
@@ -400,10 +445,16 @@ public:
                                const RoundedBox& current = RoundedBox{},
                                float cardLeftDip = 0.0f, int taskIconCount = -1,
                                float statusStripWidthDip = 0.0f, int trayIconCount = 0,
-                               bool noticeStripUp = false);
+                               bool noticeStripUp = false,
+                               float cardHeightDip = kExpandedHeightDip,
+                               float cardWidthDip = kExpandedWidthDip);
 
     // The anchor the current box geometry is derived from.
     IslandAnchor CurrentAnchor() const;
+
+    // The placed card in this window's current geometry. Every card hit test asks this one function, so a
+    // narrower compact face cannot be correct in one control and stale in another.
+    RoundedBox PlacedCard() const;
 
     // The thickness of the band the shell's own taskbar keeps at the top of the screen, in DIPs --
     // the height of the full-screen state, and therefore of the region that has to cover it. Measured
@@ -436,6 +487,9 @@ public:
     // The tiles currently shown, and where the card is placed. Both are set by the frame loop, which is
     // the only place that knows the machine's state and the pressed control.
     void SetSystemPanel(const TextRenderer::SystemPanelText& panel, float cardLeftDip);
+    // Where the card's left edge is this frame, for the hit tests that have to be asked from outside the
+    // frame loop (the settings page's chips, which are a level of the same card). Zero means no card.
+    float CardLeftDip() const { return cardLeftDip_; }
 
     // Whether the status strip is up, told to the window so the input region can cover it.
     //
@@ -473,11 +527,10 @@ public:
     float SoundPageScroll() const { return soundScroll_; }
     void SetSoundPageScroll(float scroll);
 
-    // A wheel notch over the card, if the page is up, as a signed number of steps (one notch is 1, up is
-    // positive). REPORTED rather than applied: the frame loop owns the offset, and a window that scrolled
-    // itself would be a second owner of the same value -- which is exactly how the first version of this
-    // dropped every wheel event, because the frame loop then wrote its own offset back over the window's.
-    bool TakeSoundWheel(int* notches);
+    // Wheel notches over whichever card level accepts them -- the tiles pager, sound output page or Start
+    // picker -- as a signed count (one notch is 1, up is positive). REPORTED rather than applied: the
+    // frame loop owns page indexes and scroll offsets, and one owner is what keeps hit geometry in step.
+    bool TakeCardWheel(int* notches);
 
     // Where a press on the scrollbar's track wants the page to go: -1 for a screenful towards the top, +1
     // towards the bottom, 0 for the thumb itself (which is dragged rather than jumped).
@@ -507,6 +560,11 @@ public:
 private:
     static LRESULT CALLBACK WndProcThunk(HWND, UINT, WPARAM, LPARAM);
     LRESULT WndProc(UINT message, WPARAM wParam, LPARAM lParam);
+    static LRESULT CALLBACK SearchHostProcThunk(HWND, UINT, WPARAM, LPARAM);
+    LRESULT SearchHostProc(HWND, UINT, WPARAM, LPARAM);
+    static LRESULT CALLBACK SearchEditProcThunk(HWND, UINT, WPARAM, LPARAM);
+    void OnStartSearchChanged();
+    void OnStartSearchLostFocus();
 
     // Recomputes the pill's anchor from the current monitor and window rect.
     void Layout();
@@ -520,6 +578,9 @@ private:
 
     Motion       motion_{};
     IslandAnchor anchor_{};
+    // The collapsed shape the bar is in (see SetBarShape). Create() lays the anchor out from it, so it has
+    // to be known before the window exists; switching it later re-lays out the anchor.
+    BarShape shape_ = BarShape::Capsule;
 
     bool  pointerInside_ = false;
     POINT lastPointer_{};
@@ -569,12 +630,12 @@ private:
     float soundScroll_ = 0.0f;
     bool  soundPageOpen_ = false;
     // Wheel notches seen over the card, waiting to be taken by the frame loop. Positive is up.
-    int   soundWheelNotches_ = 0;
+    int   cardWheelNotches_ = 0;
     // The wheel's raw delta that has not yet added up to a notch. A precision touchpad, and a wheel that
     // reports its motion in fractions of a notch, send deltas smaller than WHEEL_DELTA -- and an integer
     // division by WHEEL_DELTA throws every one of those away, so the list stood still under a hand that
     // was clearly scrolling. Kept here, with the notches, because the two are the same sentence.
-    int   soundWheelRemainder_ = 0;
+    int   cardWheelRemainder_ = 0;
     // Where the frame loop placed the card's LEFT edge, or 0 when no card is up. Named for the card and
     // not for the panel: every one of the three cards is placed the same way, and the name it had before
     // ("the system panel's card left") is part of why the music card's controls were hit-tested against
@@ -590,8 +651,10 @@ private:
     bool fullscreenApp_ = false;
     // The tray, for the same reason: how many icons are on the bar, and which one the pointer is on.
     int trayIconCount_ = 0;
+    bool trayPageOpen_ = false;
     bool trayButtonHovered_ = false;
     int trayCellHovered_ = -1;
+    bool trayTaskManagerHovered_ = false;
     // The tray's own menu: whether it is up, the rows it was opened with, and the row under the pointer.
     bool trayMenuOpen_ = false;
     island::TrayMenuLayout trayMenuLayout_ = {};
@@ -604,9 +667,23 @@ private:
     int  startPinCount_ = 0;
     int  startListCount_ = 0;
     int  startPickerScroll_ = 0;
+    bool startSearchActive_ = false;
+    SearchResultKind startSearchKinds_[kStartSearchMaxResults] = {};
+    int startSearchKindsCount_ = 0;
     // True while the picker is the 全部 grid: its rows are the 6-column cells, and the scroll is in grid
     // rows, so the hit test and the wheel's clamp must ask the same question the drawing did.
-    bool startAllApps_ = false;
+    HWND startSearchHost_ = nullptr;
+    HWND startSearchEdit_ = nullptr;
+    WNDPROC startSearchEditProc_ = nullptr;
+    HBRUSH startSearchBrush_ = nullptr;
+    HFONT startSearchFont_ = nullptr;
+    HWND startSearchPreviousForeground_ = nullptr;
+    wchar_t startSearchText_[64] = {};
+    bool startSearchVisible_ = false;
+    bool startSearchEnter_ = false;
+    bool startSearchCancel_ = false;
+    int startSearchNavigation_ = 0;
+    unsigned long long startSearchRevision_ = 1;
     StartHit startHit_ = {};
     // The last hit reported to the log, so the card's hover trace reports changes rather than every poll.
     // A separate pair from the icon row's: the two answers are about different things and one moving must
@@ -615,6 +692,8 @@ private:
     int  lastReportedStartIndex_ = -2;
     // Which card the frame loop says is up: what the cursor's hit tests are gated on. See SetCardOwner.
     CardOwner cardOwner_ = CardOwner::None;
+    float cardWidthDip_ = kExpandedWidthDip;
+    float cardHeightDip_ = kExpandedHeightDip;
     // The last value written to the log, so the hover trace reports changes rather than every poll.
     int   lastReportedHovered_ = -2;
 
