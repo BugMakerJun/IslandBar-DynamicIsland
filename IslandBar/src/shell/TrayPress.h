@@ -25,13 +25,13 @@
 //  instead of doing something to the user's pointer: `NoEntry`. The card answers such a cell with its OWN
 //  menu, which is where the "open it for me" actions live.
 //
-//  WHAT IS GONE, and may not come back without a measurement that says the messages cannot work:
+//  WHAT IS GONE BY DEFAULT, and may not come back without a measurement that says the messages cannot work:
 //
 //    * the real click: `SetCursorPos`, `SendInput`, the shell's overflow panel being made hit-testable for a
 //      moment, and the alpha-1 reveal that went with it;
-//    * the whole UI Automation route: `Shell_NotifyIconGetRect`, `IUIAutomationElement`, `Invoke`, the
-//      `TrayStage` state machine that made the shell's taskbar exist-but-invisible for the length of a press,
-//      and the watchdog that put it back afterwards;
+//    * the automatic UI Automation fallback: it can press otherwise unreachable icons, but it has to reveal
+//      the native taskbar for the length of the lookup. That flash is worse than the missing action for the
+//      default experience, so it is now an explicit opt-in (`ISLANDBAR_TRAY_UIA=1`);
 //    * `ISLANDBAR_TRAY_PRESS_VISIBLE` and `ISLANDBAR_TRAY_NO_CLICK`, the two switches that existed to look at
 //      the old route.
 // =====================================================================
@@ -101,5 +101,11 @@ bool TrayPressReachable(const TrayPressRequest& request);
 bool TrayRightClickExhausted(const TrayPressRequest& request);
 
 const wchar_t* TrayPressResultName(TrayPressResult result);
+
+// The one decision that keeps an unlearned icon from flashing the native taskbar by default. Pure, so the
+// right/left and enabled/disabled combinations are asserted without touching the machine.
+inline bool ShouldTryTrayUiaFallback(TrayPressResult result, bool rightClick, bool enabled) {
+    return enabled && !rightClick && result == TrayPressResult::NoEntry;
+}
 
 } // namespace island

@@ -20,6 +20,7 @@ void TestClock();
 void TestMiniJson();
 void TestNotifications();
 void TestCardLayout();
+void TestScrollTiling();
 void TestIslandSurface();
 void TestImageCodec();
 void TestAccentColour();

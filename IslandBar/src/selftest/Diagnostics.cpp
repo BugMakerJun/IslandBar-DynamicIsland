@@ -352,6 +352,16 @@ int RunSelfTest() {
                       island::SettingsHitKind::ToggleAutoStart &&
                   generalHit(settings.quitRow).kind == island::SettingsHitKind::Quit,
               L"the General page exposes real auto-start and full-exit controls");
+        const auto experimentalHit = [&settings](const island::RectF& r) {
+            return island::SettingsHitAt(settings, island::SettingsPage::Experimental,
+                                         (r.left + r.right) * 0.5f,
+                                         (r.top + r.bottom) * 0.5f);
+        };
+        Check(experimentalHit(settings.tilingToggleRow).kind ==
+                      island::SettingsHitKind::ToggleScrollTiling &&
+                  experimentalHit(settings.tilingActionRow).kind ==
+                      island::SettingsHitKind::ScrollTilingAction,
+              L"the Experimental page separates the capability switch from entering the mode");
         const std::wstring autoStartCommand =
             island::AutoStartCommandFor(L"C:\\Program Files\\IslandBar\\island_bar.exe");
         Check(autoStartCommand ==
@@ -402,6 +412,7 @@ int RunSelfTest() {
     const float workTopDip = PixelsToDip(monitor.work.top, monitor.dpi);
 
     TestGeometryPredicate(originX, originY, monitorWidthDip, workTopDip);
+    TestScrollTiling();
     TestCardLayout();
     TestIslandSurface();
     TestMusicCardLayout();

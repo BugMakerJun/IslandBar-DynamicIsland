@@ -384,6 +384,11 @@ int ToastReader::Poll(NotificationStore* store) {
                 FriendlyNameFromHandlerId(handlerWide, appWide, 128);
                 WideCharToMultiByte(CP_UTF8, 0, appWide, -1, notification.app, kAppNameCapacity, nullptr,
                                     nullptr);
+                if (handlerWide[0] != L'\0') {
+                    WideCharToMultiByte(CP_UTF8, 0, handlerWide, -1, notification.iconPath,
+                                        static_cast<int>(sizeof(notification.iconPath)), nullptr,
+                                        nullptr);
+                }
                 notification.sticky = false;
                 if (notification.title[0] != '\0' || notification.body[0] != '\0') {
                     store->Push(notification);
@@ -395,6 +400,70 @@ int ToastReader::Poll(NotificationStore* store) {
         rc = api.step(stmt);
     }
     api.finalize(stmt);
+    return added;
+}
+
+int ToastReader::SeedHistory(NotificationStore* store, int limit) {
+    if (!database_ || !sqlite_ || !store || limit <= 0) return 0;
+    SqliteApi& api = sqlite_->api;
+    sqlite3_stmt* stmt = nullptr;
+    const char* sql =
+        "SELECT n.Id, IFNULL(h.PrimaryId, ''), n.Payload "
+        "FROM Notification n LEFT JOIN NotificationHandler h ON h.RecordId = n.HandlerId "
+        "WHERE n.Type = 'toast' ORDER BY n.Id DESC LIMIT ?1";
+    if (api.prepare_v2(reinterpret_cast<sqlite3*>(database_), sql, -1, &stmt, nullptr) !=
+            kSqliteOk ||
+        !stmt) {
+        return 0;
+    }
+    api.bind_int64(stmt, 1, limit);
+
+    int added = 0;
+    long long newest = lastId_;
+    while (api.step(stmt) == kSqliteRow) {
+        const long long id = api.column_int64(stmt, 0);
+        if (id > newest) newest = id;
+        const unsigned char* handler = api.column_text(stmt, 1);
+        const void* blob = api.column_blob(stmt, 2);
+        const int bytes = api.column_bytes(stmt, 2);
+        if (!blob || bytes <= 0 || bytes > kMaxPayloadBytes) continue;
+
+        Notification notification;
+        wchar_t title[kTitleCapacity] = {};
+        wchar_t body[kBodyCapacity] = {};
+        if (!ToastTextFromXml(static_cast<const char*>(blob), static_cast<size_t>(bytes), title,
+                              kTitleCapacity, body, kBodyCapacity)) {
+            continue;
+        }
+        WideCharToMultiByte(CP_UTF8, 0, title, -1, notification.title, kTitleCapacity, nullptr,
+                            nullptr);
+        WideCharToMultiByte(CP_UTF8, 0, body, -1, notification.body, kBodyCapacity, nullptr,
+                            nullptr);
+        wchar_t handlerWide[256] = {};
+        wchar_t appWide[128] = {};
+        if (handler) {
+            MultiByteToWideChar(CP_UTF8, 0, reinterpret_cast<const char*>(handler), -1,
+                                handlerWide, 256);
+        }
+        FriendlyNameFromHandlerId(handlerWide, appWide, 128);
+        WideCharToMultiByte(CP_UTF8, 0, appWide, -1, notification.app, kAppNameCapacity, nullptr,
+                            nullptr);
+        if (handlerWide[0] != L'\0') {
+            WideCharToMultiByte(CP_UTF8, 0, handlerWide, -1, notification.iconPath,
+                                static_cast<int>(sizeof(notification.iconPath)), nullptr,
+                                nullptr);
+        }
+        if (notification.title[0] != '\0' || notification.body[0] != '\0') {
+            store->Push(notification);
+            ++added;
+        }
+    }
+    api.finalize(stmt);
+    lastId_ = newest;
+    primed_ = true;
+    // History is visible but must not claim the island as a fresh message.
+    store->MarkAllRead();
+    LogLine(L"  toasts: seeded %d history item(s), primed after id %lld", added, lastId_);
     return added;
 }
 

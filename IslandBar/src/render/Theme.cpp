@@ -77,6 +77,12 @@ const Theme kThemes[] = {
     {L"\u73BB\u7483", {0.88f, 0.94f, 1.00f, 0.08f}, {0.78f, 0.89f, 1.00f, 0.05f}, 0.20f,
      {0.90f, 0.94f, 1.00f, 0.02f}, 0.00f, {0.15f, 0.45f, 0.85f, 0.95f}, {0.03f, 0.04f, 0.06f, 1.0f},
      0.0f, 0.03f, 0.55f, 0.00f, 0.00f, {1.0f, 1.0f, 1.0f, 1.0f}, true},
+    // Niri is the light Material layer from the user's reference: separate
+    // white floating pills, soft lilac cards, dark type and one violet accent.
+    {L"Niri", {1.00f, 1.00f, 1.00f, 1.00f}, {1.00f, 1.00f, 1.00f, 1.00f}, 0.00f,
+     {0.96f, 0.95f, 0.98f, 0.98f}, 0.09f, {0.42f, 0.30f, 0.72f, 0.96f},
+     {0.12f, 0.10f, 0.17f, 1.0f}, 0.06f, 0.0f, 0.0f, 0.0f, 0.0f,
+     {1.0f, 1.0f, 1.0f, 1.0f}, false},
 };
 constexpr int kThemeCount = static_cast<int>(sizeof(kThemes) / sizeof(kThemes[0]));
 

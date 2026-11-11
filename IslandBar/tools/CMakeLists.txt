@@ -77,3 +77,11 @@ if(ISLANDBAR_BUILD_AMBIENTPREVIEW)
     add_subdirectory(ambientpreview)
 endif()
 
+# Exercises external-window placement before the scroll-tiling feature exists.
+# It lists the same ordinary windows the bar can see, optionally moves a bounded
+# group, verifies the resulting rectangles, and restores WINDOWPLACEMENT.
+option(ISLANDBAR_BUILD_TILINGPROBE "Build the external-window tiling probe" ON)
+if(ISLANDBAR_BUILD_TILINGPROBE)
+    add_subdirectory(tilingprobe)
+endif()
+

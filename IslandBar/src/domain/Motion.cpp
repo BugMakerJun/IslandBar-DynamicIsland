@@ -24,6 +24,7 @@ const wchar_t* StateName(IslandState state) {
         case IslandState::MusicStrip: return L"music-strip";
         case IslandState::FullBar:    return L"full-bar";
         case IslandState::NoticeStrip: return L"notice-strip";
+        case IslandState::SearchStrip: return L"search-strip";
     }
     return L"unknown";
 }
@@ -36,6 +37,7 @@ IslandState StateFromName(const wchar_t* name) {
     if (_wcsicmp(name, L"music-strip") == 0) return IslandState::MusicStrip;
     if (_wcsicmp(name, L"full-bar") == 0) return IslandState::FullBar;
     if (_wcsicmp(name, L"notice-strip") == 0) return IslandState::NoticeStrip;
+    if (_wcsicmp(name, L"search-strip") == 0) return IslandState::SearchStrip;
     return IslandState::Collapsed;
 }
 
@@ -59,6 +61,9 @@ SizeF SettledSizeFor(IslandState state) {
         case IslandState::Hover:
         case IslandState::MusicStrip:
             break;
+        case IslandState::SearchStrip:
+            return SizeF{kSearchStripWidthDip, kCollapsedHeightDip,
+                         StadiumRadiusForHeight(kCollapsedHeightDip)};
         case IslandState::NoticeStrip:
             // The one shape between the pill and the card: wider, not taller. The height stays the pill's so
             // the island still reads as the island, and so the strip cannot collide with the deck, which is
@@ -190,8 +195,13 @@ RoundedBox BoxForState(IslandState state, const IslandAnchor& anchor) {
     }
 
     RoundedBox box;
-    box.rect.left   = anchor.centerX - size.width * 0.5f;
-    box.rect.right  = anchor.centerX + size.width * 0.5f;
+    if (state == IslandState::SearchStrip) {
+        box.rect.left = anchor.centerX - kCollapsedWidthDip * 0.5f;
+        box.rect.right = box.rect.left + size.width;
+    } else {
+        box.rect.left  = anchor.centerX - size.width * 0.5f;
+        box.rect.right = anchor.centerX + size.width * 0.5f;
+    }
     // Top-anchored: every state starts at the same edge and only the height grows,
     // so the shapes are nested rather than centred on each other.
     box.rect.top    = anchor.topY;
@@ -219,6 +229,33 @@ RoundedBox LerpBox(const RoundedBox& a, const RoundedBox& b, float t) {
     return out;
 }
 
+namespace {
+RoundedBox StagedBox(const RoundedBox& a, const RoundedBox& b, IslandState from,
+                     IslandState to, float t) {
+    const float x = Clamp01(t);
+    float widthT = x;
+    float heightT = x;
+    if (to == IslandState::Expanded) {
+        widthT = Clamp01(x / 0.48f);
+        heightT = Clamp01((x - 0.44f) / 0.56f);
+    } else if (from == IslandState::Expanded) {
+        heightT = Clamp01(x / 0.56f);
+        widthT = Clamp01((x - 0.52f) / 0.48f);
+    }
+    const auto mix = [](float p, float q, float amount) {
+        return p + (q - p) * amount;
+    };
+    RoundedBox out;
+    out.rect.left = mix(a.rect.left, b.rect.left, widthT);
+    out.rect.right = mix(a.rect.right, b.rect.right, widthT);
+    out.rect.top = mix(a.rect.top, b.rect.top, heightT);
+    out.rect.bottom = mix(a.rect.bottom, b.rect.bottom, heightT);
+    out.radiusX = mix(a.radiusX, b.radiusX, heightT);
+    out.radiusY = mix(a.radiusY, b.radiusY, heightT);
+    return out;
+}
+} // namespace
+
 // --- Motion ----------------------------------------------------------
 
 void Motion::ScaleDurations(float factor) {
@@ -242,7 +279,10 @@ void Motion::SetAnchor(const IslandAnchor& anchor) {
     to_   = BoxForState(target_, anchor_);
 
     if (animating_) {
-        current_ = LerpBox(from_, to_, CurveFor(fromState_, target_)(progress_));
+        current_ = stagedExpansion_
+                       ? StagedBox(from_, to_, fromState_, target_,
+                                   CurveFor(fromState_, target_)(progress_))
+                       : LerpBox(from_, to_, CurveFor(fromState_, target_)(progress_));
     } else {
         current_ = to_;
         from_ = current_;
@@ -292,7 +332,10 @@ bool Motion::SetTarget(IslandState state) {
 
     // Produce the first frame immediately. Requesting a state and then waiting a
     // tick to see anything would show one stale frame at the old geometry.
-    current_ = LerpBox(from_, to_, CurveFor(fromState_, target_)(0.0f));
+    current_ = stagedExpansion_
+                   ? StagedBox(from_, to_, fromState_, target_,
+                               CurveFor(fromState_, target_)(0.0f))
+                   : LerpBox(from_, to_, CurveFor(fromState_, target_)(0.0f));
     return true;
 }
 
@@ -308,7 +351,10 @@ bool Motion::Tick(float dtSeconds) {
     }
 
     progress_ = elapsed_ / duration_;
-    current_ = LerpBox(from_, to_, CurveFor(fromState_, target_)(progress_));
+    current_ = stagedExpansion_
+                   ? StagedBox(from_, to_, fromState_, target_,
+                               CurveFor(fromState_, target_)(progress_))
+                   : LerpBox(from_, to_, CurveFor(fromState_, target_)(progress_));
     return true;
 }
 

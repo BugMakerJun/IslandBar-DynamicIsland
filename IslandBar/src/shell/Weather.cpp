@@ -37,6 +37,7 @@ namespace {
 // "which service answered" is one thing to look at when the reading stops.
 constexpr wchar_t kGeocodeHost[] = L"geocoding-api.open-meteo.com";
 constexpr wchar_t kForecastHost[] = L"api.open-meteo.com";
+constexpr wchar_t kAirQualityHost[] = L"air-quality-api.open-meteo.com";
 
 // Ten seconds: long enough for a slow connection, short enough that a poll cannot
 // sit in one request for the rest of the session.
@@ -493,6 +494,150 @@ bool ParseDailyCsv(const char* csv, int* sunriseMinutes, int* sunsetMinutes) {
     return true;
 }
 
+bool ParseForecastCsv(const char* csv, int currentYear, int currentMonth, int currentDay,
+                      int currentHour, WeatherSnapshot* out) {
+    if (!out) return false;
+    *out = WeatherSnapshot{};
+    if (!csv) return false;
+
+    enum class Section { None, Current, Hourly, Daily };
+    Section section = Section::None;
+    bool haveCurrent = false;
+    char currentLine[512] = {};
+
+    const char* cursor = csv;
+    while (*cursor != '\0') {
+        const char* lineEnd = std::strchr(cursor, '\n');
+        const size_t length = lineEnd ? static_cast<size_t>(lineEnd - cursor) : std::strlen(cursor);
+        char line[512] = {};
+        if (length < sizeof(line)) {
+            std::memcpy(line, cursor, length);
+            line[length] = '\0';
+            if (length > 0 && line[length - 1] == '\r') line[length - 1] = '\0';
+        }
+
+        if (line[0] == 't' && std::strncmp(line, "time,", 5) == 0) {
+            if (std::strstr(line, "apparent_temperature")) {
+                section = Section::Current;
+            } else if (std::strstr(line, "precipitation_probability")) {
+                section = Section::Hourly;
+            } else if (std::strstr(line, "temperature_2m_max")) {
+                section = Section::Daily;
+            } else {
+                section = Section::None;
+            }
+        } else if (IsDataLine(line) && line[0] >= '0' && line[0] <= '9') {
+            if (section == Section::Current && !haveCurrent) {
+                std::snprintf(currentLine, sizeof(currentLine), "%s", line);
+                haveCurrent = true;
+            } else if (section == Section::Hourly && out->hourCount < kWeatherHourCount) {
+                char time[40] = {};
+                char temperature[32] = {};
+                char code[32] = {};
+                char precipitation[32] = {};
+                if (CsvField(line, 0, time, sizeof(time)) &&
+                    CsvField(line, 1, temperature, sizeof(temperature)) &&
+                    CsvField(line, 2, code, sizeof(code)) &&
+                    CsvField(line, 3, precipitation, sizeof(precipitation))) {
+                    int year = 0;
+                    int month = 0;
+                    int day = 0;
+                    int hour = 0;
+                    const bool parsedTime =
+                        std::sscanf(time, "%d-%d-%dT%d", &year, &month, &day, &hour) == 4;
+                    const long long value =
+                        (static_cast<long long>(year) * 1000000LL + month * 10000LL +
+                         day * 100LL + hour);
+                    const long long wanted =
+                        (static_cast<long long>(currentYear) * 1000000LL + currentMonth * 10000LL +
+                         currentDay * 100LL + currentHour);
+                    if (parsedTime && value >= wanted && hour >= 0 && hour <= 23) {
+                        WeatherHour& item = out->hours[out->hourCount];
+                        item.year = year;
+                        item.month = month;
+                        item.day = day;
+                        item.hour = hour;
+                        item.temperatureC = std::strtod(temperature, nullptr);
+                        item.code = static_cast<int>(std::strtol(code, nullptr, 10));
+                        item.precipitationPercent =
+                            static_cast<int>(std::strtol(precipitation, nullptr, 10));
+                        ++out->hourCount;
+                    }
+                }
+            } else if (section == Section::Daily && out->dayCount < kWeatherDayCount) {
+                char date[32] = {};
+                char code[32] = {};
+                char maximum[32] = {};
+                char minimum[32] = {};
+                char sunrise[48] = {};
+                char sunset[48] = {};
+                if (CsvField(line, 0, date, sizeof(date)) &&
+                    CsvField(line, 1, code, sizeof(code)) &&
+                    CsvField(line, 2, maximum, sizeof(maximum)) &&
+                    CsvField(line, 3, minimum, sizeof(minimum)) &&
+                    CsvField(line, 4, sunrise, sizeof(sunrise)) &&
+                    CsvField(line, 5, sunset, sizeof(sunset))) {
+                    WeatherDay& item = out->days[out->dayCount];
+                    if (std::sscanf(date, "%d-%d-%d", &item.year, &item.month, &item.day) == 3) {
+                        item.code = static_cast<int>(std::strtol(code, nullptr, 10));
+                        item.temperatureMaxC = std::strtod(maximum, nullptr);
+                        item.temperatureMinC = std::strtod(minimum, nullptr);
+                        const auto minutes = [](const char* iso) {
+                            const char* t = std::strchr(iso, 'T');
+                            int hour = -1;
+                            int minute = -1;
+                            if (t && std::sscanf(t + 1, "%d:%d", &hour, &minute) == 2 &&
+                                hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) {
+                                return hour * 60 + minute;
+                            }
+                            return -1;
+                        };
+                        item.sunriseMinutes = minutes(sunrise);
+                        item.sunsetMinutes = minutes(sunset);
+                        ++out->dayCount;
+                    }
+                }
+            }
+        }
+
+        if (!lineEnd) break;
+        cursor = lineEnd + 1;
+    }
+
+    if (!haveCurrent) return false;
+    char temperature[32] = {};
+    char apparent[32] = {};
+    char humidity[32] = {};
+    char code[32] = {};
+    char pressure[32] = {};
+    char wind[32] = {};
+    char precipitation[32] = {};
+    if (!CsvField(currentLine, 1, temperature, sizeof(temperature)) ||
+        !CsvField(currentLine, 2, apparent, sizeof(apparent)) ||
+        !CsvField(currentLine, 3, humidity, sizeof(humidity)) ||
+        !CsvField(currentLine, 4, code, sizeof(code)) ||
+        !CsvField(currentLine, 5, pressure, sizeof(pressure)) ||
+        !CsvField(currentLine, 6, wind, sizeof(wind)) ||
+        !CsvField(currentLine, 7, precipitation, sizeof(precipitation))) {
+        return false;
+    }
+
+    out->temperatureC = std::strtod(temperature, nullptr);
+    out->apparentTemperatureC = std::strtod(apparent, nullptr);
+    out->humidityPercent = static_cast<int>(std::strtol(humidity, nullptr, 10));
+    out->code = static_cast<int>(std::strtol(code, nullptr, 10));
+    out->pressureHpa = static_cast<int>(std::lround(std::strtod(pressure, nullptr)));
+    out->windSpeedKph = std::strtod(wind, nullptr);
+    out->precipitationMm = std::strtod(precipitation, nullptr);
+    if (out->hourCount > 0) out->precipitationPercent = out->hours[0].precipitationPercent;
+    if (out->dayCount > 0) {
+        out->sunriseMinutes = out->days[0].sunriseMinutes;
+        out->sunsetMinutes = out->days[0].sunsetMinutes;
+    }
+    out->valid = true;
+    return true;
+}
+
 bool ParseGeocodeJson(const char* json, double* latitude, double* longitude) {
     if (!json) return false;
 
@@ -562,6 +707,18 @@ bool WeatherReader::Get(double* temperatureC, int* code, int* sunriseMinutes,
         if (sunriseMinutes) *sunriseMinutes = sunriseMinutes_;
         if (sunsetMinutes) *sunsetMinutes = sunsetMinutes_;
     }
+    lock_.Leave();
+    return have;
+}
+
+bool WeatherReader::Snapshot(WeatherSnapshot* out) const {
+    if (!out) return false;
+    *out = WeatherSnapshot{};
+    if (!worker_.Prepared()) return false;
+
+    lock_.Enter();
+    const bool have = snapshot_.valid;
+    if (have) *out = snapshot_;
     lock_.Leave();
     return have;
 }
@@ -741,13 +898,17 @@ unsigned WeatherReader::Refresh(char* resolvedCity, size_t resolvedCapacity, dou
         strncpy_s(resolvedCity, resolvedCapacity, "<lat,lon>", _TRUNCATE);
     }
 
-    wchar_t path[512] = {};
-    swprintf(path, 512,
-             L"/v1/forecast?latitude=%.4f&longitude=%.4f&current=temperature_2m,weather_code"
-             L"&format=csv&timezone=auto",
+    wchar_t path[768] = {};
+    swprintf(path, 768,
+             L"/v1/forecast?latitude=%.4f&longitude=%.4f"
+             L"&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,"
+             L"surface_pressure,wind_speed_10m,precipitation"
+             L"&hourly=temperature_2m,weather_code,precipitation_probability"
+             L"&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset"
+             L"&forecast_days=7&format=csv&timezone=auto",
              *latitude, *longitude);
 
-    char body[4096] = {};
+    char body[65536] = {};
     size_t length = 0;
     DWORD status = 0;
     if (!HttpGet(kForecastHost, path, nullptr, kTimeoutMs, body, sizeof(body), &length, &status)) {
@@ -757,49 +918,57 @@ unsigned WeatherReader::Refresh(char* resolvedCity, size_t resolvedCapacity, dou
         return kRetryMs;
     }
 
-    double temperature = 0.0;
-    int code = -1;
-    if (!ParseCurrentCsv(body, &temperature, &code)) {
+    SYSTEMTIME local = {};
+    GetLocalTime(&local);
+    WeatherSnapshot snapshot;
+    if (!ParseForecastCsv(body, local.wYear, local.wMonth, local.wDay, local.wHour, &snapshot)) {
         LogAndPrint(L"  weather: the forecast answer held no reading (%zu bytes)\n", length);
         std::fflush(stdout);
         return kRetryMs;
     }
 
-    // THE SUNRISE AND THE SUNSET, for the island's ambient light. A second call, because Open-Meteo's
-    // CSV puts the current block and the daily block on different time axes and only the daily line
-    // carries the two times. A failure here leaves them at -1 and the ambient falls back to 06:00/18:00.
-    int sunriseMinutes = -1;
-    int sunsetMinutes = -1;
-    {
-        wchar_t dailyPath[512] = {};
-        swprintf(dailyPath, 512,
-                 L"/v1/forecast?latitude=%.4f&longitude=%.4f&daily=sunrise,sunset"
-                 L"&format=csv&timezone=auto",
-                 *latitude, *longitude);
-        char dailyBody[4096] = {};
-        size_t dailyLength = 0;
-        DWORD dailyStatus = 0;
-        if (HttpGet(kForecastHost, dailyPath, nullptr, kTimeoutMs, dailyBody, sizeof(dailyBody),
-                    &dailyLength, &dailyStatus)) {
-            ParseDailyCsv(dailyBody, &sunriseMinutes, &sunsetMinutes);
+    wchar_t airPath[512] = {};
+    swprintf(airPath, 512,
+             L"/v1/air-quality?latitude=%.4f&longitude=%.4f"
+             L"&current=european_aqi&timezone=auto",
+             *latitude, *longitude);
+    char airBody[4096] = {};
+    size_t airLength = 0;
+    DWORD airStatus = 0;
+    if (HttpGet(kAirQualityHost, airPath, nullptr, kTimeoutMs, airBody, sizeof(airBody),
+                &airLength, &airStatus)) {
+        const char* current = std::strstr(airBody, "\"current\"");
+        const char* aqiField =
+            current ? std::strstr(current, "\"european_aqi\":") : nullptr;
+        if (aqiField) {
+            aqiField += std::strlen("\"european_aqi\":");
+            while (*aqiField == ' ') ++aqiField;
+            char* end = nullptr;
+            const long value = std::strtol(aqiField, &end, 10);
+            if (end && end != aqiField && value >= 0 && value <= 500) {
+                snapshot.airQualityIndex = static_cast<int>(value);
+            }
         }
     }
 
     wchar_t line[64] = {};
-    WeatherLineFor(temperature, code, line, 64);
+    WeatherLineFor(snapshot.temperatureC, snapshot.code, line, 64);
 
     lock_.Enter();
-    temperatureC_ = temperature;
-    code_ = code;
-    sunriseMinutes_ = sunriseMinutes;
-    sunsetMinutes_ = sunsetMinutes;
+    temperatureC_ = snapshot.temperatureC;
+    code_ = snapshot.code;
+    sunriseMinutes_ = snapshot.sunriseMinutes;
+    sunsetMinutes_ = snapshot.sunsetMinutes;
+    snapshot_ = snapshot;
     wcsncpy_s(line_, 64, line, _TRUNCATE);
     haveReading_ = true;
     lock_.Leave();
     InterlockedIncrement(&revision_);
 
-    LogAndPrint(L"  weather: %.1f C, code %d, sunrise %d, sunset %d -> %ls\n", temperature, code,
-                sunriseMinutes, sunsetMinutes, line);
+    LogAndPrint(L"  weather.card: current=1 hourly=%d daily=%d %.1f C, code %d, "
+                L"sunrise %d, sunset %d, AQI %d -> %ls\n",
+                snapshot.hourCount, snapshot.dayCount, snapshot.temperatureC, snapshot.code,
+                snapshot.sunriseMinutes, snapshot.sunsetMinutes, snapshot.airQualityIndex, line);
     std::fflush(stdout);
     return kPollMs;
 }

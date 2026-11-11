@@ -29,13 +29,17 @@
 #include "app/AppBar.h"              // AppBarResult
 #include "app/IslandWindow.h"        // IslandWindow, AppBar
 #include "app/PlayerWindow.h"        // PlayerWindowWatch
+#include "app/ScrollTiling.h"        // experimental managed window viewport
 #include "app/SettingsWindow.h"      // separate activating settings surface
 #include "media/AudioVolume.h"
 #include "media/Lyrics.h"            // LyricsProvider
 #include "media/MusicSession.h"
 #include "media/SoundOutput.h"       // SoundOutput, SoundOutputSnapshot
 #include "platform/NativeTaskbar.h"
+#include "platform/ScrollTilingGrabLayer.h"
+#include "platform/SystemLoad.h"
 #include "platform/ThumbnailPreview.h"
+#include "platform/WindowEventMonitor.h"
 #include "platform/WindowList.h"
 #include "render/Renderer.h"
 #include "render/TextRenderer.h"
@@ -68,6 +72,7 @@ struct BarSystems {
     // the taskbar it hides -- and whether the hide succeeded, which belongs to the claim and not to the state
     NativeTaskbar taskbar;
     bool haveTaskbar = false;
+    SystemLoadReader systemLoad;
 
     // the strip it reserves -- and that call's answer, kept beside it for the same reason
     AppBar appBar;
@@ -102,6 +107,9 @@ struct BarSystems {
     TrayIcons trayIcons;
     StartApps startApps;
     WindowList taskWindows;
+    WindowEventMonitor windowEvents;
+    ScrollTilingGrabLayer scrollTilingGrabLayer;
+    ScrollTilingController scrollTiling;
 };
 
 } // namespace island

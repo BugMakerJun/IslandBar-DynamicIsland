@@ -71,6 +71,11 @@ public:
     // replays the last three days of toasts is not what "show me my notifications" means.
     int Poll(NotificationStore* store);
 
+    // Seeds the notification centre with recent records that already existed
+    // before this process started. These are marked read so they appear in
+    // history without firing the transient six-second banner.
+    int SeedHistory(NotificationStore* store, int limit);
+
     // How many toasts have been taken from the database since Start. For the log.
     int Taken() const { return taken_; }
 

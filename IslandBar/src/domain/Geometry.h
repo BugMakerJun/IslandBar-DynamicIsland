@@ -68,12 +68,12 @@ inline constexpr float kDipPerInch = 96.0f;
 // 540, because the card is 520 x 500 now: it reaches y=506 and the same 30 DIP of slack puts the
 // window's bottom edge at 540. The window is still never resized, so this is the one number that has to track
 // the tallest card.
-inline constexpr float kWindowHeightDip = 540.0f;
+inline constexpr float kWindowHeightDip = 700.0f;
 
 // The resting pill.
 inline constexpr float kPillWidthDip    = 220.0f;
-inline constexpr float kPillHeightDip   = 36.0f;
-inline constexpr float kCornerRadiusDip = 18.0f;   // pill height / 2
+inline constexpr float kPillHeightDip   = 32.0f;
+inline constexpr float kCornerRadiusDip = 16.0f;   // pill height / 2
 
 // Distance from the top of the window strip down to the pill's top edge, i.e.
 // the gap between the work-area edge and the resting pill.

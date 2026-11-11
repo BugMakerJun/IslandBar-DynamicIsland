@@ -33,6 +33,7 @@
 #include "core/ProcessMetrics.h"
 #include "domain/StartSearch.h"
 #include "domain/SettingsLayout.h"
+#include "domain/ScrollTiling.h"
 #include "domain/StatePolicy.h"
 #include "domain/TaskStripLayout.h"
 #include "domain/TrayEncoding.h"

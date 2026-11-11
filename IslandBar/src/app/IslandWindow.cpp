@@ -8,6 +8,8 @@
 #include "platform/Monitor.h"   // ShellTopBandThicknessPx: the band, once the work area no longer carries it
 
 #include "domain/CardLayout.h"   // HitsTransportButton, for click routing
+#include "domain/NiriBarLayout.h"
+#include "render/Theme.h"
 
 #include <dwmapi.h>
 #include <commctrl.h>
@@ -16,6 +18,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cwchar>
 #include <unordered_map>
 
 #pragma comment(lib, "dwmapi.lib")
@@ -27,6 +30,34 @@ namespace {
 std::unordered_map<HWND, IslandWindow*> g_windows;
 constexpr const wchar_t* kStartSearchHostClass = L"IslandBar.StartSearchHost";
 constexpr int kStartSearchEditId = 1;
+
+bool NiriLayoutActive() {
+    return std::wcscmp(island::CurrentTheme().name, L"Niri") == 0;
+}
+
+COLORREF ToColorRef(const D2D1_COLOR_F& colour) {
+    const auto channel = [](float value) {
+        return static_cast<int>(std::lround(std::clamp(value, 0.0f, 1.0f) * 255.0f));
+    };
+    return RGB(channel(colour.r), channel(colour.g), channel(colour.b));
+}
+
+island::RoundedBox PageBodyFor(const island::RoundedBox& card) {
+    island::RoundedBox body = card;
+    if (NiriLayoutActive()) body.rect = island::CardBodyFor(card);
+    return body;
+}
+
+island::RoundedBox NiriAwareRowAnchor(const island::RoundedBox& current,
+                                      const island::RoundedBox& resting,
+                                      bool cardMorph, float cardWidthDip,
+                                      float cardHeightDip, bool collapsing = false) {
+    if (NiriLayoutActive() && cardMorph) {
+        return island::NiriDeckBoxFor(current, resting, cardWidthDip, cardHeightDip,
+                                      collapsing);
+    }
+    return island::RowAnchorBox(current, resting);
+}
 
 // The Start card's hover target, spelled out for the log: the names are the enum's own, so a reader can
 // follow one from the trace straight back into the code that produced it.
@@ -150,6 +181,7 @@ bool IslandWindow::Create(const MonitorGeometry& monitor, bool show) {
     monitor_ = monitor;
     if (monitor_.dpi == 0) monitor_.dpi = 96;
     scale_ = static_cast<float>(monitor_.dpi) / kDipPerInch;
+    motion_.SetStagedExpansion(NiriLayoutActive());
 
     ScopedPerMonitorV2 pin;
 
@@ -282,6 +314,8 @@ void IslandWindow::Destroy() {
     startSearchHost_ = nullptr;
     startSearchEdit_ = nullptr;
     startSearchVisible_ = false;
+    startSearchInline_ = false;
+    startSearchForegroundHeld_ = false;
     if (startSearchBrush_) {
         DeleteObject(startSearchBrush_);
         startSearchBrush_ = nullptr;
@@ -437,7 +471,7 @@ IslandWindow::StartHit IslandWindow::StartHitAtScreen(POINT screenPoint) const {
     float localX = 0.0f;
     float localY = 0.0f;
     ToLocalDip(screenPoint, &localX, &localY);
-    const RoundedBox card = PlacedCard();
+    const RoundedBox card = PageBodyFor(PlacedCard());
     // The SAME function the hover path uses (see StartPageHitFor): a press and the highlight under the
     // pointer cannot land on two different controls.
     return StartHitFromPage(island::StartPageHitFor(
@@ -446,8 +480,41 @@ IslandWindow::StartHit IslandWindow::StartHitAtScreen(POINT screenPoint) const {
         startSearchText_[0] != L'\0'));
 }
 
-void IslandWindow::BeginStartSearch() {
-    if (!hwnd_ || cardLeftDip_ <= 0.0f) return;
+CommandCenterHit IslandWindow::CommandCenterHitAtScreen(POINT screenPoint) const {
+    if (!hwnd_ || cardLeftDip_ <= 0.0f || !commandCenterOpen_) return {};
+    float localX = 0.0f;
+    float localY = 0.0f;
+    ToLocalDip(screenPoint, &localX, &localY);
+    return island::CommandCenterAt(PageBodyFor(PlacedCard()), commandCenterNotificationCount_,
+                                   localX, localY);
+}
+
+CardRailTarget IslandWindow::CardRailAtScreen(POINT screenPoint) const {
+    if (!hwnd_ || cardLeftDip_ <= 0.0f || cardOwner_ != CardOwner::SystemPanel) {
+        return CardRailTarget::None;
+    }
+    float localX = 0.0f;
+    float localY = 0.0f;
+    ToLocalDip(screenPoint, &localX, &localY);
+    return island::CardRailTargetAt(PlacedCard(), localX, localY, railPowerConfirmButton_);
+}
+
+bool IslandWindow::CardRailPowerConfirmContainsScreen(POINT screenPoint) const {
+    if (!hwnd_ || cardOwner_ != CardOwner::SystemPanel) return false;
+    const island::CardRailLayout rail = island::CardRailFor(PlacedCard());
+    if (!rail.valid) return false;
+    float localX = 0.0f;
+    float localY = 0.0f;
+    ToLocalDip(screenPoint, &localX, &localY);
+    const RectF confirm = island::CardRailPowerConfirmFor(rail);
+    return localX >= confirm.left && localX <= confirm.right && localY >= confirm.top &&
+           localY <= confirm.bottom;
+}
+
+void IslandWindow::BeginStartSearch(bool inlineMode) {
+    if (!hwnd_) return;
+    if (!inlineMode && cardLeftDip_ <= 0.0f) return;
+    const bool modeChanged = startSearchInline_ != inlineMode;
 
     if (!startSearchHost_) {
         WNDCLASSEXW wc = {};
@@ -476,37 +543,130 @@ void IslandWindow::BeginStartSearch() {
                               reinterpret_cast<LONG_PTR>(&IslandWindow::SearchEditProcThunk)));
         SendMessageW(startSearchEdit_, EM_SETLIMITTEXT, 63, 0);
         SendMessageW(startSearchEdit_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
-                     MAKELPARAM(10, 10));
+                     MAKELPARAM(14, 14));
         SendMessageW(startSearchEdit_, EM_SETCUEBANNER, TRUE,
                      reinterpret_cast<LPARAM>(L"\u641C\u7D22\u5E94\u7528\u3001\u8BBE\u7F6E\u6216\u6587\u4EF6\u2026"));
 
-        startSearchBrush_ = CreateSolidBrush(RGB(6, 8, 12));
+    }
+
+    if (modeChanged || !startSearchBrush_) {
+        if (startSearchBrush_) DeleteObject(startSearchBrush_);
+        COLORREF colour = RGB(6, 8, 12);
+        if (inlineMode) {
+            colour = ToColorRef(island::CurrentTheme().pillTop);
+        }
+        startSearchBrush_ = CreateSolidBrush(colour);
+        startSearchInline_ = inlineMode;
+    }
+    if (modeChanged && startSearchFont_) {
+        DeleteObject(startSearchFont_);
+        startSearchFont_ = nullptr;
+    }
+    if (!startSearchFont_) {
         startSearchFont_ =
-            CreateFontW(-19, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                        OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                        DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
+            CreateFontW(inlineMode ? -15 : -19, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
         SendMessageW(startSearchEdit_, WM_SETFONT,
                      reinterpret_cast<WPARAM>(startSearchFont_), TRUE);
     }
 
-    const RoundedBox card = PlacedCard();
-    const island::StartPageLayout layout = island::StartPageFor(card);
-    if (!layout.valid) return;
     RECT windowRect = {};
     if (!GetWindowRect(hwnd_, &windowRect)) return;
-    const int x = windowRect.left + static_cast<int>(std::lround(layout.searchHint.left * scale_));
-    const int y = windowRect.top +
-                  static_cast<int>(std::lround((layout.search.top + 5.0f) * scale_));
-    const int width =
-        static_cast<int>(std::lround((layout.searchHint.right - layout.searchHint.left) * scale_));
-    const int height =
-        static_cast<int>(std::lround((layout.search.bottom - layout.search.top - 10.0f) * scale_));
+    int x = 0;
+    int y = 0;
+    int width = 0;
+    int height = 0;
+    island::NiriSearchLayout inlineLayout;
+    RoundedBox inlineIsland;
+    if (inlineMode) {
+        inlineIsland = LayoutIslandFor();
+        inlineLayout = island::NiriSearchLayoutFor(inlineIsland, 1.0f);
+        if (!inlineLayout.valid) return;
+        const int leftPx =
+            windowRect.left +
+            static_cast<int>(std::lround(
+                (inlineLayout.field.left + island::kNiriSearchBorderInsetDip) * scale_));
+        const int rightPx =
+            windowRect.left +
+            static_cast<int>(std::lround(
+                (inlineLayout.field.right - island::kNiriSearchBorderInsetDip) * scale_));
+        const int topPx =
+            windowRect.top +
+            static_cast<int>(std::lround(
+                (inlineLayout.field.top + island::kNiriSearchBorderInsetDip) * scale_));
+        const int bottomPx =
+            windowRect.top +
+            static_cast<int>(std::lround(
+                (inlineLayout.field.bottom - island::kNiriSearchBorderInsetDip) * scale_));
+        x = leftPx;
+        y = topPx;
+        width = rightPx - leftPx;
+        height = bottomPx - topPx;
+    } else {
+        const RoundedBox card = PageBodyFor(PlacedCard());
+        const island::StartPageLayout layout = island::StartPageFor(card);
+        if (!layout.valid) return;
+        x = windowRect.left + static_cast<int>(std::lround(layout.searchHint.left * scale_));
+        y = windowRect.top +
+            static_cast<int>(std::lround((layout.search.top + 5.0f) * scale_));
+        width = static_cast<int>(
+            std::lround((layout.searchHint.right - layout.searchHint.left) * scale_));
+        height = static_cast<int>(
+            std::lround((layout.search.bottom - layout.search.top - 10.0f) * scale_));
+    }
     SetWindowPos(startSearchHost_, HWND_TOPMOST, x, y, width, height,
                  SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    const int iconSlotWidth =
+        inlineMode ? static_cast<int>(std::lround(island::kNiriSearchSideSlotDip * scale_)) : 0;
+    const int editorLeft =
+        inlineMode
+            ? static_cast<int>(std::lround(
+                  (inlineLayout.editor.left - inlineLayout.field.left -
+                   island::kNiriSearchBorderInsetDip) *
+                  scale_))
+            : 0;
+    const int editorRight =
+        inlineMode
+            ? static_cast<int>(std::lround(
+                  (inlineLayout.field.right - island::kNiriSearchBorderInsetDip -
+                   inlineLayout.editor.right) *
+                  scale_))
+            : 0;
+    const int radius =
+        inlineMode ? height / 2 : static_cast<int>(std::lround(12.0f * scale_));
     HRGN region = CreateRoundRectRgn(0, 0, width + 1, height + 1,
-                                     static_cast<int>(12 * scale_), static_cast<int>(12 * scale_));
+                                     radius, radius);
+    if (inlineMode && iconSlotWidth > 0) {
+        HRGN iconSlot = CreateRectRgn(0, 0, iconSlotWidth, height + 1);
+        CombineRgn(region, region, iconSlot, RGN_DIFF);
+        DeleteObject(iconSlot);
+    }
     SetWindowRgn(startSearchHost_, region, TRUE);
-    SetWindowPos(startSearchEdit_, nullptr, 0, 0, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
+    SetWindowPos(startSearchEdit_, nullptr, editorLeft, 0,
+                 std::max(1, width - editorLeft - editorRight), height,
+                 SWP_NOZORDER | SWP_NOACTIVATE);
+    if (inlineMode) {
+        const D2D1_COLOR_F background = island::CurrentTheme().pillTop;
+        const D2D1_COLOR_F ink = island::CurrentTheme().ink;
+        island::LogAndPrint(
+            L"  niri search: field x[%.0f..%.0f] y[%.0f..%.0f], "
+            L"insets l/t/r/b=%.0f/%.0f/%.0f/%.0f, editor x[%.0f..%.0f], "
+            L"surface=pill bg_rgb=%d/%d/%d ink_rgb=%d/%d/%d\n",
+            inlineLayout.field.left, inlineLayout.field.right, inlineLayout.field.top,
+            inlineLayout.field.bottom,
+            inlineLayout.field.left - inlineIsland.rect.left,
+            inlineLayout.field.top - inlineIsland.rect.top,
+            inlineIsland.rect.right - inlineLayout.field.right,
+            inlineIsland.rect.bottom - inlineLayout.field.bottom,
+            inlineLayout.editor.left, inlineLayout.editor.right,
+            static_cast<int>(std::lround(background.r * 255.0f)),
+            static_cast<int>(std::lround(background.g * 255.0f)),
+            static_cast<int>(std::lround(background.b * 255.0f)),
+            static_cast<int>(std::lround(ink.r * 255.0f)),
+            static_cast<int>(std::lround(ink.g * 255.0f)),
+            static_cast<int>(std::lround(ink.b * 255.0f)));
+    }
 
     const HWND foreground = GetForegroundWindow();
     if (foreground && foreground != startSearchHost_ && foreground != hwnd_) {
@@ -516,6 +676,7 @@ void IslandWindow::BeginStartSearch() {
     ShowWindow(startSearchHost_, SW_SHOWNORMAL);
     SetForegroundWindow(startSearchHost_);
     SetFocus(startSearchEdit_);
+    startSearchForegroundHeld_ = GetForegroundWindow() == startSearchHost_;
     ++startSearchRevision_;
     layoutChanged_ = true;
 }
@@ -523,9 +684,10 @@ void IslandWindow::BeginStartSearch() {
 void IslandWindow::EndStartSearch(bool clearText, bool restoreForeground) {
     const bool wasVisible = startSearchVisible_;
     if (wasVisible && startSearchHost_ && IsWindow(startSearchHost_)) {
-        ShowWindow(startSearchHost_, SW_HIDE);
+        ShowWindowAsync(startSearchHost_, SW_HIDE);
     }
     startSearchVisible_ = false;
+    startSearchForegroundHeld_ = false;
     bool textChanged = false;
     if (clearText && startSearchEdit_ && GetWindowTextLengthW(startSearchEdit_) > 0) {
         SetWindowTextW(startSearchEdit_, L"");
@@ -577,7 +739,9 @@ void IslandWindow::OnStartSearchChanged() {
 void IslandWindow::OnStartSearchLostFocus() {
     if (!startSearchVisible_) return;
     startSearchVisible_ = false;
-    if (startSearchHost_) ShowWindow(startSearchHost_, SW_HIDE);
+    startSearchForegroundHeld_ = false;
+    if (startSearchHost_) ShowWindowAsync(startSearchHost_, SW_HIDE);
+    startSearchCancel_ = true;
     ++startSearchRevision_;
     layoutChanged_ = true;
 }
@@ -593,7 +757,10 @@ RECT IslandWindow::InputRegionFor(const MonitorGeometry& monitor, IslandState st
                                   const IslandAnchor& anchor, const RoundedBox& current,
                                   float cardLeftDip, int taskIconCount,
                                   float statusStripWidthDip, int trayIconCount,
-                                  bool noticeStripUp, float cardHeightDip, float cardWidthDip) {
+                                  bool noticeStripUp, float cardHeightDip, float cardWidthDip,
+                                  float niriSearchResultsReveal,
+                                  int niriSearchResultsCount,
+                                  bool niriSearchResultsPending) {
     // The bounding box of what the bar actually DRAWS, in window pixels.
     //
     // Horizontally it runs from the left of the state's own shape to the right of the longest icon row
@@ -642,7 +809,9 @@ RECT IslandWindow::InputRegionFor(const MonitorGeometry& monitor, IslandState st
     // never painted at all. Region and painting have to agree, and this is the fourth time that rule has
     // had to be written in this file.
     const RoundedBox restingBar = BoxForState(IslandState::Collapsed, anchor);
-    const float cardTopDip = restingBar.rect.bottom + kCardTopGapDip;
+    const float cardTopDip = NiriLayoutActive()
+                                 ? restingBar.rect.top
+                                 : restingBar.rect.bottom + kCardTopGapDip;
     // The card's FULL height rather than the animated one.
     //
     // Two reasons, both of them defects in the version that followed the animation. A region that grows
@@ -660,6 +829,17 @@ RECT IslandWindow::InputRegionFor(const MonitorGeometry& monitor, IslandState st
 
     float left = shapeForRegion.rect.left;
     float right = shapeForRegion.rect.right;
+
+    if (NiriLayoutActive()) {
+        const island::RoundedBox rowIsland =
+            NiriAwareRowAnchor(current, restingBar, cardUp, cardWidthDip, cardHeightDip,
+                               cardUp && state != IslandState::Expanded);
+        const island::NiriBarLayout layout =
+            island::NiriBarLayoutFor(widthDip, rowIsland,
+                                     taskIconCount < 0 ? kMaxTaskIcons : taskIconCount);
+        left = std::min(left, layout.activeApp.rect.left);
+        right = std::max(right, layout.taskRow.right);
+    }
 
     // The system panel's card reaches LEFT of the deck it hangs from.
     //
@@ -746,7 +926,9 @@ RECT IslandWindow::InputRegionFor(const MonitorGeometry& monitor, IslandState st
     // Where the ICON ROW is measured from: the pill, or the notice strip while one is up. The row has to
     // start clear of whatever shape is beside it, and the region is what decides whether the icons can be
     // pressed at all.
-    const RoundedBox rowIsland = RowAnchorBox(current, restingIsland);
+    const RoundedBox rowIsland =
+        NiriAwareRowAnchor(current, restingIsland, cardUp, cardWidthDip, cardHeightDip,
+                           cardUp && state != IslandState::Expanded);
     // ... and the tray button stands between the island and the row, so the row starts one button further
     // along (see RowAnchorWithTray). Without this the region stops short of the icons -- the row and the
     // region would disagree about where the row begins, and an icon outside the region cannot be clicked.
@@ -815,6 +997,14 @@ RECT IslandWindow::InputRegionFor(const MonitorGeometry& monitor, IslandState st
     const TaskIconRow row = TaskRowFor(island, 1);
     float drawnBottomDip = cardUp ? cardBottomDip : shape.rect.bottom;
     if (row.valid && row.bottom > drawnBottomDip) drawnBottomDip = row.bottom;
+    if (NiriLayoutActive() && niriSearchResultsReveal > 0.001f) {
+        const island::NiriSearchResultsLayout results =
+            island::NiriSearchResultsLayoutFor(restingBar, niriSearchResultsCount,
+                                               niriSearchResultsPending, 1.0f);
+        if (results.valid && results.panel.rect.bottom > drawnBottomDip) {
+            drawnBottomDip = results.panel.rect.bottom;
+        }
+    }
     // A few DIP of slack so the antialiased bottom edge of the pill is inside the region.
     drawnBottomDip += 2.0f;
 
@@ -843,7 +1033,8 @@ void IslandWindow::ApplyInputRegion() {
     const RECT region =
         InputRegionFor(monitor_, motion_.Target(), anchor, motion_.Current(), cardLeftDip_,
                        taskButtonCount_, statusStripWidthDip_, trayIconCount_, noticeStripUp_,
-                       cardHeightDip_, cardWidthDip_);
+                       cardHeightDip_, cardWidthDip_, niriSearchResultsReveal_,
+                       niriSearchResultsCount_, niriSearchResultsPending_);
 
     // Skipped when it is the same rectangle as last time.
     //
@@ -892,12 +1083,64 @@ RoundedBox IslandWindow::LayoutIslandFor() const {
     return RowAnchorBox(motion_.Current(), resting);
 }
 
+void IslandWindow::SetNiriSearchResults(float reveal, int count, bool pending) {
+    reveal = std::clamp(reveal, 0.0f, 1.0f);
+    count = std::clamp(count, 0, island::kStartSearchMaxResults);
+    if (reveal == niriSearchResultsReveal_ && count == niriSearchResultsCount_ &&
+        pending == niriSearchResultsPending_) {
+        return;
+    }
+    niriSearchResultsReveal_ = reveal;
+    niriSearchResultsCount_ = count;
+    niriSearchResultsPending_ = pending;
+    ApplyInputRegion();
+}
+
+int IslandWindow::NiriSearchResultAtScreen(POINT screenPoint) const {
+    if (!hwnd_ || niriSearchResultsReveal_ <= 0.001f) return -1;
+    float localX = 0.0f;
+    float localY = 0.0f;
+    ToLocalDip(screenPoint, &localX, &localY);
+    const island::NiriSearchResultsLayout layout =
+        island::NiriSearchResultsLayoutFor(LayoutIslandFor(), niriSearchResultsCount_,
+                                           niriSearchResultsPending_,
+                                           niriSearchResultsReveal_);
+    return island::NiriSearchResultAt(layout, localX, localY);
+}
+
+bool IslandWindow::NiriSearchPanelContainsScreen(POINT screenPoint) const {
+    if (!hwnd_ || niriSearchResultsReveal_ <= 0.001f) return false;
+    float localX = 0.0f;
+    float localY = 0.0f;
+    ToLocalDip(screenPoint, &localX, &localY);
+    const RoundedBox island = LayoutIslandFor();
+    const island::NiriSearchResultsLayout layout =
+        island::NiriSearchResultsLayoutFor(island, niriSearchResultsCount_,
+                                           niriSearchResultsPending_,
+                                           niriSearchResultsReveal_);
+    if (!layout.valid) return false;
+    return localX >= layout.panel.rect.left && localX <= layout.panel.rect.right &&
+           localY >= island.rect.bottom && localY <= layout.panel.rect.bottom;
+}
+
+bool IslandWindow::NiriSearchSurfaceContainsScreen(POINT screenPoint) const {
+    if (!hwnd_) return false;
+    float localX = 0.0f;
+    float localY = 0.0f;
+    ToLocalDip(screenPoint, &localX, &localY);
+    return ContainsWithTolerance(LayoutIslandFor(), localX, localY, kHitToleranceDip) ||
+           NiriSearchPanelContainsScreen(screenPoint);
+}
+
 bool IslandWindow::StartAtScreen(POINT screenPoint) const {
     if (!hwnd_) return false;
 
     float localX = 0.0f;
     float localY = 0.0f;
     ToLocalDip(screenPoint, &localX, &localY);
+    if (NiriLayoutActive()) {
+        return false;
+    }
     return StartButtonHit(LayoutIslandFor(), localX, localY);
 }
 
@@ -908,13 +1151,16 @@ bool IslandWindow::PointerOverControl(POINT screenPoint) const {
     // the whole point: a hand that appears where a click would do nothing is worse than no hand at all.
     if (IconAtScreen(screenPoint) >= 0) return true;
     if (StartAtScreen(screenPoint) || SystemButtonAtScreen(screenPoint)) return true;
-
+    if (NiriSearchResultAtScreen(screenPoint) >= 0) return true;
     // ... AND THE TRAY BUTTON IS ONE OF THE BUTTONS.
     //
     // Found by the check written beside it in Diagnostics: the tray was a control for the CLICK and not for
     // the CURSOR, so the three dots that open the tray page showed a plain arrow -- the same defect the
     // media card's transport buttons had, reported as "这些按钮 鼠标移上去 应该变成小手".
     if (TrayButtonAtScreen(screenPoint)) return true;
+    if (CardRailAtScreen(screenPoint) != CardRailTarget::None) return true;
+    const TopBarTarget topBar = TopBarTargetAtScreen(screenPoint);
+    if (topBar == TopBarTarget::Search || topBar == TopBarTarget::MusicWave) return true;
     if (trayPageOpen_ && (TrayCellHovered() >= 0 || TrayTaskManagerAtScreen(screenPoint))) {
         return true;
     }
@@ -930,6 +1176,10 @@ bool IslandWindow::PointerOverControl(POINT screenPoint) const {
     if (cardOwner_ == CardOwner::Music) {
         if (MusicControlAtScreen(screenPoint) != CardControl::None) return true;
     } else if (cardOwner_ == CardOwner::SystemPanel) {
+        if (commandCenterOpen_ &&
+            CommandCenterHitAtScreen(screenPoint).target != CommandCenterTarget::None) {
+            return true;
+        }
         if (SystemPanelHitAtScreen(screenPoint).target != SystemPanelTarget::None) return true;
         if (SoundPageHitAtScreen(screenPoint).target != SoundPageTarget::None) return true;
     }
@@ -937,7 +1187,30 @@ bool IslandWindow::PointerOverControl(POINT screenPoint) const {
 }
 
 int IslandWindow::IconAtScreen(POINT screenPoint) const {
-    if (RowButtonCount() <= 0 || !hwnd_) return -1;
+    if (!hwnd_) return -1;
+
+    if (NiriLayoutActive()) {
+        if (RowButtonCount() <= 0 || niriRightExtent_ <= 0.01f) return -1;
+        float localX = 0.0f;
+        float localY = 0.0f;
+        ToLocalDip(screenPoint, &localX, &localY);
+        const float widthDip = PixelsToDip(rect_.right - rect_.left, monitor_.dpi);
+        const RoundedBox resting =
+            IslandBoxFor(widthDip, kCollapsedWidthDip, kCollapsedHeightDip);
+        const bool cardMorph =
+            State() == island::IslandState::Expanded ||
+            FromState() == island::IslandState::Expanded;
+        const bool collapsing =
+            cardMorph && State() != island::IslandState::Expanded &&
+            FromState() == island::IslandState::Expanded;
+        const RoundedBox rowIsland =
+            NiriAwareRowAnchor(motion_.Current(), resting, cardMorph,
+                               cardWidthDip_, cardHeightDip_, collapsing);
+        const island::NiriBarLayout layout =
+            island::NiriBarLayoutFor(widthDip, rowIsland, RowButtonCount());
+        return island::NiriTaskAtVisual(layout, localX, localY, niriRightExtent_);
+    }
+    if (RowButtonCount() <= 0) return -1;
 
     // The same island geometry the pointer poll and the renderer use. Derived here rather than
     // remembered so it cannot go stale if the monitor or DPI changed.
@@ -977,7 +1250,8 @@ bool IslandWindow::HitTestScreen(POINT screenPoint) const {
     return ShouldAcceptPointer(monitor_, rect_, screenPoint, motion_.Target(),
                                RowButtonCount(), cardLeftDip_, fullscreenApp_, trayIconCount_,
                                motion_.Current(), noticeStripUp_, shape_, cardHeightDip_,
-                               cardWidthDip_);
+                               cardWidthDip_, niriRightExtent_) ||
+           NiriSearchPanelContainsScreen(screenPoint);
 }
 
 void IslandWindow::SetFullscreenApp(bool fullscreenApp) {
@@ -1001,7 +1275,7 @@ bool IslandWindow::TrayTaskManagerAtScreen(POINT screenPoint) const {
     float localX = 0.0f;
     float localY = 0.0f;
     ToLocalDip(screenPoint, &localX, &localY);
-    return island::TrayPageTaskManagerAt(PlacedCard(), trayIconCount_, localX, localY);
+    return island::TrayPageTaskManagerAt(PageBodyFor(PlacedCard()), trayIconCount_, localX, localY);
 }
 
 void IslandWindow::OpenTrayMenu(int cell, int entryCount) {
@@ -1009,7 +1283,7 @@ void IslandWindow::OpenTrayMenu(int cell, int entryCount) {
         CloseTrayMenu();
         return;
     }
-    const RoundedBox card = PlacedCard();
+    const RoundedBox card = PageBodyFor(PlacedCard());
     const island::TrayPageLayout page = TrayPageFor(card, trayIconCount_);
     if (cell >= page.count) {
         CloseTrayMenu();
@@ -1057,7 +1331,7 @@ SystemPanelHit IslandWindow::SystemPanelHitAtScreen(POINT screenPoint) const {
     //
     // The arithmetic now lives in PlacedCardFor, because the music card's transport controls had the same
     // fault in both axes (HANDOFF 7.86) and a second copy would have been a second chance to differ.
-    const RoundedBox card = PlacedCard();
+    const RoundedBox card = PageBodyFor(PlacedCard());
     // The slider count comes from the panel that was last BUILT, not from a constant: the brightness row
     // exists only when the display answered for it, and a hit test that assumed two rows would put a press
     // between the sliders on the brightness track of a card that has none.
@@ -1081,7 +1355,7 @@ void IslandWindow::CloseSoundPage() {
 void IslandWindow::SetSoundPageScroll(float scroll) {
     // Clamped HERE, from the same layout the drawing uses: a scroll the content cannot support would leave
     // the page blank with no way back, which is what "the page scrolled off the top" looks like.
-    const RoundedBox card = PlacedCard();
+    const RoundedBox card = PageBodyFor(PlacedCard());
     const float limit = SoundPageScrollLimit(card, soundPage_.deviceCount, soundPage_.mixCount);
     if (scroll < 0.0f) scroll = 0.0f;
     if (scroll > limit) scroll = limit;
@@ -1097,6 +1371,27 @@ bool IslandWindow::TakeCardWheel(int* notches) {
     return true;
 }
 
+bool IslandWindow::TakeViewportWheel(int* notches, bool* withControl) {
+    if (!notches || !withControl) return false;
+    const int pending = viewportWheelNotches_;
+    viewportWheelNotches_ = 0;
+    *notches = pending;
+    *withControl = viewportWheelControl_;
+    viewportWheelControl_ = false;
+    return pending != 0;
+}
+
+void IslandWindow::AccumulateViewportWheel(WPARAM wParam) {
+    viewportWheelRemainder_ += GET_WHEEL_DELTA_WPARAM(wParam);
+    const int notches = viewportWheelRemainder_ / WHEEL_DELTA;
+    if (notches == 0) return;
+    viewportWheelRemainder_ -= notches * WHEEL_DELTA;
+    viewportWheelNotches_ += notches;
+    if ((GET_KEYSTATE_WPARAM(wParam) & MK_CONTROL) != 0) {
+        viewportWheelControl_ = true;
+    }
+}
+
 SoundPageHit IslandWindow::SoundPageHitAtScreen(POINT screenPoint) const {
     SoundPageHit hit;
     if (!soundPageOpen_ || !hwnd_) return hit;
@@ -1106,7 +1401,7 @@ SoundPageHit IslandWindow::SoundPageHitAtScreen(POINT screenPoint) const {
     float localY = 0.0f;
     ToLocalDip(screenPoint, &localX, &localY);
 
-    const RoundedBox card = PlacedCard();
+    const RoundedBox card = PageBodyFor(PlacedCard());
     return SoundPageHitFor(card, soundPage_.deviceCount, soundPage_.mixCount, soundScroll_, localX,
                            localY);
 }
@@ -1120,7 +1415,7 @@ int IslandWindow::SoundScrollJumpFor(POINT screenPoint) const {
 
     // The same layout the click was hit-tested against, so the thumb the press is compared with is the thumb
     // that was drawn.
-    const RoundedBox card = PlacedCard();
+    const RoundedBox card = PageBodyFor(PlacedCard());
     const SoundPageLayout layout =
         SoundPageFor(card, soundPage_.deviceCount, soundPage_.mixCount, soundScroll_);
 
@@ -1139,7 +1434,7 @@ bool IslandWindow::PanelSliderFractionForDrag(int row, POINT screenPoint, float*
     float localY = 0.0f;
     ToLocalDip(screenPoint, &localX, &localY);
 
-    const RoundedBox card = PlacedCard();
+    const RoundedBox card = PageBodyFor(PlacedCard());
     // WHICH row, because there are two now: 0 is the volume and 1 the brightness, the same numbering the
     // hit test uses, and the row's own track is what the pointer is followed along.
     const SystemPanelLayout layout =
@@ -1163,7 +1458,7 @@ bool IslandWindow::MixerSliderFractionForDrag(int row, POINT screenPoint, float*
     float localY = 0.0f;
     ToLocalDip(screenPoint, &localX, &localY);
 
-    const RoundedBox card = PlacedCard();
+    const RoundedBox card = PageBodyFor(PlacedCard());
     const SoundPageLayout layout =
         SoundPageFor(card, soundPage_.deviceCount, soundPage_.mixCount, soundScroll_);
     if (row >= layout.sessionCount) return false;
@@ -1209,7 +1504,7 @@ IslandAnchor IslandWindow::CurrentAnchor() const {
 
 RoundedBox IslandWindow::PlacedCard() const {
     return PlacedCardFor(BoxForState(IslandState::Collapsed, CurrentAnchor()), cardLeftDip_,
-                         cardWidthDip_, cardHeightDip_);
+                         cardWidthDip_, cardHeightDip_, NiriLayoutActive());
 }
 
 bool IslandWindow::ShouldAcceptPointer(const MonitorGeometry& monitor, const RECT& windowRect,
@@ -1217,7 +1512,7 @@ bool IslandWindow::ShouldAcceptPointer(const MonitorGeometry& monitor, const REC
                                        float cardLeftDip, bool fullscreenApp, int trayIconCount,
                                        const RoundedBox& currentShape, bool noticeStripUp,
                                        BarShape barShape, float cardHeightDip,
-                                       float cardWidthDip) {
+                                       float cardWidthDip, float niriRightExtent) {
     // THE BAR IS NOT THERE WHILE A FULL-SCREEN APPLICATION IS IN FRONT.
     //
     // Nothing of it is drawn in that state (see Renderer::RenderFrame), so there is nothing to point at
@@ -1300,16 +1595,38 @@ bool IslandWindow::ShouldAcceptPointer(const MonitorGeometry& monitor, const REC
         return inside(island, localX, localY) || inside(shape, localX, localY);
     }
 
+    if (NiriLayoutActive()) {
+        const bool cardMorph =
+            cardLeftDip > 0.0f &&
+            currentShape.rect.right > currentShape.rect.left &&
+            (currentShape.rect.bottom - currentShape.rect.top) >
+                kCollapsedHeightDip + 0.5f;
+        const bool collapsing = cardMorph && state != IslandState::Expanded;
+        const RoundedBox rowIsland =
+            NiriAwareRowAnchor(currentShape, restingPill, cardMorph, cardWidthDip,
+                               cardHeightDip, collapsing);
+        const island::NiriBarLayout layout =
+            island::NiriBarLayoutFor(widthDip, rowIsland, iconCount);
+        if (niriRightExtent > 0.01f &&
+            island::NiriTaskAtVisual(layout, localX, localY, niriRightExtent) >= 0) {
+            return true;
+        }
+    }
+
     // The tray BUTTON is the bar, exactly as the application icons are: it is drawn beside the island,
     // outside every one of the state's shapes, so a button the pointer could not reach would be drawn and
     // completely inert -- the defect the application icons had before this same union was extended for
     // them. (The card's own grid needs nothing here: it is inside the card, and the card's column below
     // already accepts the pointer.)
-    if (trayIconCount > 0 && TrayButtonHit(island, localX, localY)) return true;
+    if (!NiriLayoutActive() && trayIconCount > 0 &&
+        TrayButtonHit(island, localX, localY)) {
+        return true;
+    }
 
     // The row, from the box that accounts for the tray button standing between it and the island.
     const RoundedBox rowIsland = RowAnchorWithTray(island, trayIconCount > 0);
-    if (iconCount > 0 && TaskRowContains(rowIsland, iconCount, localX, localY)) {
+    if (!NiriLayoutActive() && iconCount > 0 &&
+        TaskRowContains(rowIsland, iconCount, localX, localY)) {
         return true;
     }
 
@@ -1321,10 +1638,10 @@ bool IslandWindow::ShouldAcceptPointer(const MonitorGeometry& monitor, const REC
     // Answered from `localX`/`localY`, which this function already computed, rather than by asking the
     // window for them: this is a static function with no window to ask, and the coordinates it is given
     // are already relative to the same window-local origin.
-    if (SystemButtonHit(island, localX, localY)) {
+    if (!NiriLayoutActive() && SystemButtonHit(island, localX, localY)) {
         return true;
     }
-    if (StartButtonHit(island, localX, localY)) {
+    if (!NiriLayoutActive() && StartButtonHit(island, localX, localY)) {
         return true;
     }
 
@@ -1347,7 +1664,9 @@ bool IslandWindow::ShouldAcceptPointer(const MonitorGeometry& monitor, const REC
     // exactly as the user moves down onto it. See CardColumnFor.
     if (cardLeftDip > 0.0f) {
         const RoundedBox restingBar = BoxForState(IslandState::Collapsed, anchor);
-        const RectF column = CardColumnFor(restingBar, cardLeftDip, cardWidthDip, cardHeightDip);
+        const RectF column =
+            CardColumnFor(restingBar, cardLeftDip, cardWidthDip, cardHeightDip,
+                          NiriLayoutActive());
         if (localX >= column.left && localX <= column.right && localY >= column.top &&
             localY <= column.bottom) {
             return true;
@@ -1372,11 +1691,38 @@ bool IslandWindow::SystemButtonAtScreen(POINT screenPoint) const {
     float localX = 0.0f;
     float localY = 0.0f;
     ToLocalDip(screenPoint, &localX, &localY);
+    if (NiriLayoutActive()) {
+        return false;
+    }
     return SystemButtonHit(LayoutIslandFor(), localX, localY);
+}
+
+IslandWindow::TopBarTarget IslandWindow::TopBarTargetAtScreen(POINT screenPoint) const {
+    if (!hwnd_) return TopBarTarget::None;
+    float localX = 0.0f;
+    float localY = 0.0f;
+    ToLocalDip(screenPoint, &localX, &localY);
+    const RoundedBox island = LayoutIslandFor();
+    if (!ContainsWithTolerance(island, localX, localY, kHitToleranceDip)) {
+        return TopBarTarget::None;
+    }
+    // Keep a generous click target around the search mark, then reserve only
+    // the clock/date run for hover expansion. The bell and the right-hand
+    // padding are deliberately inert so passing across them cannot open the
+    // card.
+    if (localX <= island.rect.left + 52.0f) return TopBarTarget::Search;
+    const RectF wave = NiriMusicWaveButtonFor(island);
+    if (niriMusicWaveVisible_ && localX >= wave.left && localX <= wave.right &&
+        localY >= wave.top && localY <= wave.bottom) {
+        return TopBarTarget::MusicWave;
+    }
+    if (localX >= island.rect.right - 40.0f) return TopBarTarget::None;
+    return TopBarTarget::Center;
 }
 
 bool IslandWindow::TrayButtonAtScreen(POINT screenPoint) const {
     if (!hwnd_ || trayIconCount_ <= 0) return false;
+    if (NiriLayoutActive()) return false;
 
     float localX = 0.0f;
     float localY = 0.0f;
@@ -1390,6 +1736,24 @@ void IslandWindow::UpdatePointerState() {
 
     POINT cursor = {};
     if (!GetCursorPos(&cursor)) return;
+
+    const bool leftButtonDown = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+    const bool leftButtonPressed = leftButtonDown && !lastLeftButtonDown_;
+    lastLeftButtonDown_ = leftButtonDown;
+    if (leftButtonPressed && startSearchVisible_ && startSearchInline_ &&
+        !NiriSearchSurfaceContainsScreen(cursor)) {
+        OnStartSearchLostFocus();
+    }
+    if (leftButtonPressed &&
+        (railPowerConfirmButton_ == 2 || railPowerConfirmButton_ == 3) &&
+        !CardRailPowerConfirmContainsScreen(cursor)) {
+        railPowerConfirmCancel_ = true;
+    }
+
+    if (startSearchVisible_ && startSearchInline_ && startSearchForegroundHeld_ &&
+        GetForegroundWindow() != startSearchHost_) {
+        OnStartSearchLostFocus();
+    }
 
     // Early-out while the pointer sits still: this runs every 8 ms and the
     // answer can only change when the pointer moves.
@@ -1435,14 +1799,15 @@ void IslandWindow::UpdatePointerState() {
         if (cardLeftDip_ > 0.0f) {
             const RectF column = CardColumnFor(
                 BoxForState(IslandState::Collapsed, CurrentAnchor()), cardLeftDip_, cardWidthDip_,
-                cardHeightDip_);
+                cardHeightDip_, NiriLayoutActive());
             pointerInCardColumn_ = localX >= column.left && localX <= column.right &&
                                    localY >= column.top && localY <= column.bottom;
         }
         const bool accepted = ShouldAcceptPointer(monitor_, rect_, cursor, motion_.Target(),
                                                   RowButtonCount(), cardLeftDip_, false, 0,
                                                   motion_.Current(), noticeStripUp_, shape_,
-                                                  cardHeightDip_, cardWidthDip_);
+                                                  cardHeightDip_, cardWidthDip_,
+                                                  niriRightExtent_);
 
         // `haveTrace_` distinguishes the first poll from a genuine transition.
         if (!haveTrace_ || accepted != lastAccepted_) {
@@ -1494,6 +1859,17 @@ void IslandWindow::UpdatePointerState() {
         const float localY = PixelsToDip(cursor.y - rect_.top, monitor_.dpi);
         localXReported_ = localX;
         localYReported_ = localY;
+        const island::NiriBarLayout niriLayout =
+            island::NiriBarLayoutFor(
+                widthDip,
+                NiriAwareRowAnchor(
+                    motion_.Current(), island,
+                    State() == island::IslandState::Expanded ||
+                        FromState() == island::IslandState::Expanded,
+                    cardWidthDip_, cardHeightDip_,
+                    State() != island::IslandState::Expanded &&
+                        FromState() == island::IslandState::Expanded),
+                RowButtonCount());
 
         if (taskButtonCount_ > 0) {
             // `hoveredIcon_` is passed in rather than ignored, because opening a button pushes the
@@ -1511,15 +1887,26 @@ void IslandWindow::UpdatePointerState() {
             // drawn icon was answered as "somewhere along the row" or as a different slot. A hover
             // test that names a different row from the one painted is the whole family of defect this
             // function has now been fixed for twice.
-            const RoundedBox rowAnchor = RowAnchorBox(motion_.Current(), island);
-            hovered = TaskIconToKeepOpen(RowAnchorWithTray(rowAnchor, trayIconCount_ > 0),
-                                         RowButtonCount(), hoveredIcon_, localX, localY);
+            if (NiriLayoutActive()) {
+                if (niriRightExtent_ <= 0.01f) {
+                    hovered = -1;
+                } else {
+                    hovered =
+                        island::NiriTaskAtVisual(niriLayout, localX, localY, niriRightExtent_);
+                }
+            } else {
+                const RoundedBox rowAnchor = RowAnchorBox(motion_.Current(), island);
+                hovered = TaskIconToKeepOpen(RowAnchorWithTray(rowAnchor, trayIconCount_ > 0),
+                                             RowButtonCount(), hoveredIcon_, localX, localY);
+            }
         }
         hoveredIcon_ = hovered;
 
         // The tray, from the monitor's own width: the button is anchored to the right-hand edge rather than
         // to the row, so the row growing must not move it (see TrayButtonFor).
-        trayButtonHovered_ = trayIconCount_ > 0 && TrayButtonHit(island, localX, localY);
+        trayButtonHovered_ =
+            !NiriLayoutActive() && trayIconCount_ > 0 &&
+            TrayButtonHit(island, localX, localY);
 
         // ... and the icon under the pointer when its CARD is up. The card is placed by the frame loop, so
         // this is the same placed rectangle the renderer drew into -- the same rule the music card's
@@ -1529,12 +1916,13 @@ void IslandWindow::UpdatePointerState() {
         if (trayIconCount_ > 0 && cardLeftDip_ > 0.0f) {
             // The anchor the window is laid out from, NOT a local one: the card is placed from the resting
             // pill's box, and the frame loop placed it from this same anchor.
-            const RoundedBox card = PlacedCard();
+            const RoundedBox card = PageBodyFor(PlacedCard());
             trayCellHovered_ = TrayPageCellAt(card, trayIconCount_, localX, localY);
         }
         if (trayPageOpen_ && cardLeftDip_ > 0.0f) {
             trayTaskManagerHovered_ =
-                island::TrayPageTaskManagerAt(PlacedCard(), trayIconCount_, localX, localY);
+                island::TrayPageTaskManagerAt(PageBodyFor(PlacedCard()), trayIconCount_, localX,
+                                              localY);
         }
 
         // ... and the tray's own menu, when one is up: the rows it was OPENED with, not a fresh layout from
@@ -1548,7 +1936,7 @@ void IslandWindow::UpdatePointerState() {
         // ... and the same question for the Start card, which is laid out by the same rule.
         startHit_ = {};
         if (startPageOpen_ && cardLeftDip_ > 0.0f) {
-            const RoundedBox card = PlacedCard();
+            const RoundedBox card = PageBodyFor(PlacedCard());
             startHit_ = StartHitFromPage(island::StartPageHitFor(
                 card, startPage_, startPinCount_, startListCount_, startPickerScroll_, localX,
                 localY, startSearchActive_, startSearchKinds_, startSearchKindsCount_,
@@ -1571,10 +1959,10 @@ void IslandWindow::UpdatePointerState() {
         }
 
         // The Start button is on the other end, from the same island box.
-        startHovered_ = StartButtonHit(island, localX, localY);
+        startHovered_ = !NiriLayoutActive() && StartButtonHit(island, localX, localY);
 
         // The system panel toggle is on the same deck, from the same island box.
-        systemHovered_ = SystemButtonHit(island, localX, localY);
+        systemHovered_ = !NiriLayoutActive() && SystemButtonHit(island, localX, localY);
 
         // Reported on change, so what the pointer is doing is visible in the log.
         //
@@ -1589,10 +1977,12 @@ void IslandWindow::UpdatePointerState() {
         }
     }
 
+    niriSearchRowHovered_ = NiriSearchResultAtScreen(cursor);
     const bool inside =
         ShouldAcceptPointer(monitor_, rect_, cursor, motion_.Target(), RowButtonCount(),
                             cardLeftDip_, false, 0, motion_.Current(), noticeStripUp_, shape_,
-                            cardHeightDip_, cardWidthDip_);
+                            cardHeightDip_, cardWidthDip_, niriRightExtent_) ||
+        NiriSearchPanelContainsScreen(cursor);
     if (inside != pointerInside_) {
         pointerInside_ = inside;
         pointerInsideChanged_ = true;
@@ -1704,7 +2094,8 @@ LRESULT IslandWindow::SearchHostProc(HWND hwnd, UINT message, WPARAM wParam, LPA
         case WM_CTLCOLOREDIT: {
             HDC dc = reinterpret_cast<HDC>(wParam);
             SetBkMode(dc, TRANSPARENT);
-            SetTextColor(dc, RGB(242, 244, 248));
+            SetTextColor(dc, startSearchInline_ ? ToColorRef(island::CurrentTheme().ink)
+                                               : RGB(242, 244, 248));
             return reinterpret_cast<LRESULT>(startSearchBrush_);
         }
         case WM_ERASEBKGND: {
@@ -1715,7 +2106,13 @@ LRESULT IslandWindow::SearchHostProc(HWND hwnd, UINT message, WPARAM wParam, LPA
         }
         case WM_SIZE:
             if (startSearchEdit_) {
-                SetWindowPos(startSearchEdit_, nullptr, 0, 0, LOWORD(lParam), HIWORD(lParam),
+                const int editorInset =
+                    startSearchInline_
+                        ? static_cast<int>(
+                              std::lround(island::kNiriSearchSideSlotDip * scale_))
+                        : 0;
+                SetWindowPos(startSearchEdit_, nullptr, editorInset, 0,
+                             std::max(1, LOWORD(lParam) - editorInset * 2), HIWORD(lParam),
                              SWP_NOZORDER | SWP_NOACTIVATE);
             }
             return 0;
@@ -1726,6 +2123,8 @@ LRESULT IslandWindow::SearchHostProc(HWND hwnd, UINT message, WPARAM wParam, LPA
             startSearchHost_ = nullptr;
             startSearchEdit_ = nullptr;
             startSearchVisible_ = false;
+            startSearchInline_ = false;
+            startSearchForegroundHeld_ = false;
             break;
         default:
             break;
@@ -1748,7 +2147,7 @@ LRESULT CALLBACK IslandWindow::SearchEditProcThunk(HWND hwnd, UINT message, WPAR
             if (GetWindowTextLengthW(hwnd) > 0) {
                 SetWindowTextW(hwnd, L"");
             } else {
-                self->EndStartSearch(false, true);
+                self->EndStartSearch(false, !self->startSearchInline_);
                 self->startSearchCancel_ = true;
                 self->layoutChanged_ = true;
             }
@@ -1935,7 +2334,13 @@ LRESULT IslandWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
             // move, because it owns the page index and the scroll offsets.
             const bool startPickerUp = startPageOpen_ && startPage_ == 1;
             const bool tilesPagerUp = systemPanel_.tilesPageShown && systemPanel_.pageCount > 1;
-            if (!soundPageOpen_ && !startPickerUp && !tilesPagerUp) break;
+            const bool commandCenterUp = commandCenterOpen_;
+            if (viewportWheelEnabled_ &&
+                !soundPageOpen_ && !startPickerUp && !tilesPagerUp && !commandCenterUp) {
+                AccumulateViewportWheel(wParam);
+                return 0;
+            }
+            if (!soundPageOpen_ && !startPickerUp && !tilesPagerUp && !commandCenterUp) break;
 
             // Only over the card. The window spans the whole bar strip at the top of the screen, and
             // swallowing the wheel anywhere in it would be stealing input from whatever is underneath.
@@ -1943,7 +2348,7 @@ LRESULT IslandWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
             float localX = 0.0f;
             float localY = 0.0f;
             ToLocalDip(cursor, &localX, &localY);
-            const RoundedBox card = PlacedCard();
+            const RoundedBox card = PageBodyFor(PlacedCard());
             if (localX < card.rect.left || localX > card.rect.right || localY < card.rect.top ||
                 localY > card.rect.bottom) {
                 break;
@@ -1955,6 +2360,14 @@ LRESULT IslandWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
                                    systemPanel_.pageCount > 1, systemPanel_.pageIndex,
                                    systemPanel_.pageCount);
                 const RectF& area = layout.tileArea;
+                if (localX < area.left || localX > area.right || localY < area.top ||
+                    localY > area.bottom) {
+                    break;
+                }
+            } else if (commandCenterUp) {
+                const CommandCenterLayout layout =
+                    CommandCenterFor(card, commandCenterNotificationCount_);
+                const RectF& area = layout.notifications;
                 if (localX < area.left || localX > area.right || localY < area.top ||
                     localY > area.bottom) {
                     break;
@@ -1973,9 +2386,16 @@ LRESULT IslandWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
             if (notches != 0) {
                 cardWheelRemainder_ -= notches * WHEEL_DELTA;
                 cardWheelNotches_ += notches;
+                InvalidateRect(hwnd_, nullptr, FALSE);
             }
             // Consume even a sub-notch precision-touchpad delta. Letting those messages fall through
             // leaked part of the gesture to the window underneath and made every notch arrive later.
+            return 0;
+        }
+
+        case WM_MOUSEHWHEEL: {
+            if (!viewportWheelEnabled_) break;
+            AccumulateViewportWheel(wParam);
             return 0;
         }
 

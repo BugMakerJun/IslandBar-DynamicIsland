@@ -43,6 +43,9 @@ enum class IslandState : int {
     // island's LEFT EDGE (DeckButtonFor / StartButtonFor): widening pushes the buttons outward with it
     // instead of leaving them behind at a fixed place.
     NoticeStrip = 5,
+    // Search is an island-only horizontal state: the left edge stays on the
+    // resting pill while the right edge extends into a text field.
+    SearchStrip = 6,
 };
 
 // The full-width bar used when an application is full-screen.
@@ -99,8 +102,8 @@ IslandState StateFromName(const wchar_t* name);
 // as the pointer crosses it is the thing this removes, and it also removes a whole class of collision:
 // a wider island grew symmetrically, so its left edge reached towards the Start button.
 
-inline constexpr float kCollapsedWidthDip  = 220.0f;
-inline constexpr float kCollapsedHeightDip = 36.0f;
+inline constexpr float kCollapsedWidthDip  = 300.0f;
+inline constexpr float kCollapsedHeightDip = 32.0f;
 
 // Hover is the resting shape with the application icons WIDENED so each one can say what it is.
 //
@@ -177,10 +180,10 @@ inline constexpr float kExpandedHeightDip  = 500.0f;
 // The music card is not a settings page. It keeps the compact height it was designed around.
 inline constexpr float kMusicCardHeightDip = 280.0f;
 
-// The system tiles page is denser than the Start and tray pages and was reported as too large on its own.
-// It therefore has a compact face while the other Stitch pages keep the full 520 x 500 envelope above.
-inline constexpr float kSystemPanelWidthDip  = 480.0f;
-inline constexpr float kSystemPanelHeightDip = 408.0f;
+// Every page behind the unified Niri side rail uses this face. It is the largest one any page needs,
+// so switching Dashboard / applications / tray / system tabs never resizes the card.
+inline constexpr float kSystemPanelWidthDip  = 880.0f;
+inline constexpr float kSystemPanelHeightDip = 540.0f;
 
 // How much of an outer card (the system panel, a notification) is uncovered, given the height of the
 // animated box it is being drawn in.
@@ -233,8 +236,12 @@ inline constexpr float kMusicStripHeightDip = kCollapsedHeightDip;
 // pushes the row further right, and with seven applications open the row already reaches most of the way to
 // the monitor's edge. 420 leaves room for the row on a 2560-wide screen and still shows a full sentence of
 // a Chinese title before it has to scroll.
-inline constexpr float kNoticeStripWidthDip  = 420.0f;
+inline constexpr float kNoticeStripWidthDip  = 620.0f;
 inline constexpr float kNoticeStripHeightDip = kCollapsedHeightDip;
+
+// Search keeps the resting pill's geometry. Only the contents change, so the
+// input field never pushes the island or the controls around it.
+inline constexpr float kSearchStripWidthDip = kCollapsedWidthDip;
 
 // The box the application icon row -- and every control measured from the island's edges -- is anchored to.
 //
@@ -273,7 +280,11 @@ inline RoundedBox RowAnchorBox(const RoundedBox& current, const RoundedBox& rest
     const float pillWidth = restingPill.rect.right - restingPill.rect.left;
     const float currentHeight = current.rect.bottom - current.rect.top;
     const float pillHeight = restingPill.rect.bottom - restingPill.rect.top;
-    if (currentWidth > pillWidth + 0.5f && currentWidth < kExpandedWidthDip - 0.5f &&
+    // A full-screen bar can be the same height as the resting pill on machines
+    // whose native taskbar is 32 DIP. Its screen-wide width, not its height,
+    // distinguishes it from the notice strip.
+    if (currentWidth > pillWidth + 0.5f &&
+        currentWidth <= kNoticeStripWidthDip + 0.5f &&
         std::fabs(currentHeight - pillHeight) <= 0.5f) {
         return current;
     }
@@ -290,7 +301,7 @@ inline float StadiumRadiusForHeight(float heightDip) { return heightDip * 0.5f; 
 // lozenge and eat most of its usable width. 24 DIP is the outer radius shared by
 // the three Stitch references (系统 / 开始菜单 / 托盘), so every page opens as the
 // same rounded glass sheet rather than as a different kind of window.
-inline constexpr float kCardRadiusDip = 24.0f;
+inline constexpr float kCardRadiusDip = 32.0f;
 
 struct SizeF {
     float width  = 0.0f;
@@ -366,11 +377,13 @@ RoundedBox BoxForState(IslandState state, const IslandAnchor& anchor);
 // Replaces a `BoxHangingFrom` that hung a state's box from a left edge and kept the MOTION's top -- which
 // is exactly the mistake above, and which nothing called.
 inline RoundedBox PlacedCardFor(const RoundedBox& restingPill, float cardLeftDip,
-                                float cardWidthDip, float cardHeightDip) {
+                                float cardWidthDip, float cardHeightDip,
+                                bool sharePillTop = false) {
     RoundedBox card;
     card.rect.left = cardLeftDip;
     card.rect.right = cardLeftDip + cardWidthDip;
-    card.rect.top = restingPill.rect.bottom + kCardTopGapDip;
+    card.rect.top = sharePillTop ? restingPill.rect.top
+                                 : restingPill.rect.bottom + kCardTopGapDip;
     card.rect.bottom = card.rect.top + cardHeightDip;
     card.radiusX = kCardRadiusDip;
     card.radiusY = kCardRadiusDip;
@@ -392,12 +405,14 @@ inline RoundedBox PlacedCardFor(const RoundedBox& restingPill, float cardLeftDip
 // given up mid-journey. The test that passed jumped straight from one to the other and never crossed it,
 // which is why the bar still failed after the assertion went green.
 inline RectF CardColumnFor(const RoundedBox& restingPill, float cardLeftDip,
-                           float cardWidthDip, float cardHeightDip) {
-    const RoundedBox card = PlacedCardFor(restingPill, cardLeftDip, cardWidthDip, cardHeightDip);
+                           float cardWidthDip, float cardHeightDip,
+                           bool sharePillTop = false) {
+    const RoundedBox card =
+        PlacedCardFor(restingPill, cardLeftDip, cardWidthDip, cardHeightDip, sharePillTop);
     RectF column;
     column.left = card.rect.left;
     column.right = card.rect.right;
-    column.top = restingPill.rect.bottom;   // the bar's underside, NOT the card's top edge
+    column.top = sharePillTop ? restingPill.rect.top : restingPill.rect.bottom;
     column.bottom = card.rect.bottom;
     return column;
 }
@@ -491,6 +506,11 @@ public:
     // re-derives the current box without disturbing the state.
     void SetAnchor(const IslandAnchor& anchor);
 
+    // Opening a card first grows it sideways, then pulls the height down. The
+    // reverse transition retracts height first and width last. Off by default so
+    // the legacy themes and their existing motion assertions are unchanged.
+    void SetStagedExpansion(bool enabled) { stagedExpansion_ = enabled; }
+
     // Requests a state. Returns true only if this actually started a
     // transition: asking for the state already targeted is a no-op, which
     // matters because the hover check runs many times a second. Re-targeting
@@ -527,6 +547,7 @@ private:
     bool hasAnchor_ = false;
 
     MotionTiming timing_{};
+    bool stagedExpansion_ = false;
 };
 
 } // namespace island

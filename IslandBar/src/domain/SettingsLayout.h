@@ -14,6 +14,7 @@ enum class SettingsPage {
     General = 0,
     Appearance,
     Performance,
+    Experimental,
     About,
     Count,
 };
@@ -35,6 +36,8 @@ enum class SettingsHitKind {
     ShapeNotch,
     Theme,
     ToggleAutoStart,
+    ToggleScrollTiling,
+    ScrollTilingAction,
     Quit,
     OpenConfigFolder,
     OpenLogFolder,
@@ -75,6 +78,13 @@ struct SettingsLayout {
     RectF themeLabel;
     RectF themeSubtitle;
     RectF themeButtons[kSettingsMaxThemes];
+    RectF experimentalLabel;
+    RectF experimentalSubtitle;
+    RectF experimentalWarning;
+    RectF tilingToggleRow;
+    RectF tilingSwitch;
+    RectF tilingActionRow;
+    RectF tilingStatus;
     RectF pathRows[2];
     int themeCount = 0;
 };
@@ -133,6 +143,15 @@ inline SettingsLayout SettingsLayoutFor(float widthDip, float heightDip, int the
         layout.themeButtons[i] = {buttonLeft, top, buttonLeft + themeWidth, top + 44.0f};
     }
 
+    layout.experimentalLabel = {left, 142.0f, right, 164.0f};
+    layout.experimentalSubtitle = {left, 166.0f, right, 186.0f};
+    layout.experimentalWarning = {left, 198.0f, right, 250.0f};
+    layout.tilingToggleRow = {left, 262.0f, right, 310.0f};
+    layout.tilingSwitch = {right - 54.0f, layout.tilingToggleRow.top + 12.0f,
+                           right - 16.0f, layout.tilingToggleRow.bottom - 12.0f};
+    layout.tilingActionRow = {left, 322.0f, right, 376.0f};
+    layout.tilingStatus = {left, 388.0f, right, 430.0f};
+
     layout.pathRows[0] = {left, 142.0f, right, 200.0f};
     layout.pathRows[1] = {left, 210.0f, right, 268.0f};
     return layout;
@@ -158,6 +177,13 @@ inline SettingsHit SettingsHitAt(const SettingsLayout& layout, SettingsPage page
         for (int i = 0; i < layout.themeCount; ++i) {
             if (inside(layout.themeButtons[i])) return {SettingsHitKind::Theme, i};
         }
+    } else if (page == SettingsPage::Experimental) {
+        if (inside(layout.tilingToggleRow)) {
+            return {SettingsHitKind::ToggleScrollTiling, -1};
+        }
+        if (inside(layout.tilingActionRow)) {
+            return {SettingsHitKind::ScrollTilingAction, -1};
+        }
     } else if (page == SettingsPage::About) {
         if (inside(layout.pathRows[0])) return {SettingsHitKind::OpenConfigFolder, -1};
         if (inside(layout.pathRows[1])) return {SettingsHitKind::OpenLogFolder, -1};
@@ -182,6 +208,9 @@ inline int SettingsFocusTargets(const SettingsLayout& layout, SettingsPage page,
         add(SettingsHitKind::ShapeCapsule, -1);
         add(SettingsHitKind::ShapeNotch, -1);
         for (int i = 0; i < layout.themeCount; ++i) add(SettingsHitKind::Theme, i);
+    } else if (page == SettingsPage::Experimental) {
+        add(SettingsHitKind::ToggleScrollTiling, -1);
+        add(SettingsHitKind::ScrollTilingAction, -1);
     } else if (page == SettingsPage::About) {
         add(SettingsHitKind::OpenConfigFolder, -1);
         add(SettingsHitKind::OpenLogFolder, -1);

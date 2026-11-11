@@ -8,6 +8,7 @@
 #include "shell/Weather.h"   // SkyMark: the weather mark the status line draws, per WMO code
 
 #include "media/WicImage.h"   // DecodeImage, for the mixer's application icons
+#include "domain/NiriBarLayout.h"
 #include "domain/TaskStripLayout.h"
 
 // For the notification field capacities. TextRenderer itself stays free of the
@@ -16,6 +17,7 @@
 #include "services/Notification.h"
 #include "core/Log.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cwchar>
@@ -152,6 +154,69 @@ bool TextRenderer::Initialize() {
     makeStatusFormat(20.0f, DWRITE_FONT_WEIGHT_EXTRA_BOLD, &statusTimeFormat_);
     makeStatusFormat(9.5f, DWRITE_FONT_WEIGHT_SEMI_BOLD, &statusWeatherFormat_);
 
+    const auto makeNiriFormat = [this](float size, DWRITE_FONT_WEIGHT weight,
+                                       DWRITE_TEXT_ALIGNMENT horizontal,
+                                       IDWriteTextFormat** out) -> bool {
+        const HRESULT created = factory_->CreateTextFormat(
+            L"Segoe UI Variable Display", nullptr, weight, DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL, size, L"zh-CN", out);
+        if (FAILED(created) || !*out) return false;
+        (*out)->SetTextAlignment(horizontal);
+        (*out)->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        (*out)->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        return true;
+    };
+    const auto makeCommandFormat = [this](float size, DWRITE_FONT_WEIGHT weight,
+                                          DWRITE_TEXT_ALIGNMENT horizontal,
+                                          IDWriteTextFormat** out) -> bool {
+        const HRESULT created = factory_->CreateTextFormat(
+            L"Noto Sans SC", nullptr, weight, DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL, size, L"zh-CN", out);
+        if (FAILED(created) || !*out) return false;
+        (*out)->SetTextAlignment(horizontal);
+        (*out)->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        (*out)->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        return true;
+    };
+    makeNiriFormat(17.0f, DWRITE_FONT_WEIGHT_BOLD, DWRITE_TEXT_ALIGNMENT_LEADING,
+                   &niriClockFormat_);
+    makeNiriFormat(13.5f, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_ALIGNMENT_LEADING,
+                   &niriDateFormat_);
+    makeNiriFormat(11.0f, DWRITE_FONT_WEIGHT_BOLD, DWRITE_TEXT_ALIGNMENT_CENTER,
+                   &niriLyricFormat_);
+    makeNiriFormat(58.0f, DWRITE_FONT_WEIGHT_BOLD, DWRITE_TEXT_ALIGNMENT_LEADING,
+                   &niriHeroFormat_);
+    makeNiriFormat(12.5f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING,
+                   &niriMetricFormat_);
+    makeCommandFormat(44.0f, DWRITE_FONT_WEIGHT_EXTRA_BOLD, DWRITE_TEXT_ALIGNMENT_LEADING,
+                      &niriCommandTimeFormat_);
+    makeCommandFormat(12.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_ALIGNMENT_LEADING,
+                      &niriCommandDateFormat_);
+    makeCommandFormat(11.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_ALIGNMENT_LEADING,
+                      &niriCommandChipFormat_);
+    makeCommandFormat(24.0f, DWRITE_FONT_WEIGHT_BLACK, DWRITE_TEXT_ALIGNMENT_CENTER,
+                      &niriWeatherTempFormat_);
+    makeCommandFormat(10.0f, DWRITE_FONT_WEIGHT_BOLD, DWRITE_TEXT_ALIGNMENT_CENTER,
+                      &niriWeatherQualityFormat_);
+    makeCommandFormat(12.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_ALIGNMENT_CENTER,
+                      &niriWeatherWordFormat_);
+    makeCommandFormat(11.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_ALIGNMENT_CENTER,
+                      &niriCalendarWeekdayFormat_);
+    makeCommandFormat(11.0f, DWRITE_FONT_WEIGHT_MEDIUM, DWRITE_TEXT_ALIGNMENT_CENTER,
+                      &niriCalendarDayFormat_);
+    makeCommandFormat(11.0f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING,
+                      &niriMediaSubtitleFormat_);
+    makeCommandFormat(9.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_ALIGNMENT_LEADING,
+                      &niriMediaTimeFormat_);
+    makeCommandFormat(14.0f, DWRITE_FONT_WEIGHT_BOLD, DWRITE_TEXT_ALIGNMENT_LEADING,
+                      &niriNotificationHeaderFormat_);
+    makeCommandFormat(12.0f, DWRITE_FONT_WEIGHT_BOLD, DWRITE_TEXT_ALIGNMENT_LEADING,
+                      &niriNotificationAppFormat_);
+    makeCommandFormat(12.0f, DWRITE_FONT_WEIGHT_BOLD, DWRITE_TEXT_ALIGNMENT_LEADING,
+                      &niriNotificationTitleFormat_);
+    makeCommandFormat(11.0f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING,
+                      &niriNotificationMetaFormat_);
+
     // The music card's top row: the source name and the volume readout.
     //
     // Its own format rather than reusing appFormat_, which the notification header uses and which
@@ -198,6 +263,18 @@ bool TextRenderer::Initialize() {
             ellipsis->Release();
         }
     };
+    hr = factory_->CreateTextFormat(
+        L"Noto Sans SC", nullptr, DWRITE_FONT_WEIGHT_NORMAL,
+        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 11.5f, L"zh-CN",
+        &niriNotificationBodyFormat_);
+    if (SUCCEEDED(hr) && niriNotificationBodyFormat_) {
+        niriNotificationBodyFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        niriNotificationBodyFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+        niriNotificationBodyFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+        niriNotificationBodyFormat_->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM,
+                                                    14.0f, 11.0f);
+        trimWithEllipsis(niriNotificationBodyFormat_);
+    }
     hr = factory_->CreateTextFormat(
         L"Segoe UI Variable Text", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
         DWRITE_FONT_STRETCH_NORMAL, 11.5f, L"zh-CN", &startLabelFormat_);
@@ -444,6 +521,9 @@ void TextRenderer::Shutdown() {
     notificationIcon_.revision = 0;
     SafeRelease(&callIcon_.bitmap);
     callIcon_.revision = 0;
+    SafeRelease(&commandArtworkBitmap_.bitmap);
+    commandArtworkBitmap_.png = nullptr;
+    commandArtworkBitmap_.size = 0;
     SafeRelease(&bodyFormat_);
     SafeRelease(&titleFormat_);
     SafeRelease(&musicTitleFormat_);
@@ -463,6 +543,26 @@ void TextRenderer::Shutdown() {
     SafeRelease(&startCaptionFormat_);
     SafeRelease(&startSearchFormat_);
     SafeRelease(&statusWeatherFormat_);
+    SafeRelease(&niriCommandTimeFormat_);
+    SafeRelease(&niriNotificationBodyFormat_);
+    SafeRelease(&niriNotificationMetaFormat_);
+    SafeRelease(&niriNotificationTitleFormat_);
+    SafeRelease(&niriNotificationAppFormat_);
+    SafeRelease(&niriNotificationHeaderFormat_);
+    SafeRelease(&niriMediaTimeFormat_);
+    SafeRelease(&niriMediaSubtitleFormat_);
+    SafeRelease(&niriCalendarDayFormat_);
+    SafeRelease(&niriCalendarWeekdayFormat_);
+    SafeRelease(&niriWeatherWordFormat_);
+    SafeRelease(&niriWeatherQualityFormat_);
+    SafeRelease(&niriCommandChipFormat_);
+    SafeRelease(&niriCommandDateFormat_);
+    SafeRelease(&niriWeatherTempFormat_);
+    SafeRelease(&niriMetricFormat_);
+    SafeRelease(&niriHeroFormat_);
+    SafeRelease(&niriLyricFormat_);
+    SafeRelease(&niriDateFormat_);
+    SafeRelease(&niriClockFormat_);
     SafeRelease(&statusTimeFormat_);
     SafeRelease(&statusDayFormat_);
     SafeRelease(&statusWeekdayFormat_);
@@ -477,6 +577,7 @@ void TextRenderer::Shutdown() {
     }
     haveTime_ = false;
     timeText_[0] = L'\0';
+    niriTimeText_[0] = L'\0';
     dateText_[0] = L'\0';
     dateKey_[0] = L'\0';
 }
@@ -581,6 +682,9 @@ void TextRenderer::Refresh() {
     // choice lives in exactly this one place.
     std::swprintf(timeText_, 16, L"%02u:%02u",
                   static_cast<unsigned>(now.wHour), static_cast<unsigned>(now.wMinute));
+    std::swprintf(niriTimeText_, 16, L"%02u:%02u:%02u",
+                  static_cast<unsigned>(now.wHour), static_cast<unsigned>(now.wMinute),
+                  static_cast<unsigned>(now.wSecond));
 
     // The date only needs rebuilding when the day rolls over. The freshly built
     // key is compared against the cached one, NOT against time_: time_ was just
@@ -1102,22 +1206,135 @@ void DrawTextIn(ID2D1DeviceContext2* context, IDWriteTextFormat* format, const w
                 const RectF& box, ID2D1Brush* brush, DWRITE_TEXT_ALIGNMENT horizontal,
                 DWRITE_PARAGRAPH_ALIGNMENT vertical);
 
+void FillRounded(ID2D1DeviceContext2* context, const RectF& box, float radius,
+                 const D2D1_COLOR_F& colour) {
+    if (!context || colour.a <= 0.001f || box.right <= box.left || box.bottom <= box.top) return;
+    ID2D1SolidColorBrush* brush = nullptr;
+    if (SUCCEEDED(context->CreateSolidColorBrush(colour, &brush)) && brush) {
+        const D2D1_ROUNDED_RECT rounded = {
+            D2D1::RectF(box.left, box.top, box.right, box.bottom), radius, radius};
+        context->FillRoundedRectangle(&rounded, brush);
+        brush->Release();
+    }
+}
+
+int DaysInMonth(int year, int month) {
+    static constexpr int days[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    if (month < 1 || month > 12) return 0;
+    if (month == 2 && ((year % 4 == 0 && year % 100 != 0) || year % 400 == 0)) return 29;
+    return days[month - 1];
+}
+
+int DayOfWeekMondayFirst(int year, int month, int day) {
+    static constexpr int offsets[] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
+    if (month < 3) --year;
+    const int sundayFirst = (year + year / 4 - year / 100 + year / 400 + offsets[month - 1] +
+                             day) %
+                            7;
+    return (sundayFirst + 6) % 7;
+}
+
+void DrawWeatherMarkLarge(ID2D1DeviceContext2* context, const RectF& box, int code,
+                          float opacity) {
+    if (!context || opacity <= 0.01f) return;
+    const float cx = (box.left + box.right) * 0.5f;
+    const float cy = (box.top + box.bottom) * 0.5f;
+    const float side = std::min(box.right - box.left, box.bottom - box.top);
+    const float scale = side / 72.0f;
+    const SkyMark mark = SkyMarkForCode(code);
+    ID2D1SolidColorBrush* cloud = nullptr;
+    ID2D1SolidColorBrush* sun = nullptr;
+    ID2D1SolidColorBrush* accent = nullptr;
+    context->CreateSolidColorBrush(D2D1::ColorF(0.35f, 0.43f, 0.76f, opacity), &cloud);
+    context->CreateSolidColorBrush(D2D1::ColorF(0.96f, 0.78f, 0.24f, opacity), &sun);
+    context->CreateSolidColorBrush(D2D1::ColorF(0.45f, 0.36f, 0.78f, opacity), &accent);
+    const auto circles = [&](float dx, float dy, float factor) {
+        if (!cloud) return;
+        context->FillEllipse(
+            D2D1::Ellipse(D2D1::Point2F(cx + dx - 13.0f * scale, cy + dy), 11.0f * scale * factor,
+                          10.0f * scale * factor),
+            cloud);
+        context->FillEllipse(
+            D2D1::Ellipse(D2D1::Point2F(cx + dx + 1.0f * scale, cy + dy - 7.0f * scale),
+                          15.0f * scale * factor, 14.0f * scale * factor),
+            cloud);
+        context->FillEllipse(
+            D2D1::Ellipse(D2D1::Point2F(cx + dx + 15.0f * scale, cy + dy - 1.0f * scale),
+                          10.0f * scale * factor, 9.0f * scale * factor),
+            cloud);
+        const D2D1_ROUNDED_RECT base = {
+            D2D1::RectF(cx + dx - 22.0f * scale, cy + dy - 3.0f * scale,
+                        cx + dx + 23.0f * scale, cy + dy + 10.0f * scale),
+            6.0f * scale, 6.0f * scale};
+        context->FillRoundedRectangle(&base, cloud);
+    };
+    if (mark == SkyMark::Sun) {
+        if (sun) {
+            context->FillEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy), 18.0f * scale,
+                                               18.0f * scale),
+                                 sun);
+            for (int i = 0; i < 8; ++i) {
+                const float angle = static_cast<float>(i) * 3.14159265f / 4.0f;
+                context->DrawLine(
+                    D2D1::Point2F(cx + std::cos(angle) * 23.0f * scale,
+                                  cy + std::sin(angle) * 23.0f * scale),
+                    D2D1::Point2F(cx + std::cos(angle) * 30.0f * scale,
+                                  cy + std::sin(angle) * 30.0f * scale),
+                    sun, 3.0f * scale);
+            }
+        }
+    } else if (mark == SkyMark::SunCloud) {
+        if (sun) {
+            context->FillEllipse(D2D1::Ellipse(D2D1::Point2F(cx + 12.0f * scale,
+                                                              cy - 15.0f * scale),
+                                               13.0f * scale, 13.0f * scale),
+                                 sun);
+        }
+        circles(-4.0f, 7.0f, 1.0f);
+    } else if (mark == SkyMark::Cloud) {
+        circles(0.0f, 4.0f, 1.0f);
+    } else if (mark == SkyMark::Rain || mark == SkyMark::Snow) {
+        circles(0.0f, -4.0f, 0.9f);
+        if (accent) {
+            for (int i = -2; i <= 2; ++i) {
+                const float x = cx + static_cast<float>(i) * 8.0f * scale;
+                context->DrawLine(D2D1::Point2F(x, cy + 22.0f * scale),
+                                  D2D1::Point2F(x + (mark == SkyMark::Snow ? 0.0f : 4.0f) * scale,
+                                                cy + 32.0f * scale),
+                                  accent, 3.0f * scale);
+            }
+        }
+    } else if (mark == SkyMark::Thunder) {
+        circles(0.0f, -4.0f, 0.9f);
+        if (sun) {
+            context->DrawLine(D2D1::Point2F(cx - 2.0f * scale, cy + 18.0f * scale),
+                              D2D1::Point2F(cx + 8.0f * scale, cy + 18.0f * scale), sun,
+                              6.0f * scale);
+            context->DrawLine(D2D1::Point2F(cx + 8.0f * scale, cy + 18.0f * scale),
+                              D2D1::Point2F(cx + 1.0f * scale, cy + 34.0f * scale), sun,
+                              6.0f * scale);
+        }
+    } else if (mark == SkyMark::Fog) {
+        if (cloud) {
+            for (int i = 0; i < 3; ++i) {
+                context->DrawLine(
+                    D2D1::Point2F(cx - 27.0f * scale, cy + static_cast<float>(i) * 10.0f * scale),
+                    D2D1::Point2F(cx + 27.0f * scale, cy + static_cast<float>(i) * 10.0f * scale),
+                    cloud, 4.0f * scale);
+            }
+        }
+    }
+    if (cloud) cloud->Release();
+    if (sun) sun->Release();
+    if (accent) accent->Release();
+}
+
 } // namespace
 
 void TextRenderer::DrawTrayPage(ID2D1DeviceContext2* context, const RoundedBox& card,
                                 const TrayPageText& text, const TrayIcon* icons, int count,
-                                unsigned long long revision, float opacity, int hoveredIndex,
-                                bool moving) {
+                                unsigned long long revision, float opacity, int hoveredIndex) {
     if (!context || opacity <= 0.01f) return;
-
-    // THE CARD'S OWN SURFACE, from the one function that draws it (FillCardSurface): the same fill, the same
-    // edge, the same surface lighting, the same grain and the same shadow as the panel and the media card.
-    //
-    // This page used to fill its own rounded rectangle with the theme's card colour and a fringe stroke of
-    // the same colour. It matched the OTHERS' colour and nothing else -- no edge, no lighting, no shadow --
-    // which is exactly the "看着不协调" it was reported as: the panel beside it had a lit surface and this one
-    // was flat. One function draws every card's material, and this was the card that did not call it.
-    FillCardSurface(context, card, opacity, moving);
 
     const TrayPageLayout layout = TrayPageFor(card, count);
     {
@@ -1143,8 +1360,8 @@ void TextRenderer::DrawTrayPage(ID2D1DeviceContext2* context, const RoundedBox& 
     constexpr float kGreenR = 0.2039f;
     constexpr float kGreenG = 0.8275f;
     constexpr float kGreenB = 0.6000f;
-    // The reference's accent, #0078d4. Marked here rather than taken from the theme because the reference's
-    // two small marks (the status badges and the now-playing glyph) are that blue on every theme.
+    // The reference's accent, #0078d4. Marked here rather than taken from the theme because the page's
+    // interactive highlight language uses the same blue on every theme.
     constexpr float kAccentR = 0.0f;
     constexpr float kAccentG = 0.4706f;
     constexpr float kAccentB = 0.8314f;
@@ -1283,16 +1500,12 @@ void TextRenderer::DrawTrayPage(ID2D1DeviceContext2* context, const RoundedBox& 
 
     }
 
-    // --- the now-playing row, on an inset well (the panel's slider surface, same radius and material) ----
-    //
-    // SKIPPED when the frame has no track, rather than filled with a placeholder: the reference's row says
-    // what the machine was playing, and this page has nothing to say when nothing is. The well keeps its
-    // rectangle either way, so the grid and the footer do not move with the music.
-    if (layout.nowPlaying.right > layout.nowPlaying.left && text.nowTitle && text.nowTitle[0] != '\0') {
+    // --- the live system-load well ---------------------------------------------------------------------
+    if (layout.resources.right > layout.resources.left) {
         constexpr float kWellRadius = 16.0f;
         const D2D1_ROUNDED_RECT well = {
-            D2D1::RectF(layout.nowPlaying.left, layout.nowPlaying.top, layout.nowPlaying.right,
-                        layout.nowPlaying.bottom),
+            D2D1::RectF(layout.resources.left, layout.resources.top, layout.resources.right,
+                        layout.resources.bottom),
             kWellRadius, kWellRadius};
         if (ID2D1SolidColorBrush* fill =
                 BrushFor(context, D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.20f * opacity))) {
@@ -1302,64 +1515,115 @@ void TextRenderer::DrawTrayPage(ID2D1DeviceContext2* context, const RoundedBox& 
             context->DrawRoundedRectangle(&well, edge, 1.0f);
         }
 
-        constexpr float kMarkRadius = 8.0f;
-        const D2D1_ROUNDED_RECT markBox = {
-            D2D1::RectF(layout.nowIcon.left, layout.nowIcon.top, layout.nowIcon.right,
-                        layout.nowIcon.bottom),
-            kMarkRadius, kMarkRadius};
-        if (ID2D1SolidColorBrush* fill = BrushFor(context, island::CardInk(0.06f * opacity))) {
-            context->FillRoundedRectangle(&markBox, fill);
-        }
-        if (ID2D1SolidColorBrush* edge = BrushFor(context, island::CardInk(0.08f * opacity))) {
-            context->DrawRoundedRectangle(&markBox, edge, 1.0f);
-        }
-        if (panelIconFormat_) {
-            if (ID2D1SolidColorBrush* note =
-                    BrushFor(context, D2D1::ColorF(kAccentR, kAccentG, kAccentB, 0.95f * opacity))) {
-                // The double music note, E8D6, which is the mark the reference puts in this square.
-                const wchar_t glyph[] = {L'\uE8D6', L'\0'};
-                const D2D1_RECT_F area =
-                    D2D1::RectF(layout.nowIcon.left, layout.nowIcon.top, layout.nowIcon.right,
-                                layout.nowIcon.bottom);
-                context->DrawTextW(glyph, 1, panelIconFormat_, area, note,
-                                   D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        // Memory chip mark.
+        const RectF& memoryIcon = layout.memoryIcon;
+        const D2D1_ROUNDED_RECT chip = {
+            D2D1::RectF(memoryIcon.left + 2.0f, memoryIcon.top + 3.0f,
+                        memoryIcon.right - 2.0f, memoryIcon.bottom - 3.0f),
+            3.0f, 3.0f};
+        if (ID2D1SolidColorBrush* mark =
+                BrushFor(context, D2D1::ColorF(0.52f, 0.38f, 1.0f, 0.92f * opacity))) {
+            context->FillRoundedRectangle(&chip, mark);
+            for (int pin = 0; pin < 3; ++pin) {
+                const float x = memoryIcon.left + 4.0f + static_cast<float>(pin) * 4.0f;
+                context->DrawLine(D2D1::Point2F(x, memoryIcon.top), D2D1::Point2F(x, memoryIcon.top + 3.0f),
+                                  mark, 1.0f);
+                context->DrawLine(D2D1::Point2F(x, memoryIcon.bottom - 3.0f),
+                                  D2D1::Point2F(x, memoryIcon.bottom), mark, 1.0f);
             }
         }
 
-        // The state word, then the track: the reference's 13 DIP heading over an 11 DIP dim line.
-        if (panelLabelFormat_) {
-            if (ID2D1SolidColorBrush* ink = BrushFor(context, island::CardInk(0.90f * opacity))) {
-                const wchar_t* stateWord = text.nowPlaying ? L"\u6b63\u5728\u64ad\u653e"
-                                                           : L"\u5df2\u6682\u505c";   // 正在播放 / 已暂停
-                DrawTextIn(context, panelLabelFormat_, stateWord, layout.nowLabel, ink,
-                           DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            }
-        }
         if (panelSubFormat_) {
-            // UTF-8 in, wide out -- the same conversion the music card and the lyric line use. The artist
-            // follows the title with a middle dot when the source names one, which is how the reference's
-            // second line reads.
-            wchar_t wideTitle[384] = {};
-            if (MultiByteToWideChar(CP_UTF8, 0, text.nowTitle, -1, wideTitle, 384) > 0) {
-                wchar_t line[512] = {};
-                if (text.nowArtist && text.nowArtist[0] != '\0') {
-                    wchar_t wideArtist[192] = {};
-                    if (MultiByteToWideChar(CP_UTF8, 0, text.nowArtist, -1, wideArtist, 192) > 0) {
-                        std::swprintf(line, 512, L"%ls \u00b7 %ls", wideTitle, wideArtist);
-                    } else {
-                        wcsncpy_s(line, 512, wideTitle, _TRUNCATE);
-                    }
-                } else {
-                    wcsncpy_s(line, 512, wideTitle, _TRUNCATE);
-                }
-                if (ID2D1SolidColorBrush* ink =
-                        BrushFor(context, island::CardInk(0.55f * opacity))) {
-                    DrawTextIn(context, panelSubFormat_, line, layout.nowTitle, ink,
-                               DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                }
+            if (ID2D1SolidColorBrush* ink =
+                    BrushFor(context, island::CardInk(0.82f * opacity))) {
+                DrawTextIn(context, panelSubFormat_, L"\u5185\u5B58\u8D1F\u8F7D",
+                           layout.memoryLabel, ink, DWRITE_TEXT_ALIGNMENT_LEADING,
+                           DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            }
+        }
+        constexpr double kGigabyte = 1024.0 * 1024.0 * 1024.0;
+        wchar_t memoryText[96] = {};
+        std::swprintf(memoryText, 96, L"%.1f GB / %.1f GB (%.0f%%)",
+                      static_cast<double>(text.memoryUsedBytes) / kGigabyte,
+                      static_cast<double>(text.memoryTotalBytes) / kGigabyte,
+                      static_cast<double>(text.memoryPercent));
+        if (panelSubFormat_) {
+            if (ID2D1SolidColorBrush* ink =
+                    BrushFor(context, island::CardInk(0.88f * opacity))) {
+                DrawTextIn(context, panelSubFormat_, memoryText, layout.memoryValue, ink,
+                           DWRITE_TEXT_ALIGNMENT_TRAILING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
             }
         }
 
+        // The memory bar uses the same blue-to-green accent language as the reference. It is drawn as small
+        // solid segments because Direct2D's plain solid brush is the renderer's only retained brush type.
+        if (ID2D1SolidColorBrush* track =
+                BrushFor(context, island::CardInk(0.12f * opacity))) {
+            const D2D1_ROUNDED_RECT shape = {
+                D2D1::RectF(layout.memoryBar.left, layout.memoryBar.top, layout.memoryBar.right,
+                            layout.memoryBar.bottom),
+                2.0f, 2.0f};
+            context->FillRoundedRectangle(&shape, track);
+        }
+        float memoryFraction = text.memoryPercent / 100.0f;
+        if (memoryFraction < 0.0f) memoryFraction = 0.0f;
+        if (memoryFraction > 1.0f) memoryFraction = 1.0f;
+        const float memoryRight =
+            layout.memoryBar.left + (layout.memoryBar.right - layout.memoryBar.left) * memoryFraction;
+        constexpr int kSegments = 32;
+        for (int segment = 0; segment < kSegments; ++segment) {
+            const float t = (static_cast<float>(segment) + 0.5f) / kSegments;
+            const float left = layout.memoryBar.left +
+                               (memoryRight - layout.memoryBar.left) * static_cast<float>(segment) /
+                                   kSegments;
+            const float right = layout.memoryBar.left +
+                                (memoryRight - layout.memoryBar.left) *
+                                    static_cast<float>(segment + 1) / kSegments;
+            if (right <= left) break;
+            const D2D1_COLOR_F colour =
+                D2D1::ColorF(0.26f + 0.02f * (1.0f - t), 0.52f + 0.34f * t,
+                             1.0f - 0.34f * t, 0.95f * opacity);
+            if (ID2D1SolidColorBrush* segmentBrush = BrushFor(context, colour)) {
+                const D2D1_ROUNDED_RECT shape = {
+                    D2D1::RectF(left, layout.memoryBar.top, right, layout.memoryBar.bottom), 2.0f,
+                    2.0f};
+                context->FillRoundedRectangle(&shape, segmentBrush);
+            }
+        }
+
+        // CPU mark: three ascending bars, warm like the reference's CPU indicator.
+        if (ID2D1SolidColorBrush* mark =
+                BrushFor(context, D2D1::ColorF(1.0f, 0.70f, 0.24f, 0.94f * opacity))) {
+            constexpr float heights[3] = {5.0f, 9.0f, 13.0f};
+            for (int bar = 0; bar < 3; ++bar) {
+                const float x = layout.cpuIcon.left + 2.0f + static_cast<float>(bar) * 5.0f;
+                const float bottom = layout.cpuIcon.bottom - 1.0f;
+                context->FillRoundedRectangle(
+                    D2D1::RoundedRect(
+                        D2D1::RectF(x, bottom - heights[bar], x + 3.0f, bottom), 1.5f, 1.5f),
+                    mark);
+            }
+        }
+
+        if (panelSubFormat_) {
+            if (ID2D1SolidColorBrush* ink =
+                    BrushFor(context, island::CardInk(0.82f * opacity))) {
+                DrawTextIn(context, panelSubFormat_, L"CPU \u4F7F\u7528\u7387",
+                           layout.cpuLabel, ink, DWRITE_TEXT_ALIGNMENT_LEADING,
+                           DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            }
+            wchar_t cpuText[32] = {};
+            std::swprintf(cpuText, 32, L"%.0f%%", static_cast<double>(text.cpuPercent));
+            const float cpu = text.cpuPercent;
+            const D2D1_COLOR_F cpuInk =
+                cpu >= 90.0f ? D2D1::ColorF(0.98f, 0.38f, 0.34f, opacity)
+                : cpu >= 70.0f ? D2D1::ColorF(1.0f, 0.70f, 0.24f, opacity)
+                               : D2D1::ColorF(0.24f, 0.86f, 0.66f, opacity);
+            if (ID2D1SolidColorBrush* ink = BrushFor(context, cpuInk)) {
+                DrawTextIn(context, panelSubFormat_, cpuText, layout.cpuValue, ink,
+                           DWRITE_TEXT_ALIGNMENT_TRAILING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            }
+        }
     }
 
     // --- the footer: one real Task Manager action at the right -----------------------------------------
@@ -1428,8 +1692,13 @@ void TextRenderer::DrawTrayMenu(ID2D1DeviceContext2* context, const island::Rect
                     rows[count - 1].bottom + pad),
         10.0f, 10.0f};
     const island::Theme& theme = island::CurrentTheme();
-    // The ink every word in this menu is drawn in; the sheet under them is the tone that ink is not.
-    const D2D1_COLOR_F menuInk = CardInk(1.0f);
+    // The sheet and its ink are decided TOGETHER. Painted themes (including Niri) use the fixed dark
+    // menu plate below, so the words must be white even though the light Niri card uses dark ink. The
+    // old code paired the dark plate with CardInk(), which made every row nearly invisible on Niri.
+    const bool lensMenu = theme.lens;
+    D2D1_COLOR_F menuInk = lensMenu ? CardInk(1.0f)
+                                   : D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f);
+    const bool darkSheet = !lensMenu || island::CardInkIsLight();
     if (theme.lens) {
         // The body first, then the same crystal the card wears -- outline, facet and sheen -- so the menu
         // is still the same material, just thick enough to be a menu instead of a window.
@@ -1448,9 +1717,10 @@ void TextRenderer::DrawTrayMenu(ID2D1DeviceContext2* context, const island::Rect
             context->FillRoundedRectangle(&box, fill);
             fill->Release();
         }
+        D2D1_COLOR_F edgeInk = menuInk;
+        edgeInk.a = 0.14f * opacity;
         ID2D1SolidColorBrush* edge = nullptr;
-        if (SUCCEEDED(context->CreateSolidColorBrush(
-                CardInk(0.12f * opacity), &edge)) &&
+        if (SUCCEEDED(context->CreateSolidColorBrush(edgeInk, &edge)) &&
             edge) {
             context->DrawRoundedRectangle(&box, edge, 1.0f);
             edge->Release();
@@ -1466,7 +1736,6 @@ void TextRenderer::DrawTrayMenu(ID2D1DeviceContext2* context, const island::Rect
             // whose panel is dark and whose ink is white, which is where the ink tint came from. The white
             // wash used to be unconditional for the glass theme, where it landed on whichever body the ink
             // is not, so on the light sheet it was invisible (2026-11-05).
-            const bool darkSheet = theme.lens && island::CardInkIsLight();
             const D2D1_COLOR_F hover = darkSheet ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.12f * opacity)
                                                  : CardInk(0.16f * opacity);
             ID2D1SolidColorBrush* wash = nullptr;
@@ -1477,8 +1746,10 @@ void TextRenderer::DrawTrayMenu(ID2D1DeviceContext2* context, const island::Rect
         }
         const wchar_t* label = labels[i] ? labels[i] : L"";
         if (label[0] == L'\0') continue;
+        D2D1_COLOR_F inkColour = menuInk;
+        inkColour.a = 0.96f * opacity;
         ID2D1SolidColorBrush* ink = nullptr;
-        if (SUCCEEDED(context->CreateSolidColorBrush(CardInk(0.94f * opacity), &ink)) && ink) {
+        if (SUCCEEDED(context->CreateSolidColorBrush(inkColour, &ink)) && ink) {
             if (appRowFormat_) {
                 // Left-aligned inside the row, vertically centred by the format's own paragraph alignment.
                 context->DrawTextW(label, static_cast<UINT32>(std::wcslen(label)), appRowFormat_,
@@ -1587,6 +1858,1508 @@ void TextRenderer::DrawStatusLine(ID2D1DeviceContext2* context, const RoundedBox
 
     const StatusPiece& timePiece = pieces[timeIndex];
     drawPiece(timePiece, centreX - timePiece.widthDip * 0.5f, centreY - 13.0f, 26.0f);
+}
+
+void TextRenderer::DrawNiriTopBar(ID2D1DeviceContext2* context, const RoundedBox& box,
+                                  float opacity, int unreadNotifications, const char* sideLine,
+                                  bool musicPresent, float musicLevel, float musicPhase,
+                                  D2D1_COLOR_F musicAccent, bool callActive, float callLevel,
+                                  float lyricScrollDip, float searchMarkOpacity) {
+    if (!context || !niriClockFormat_ || !niriDateFormat_ || opacity <= 0.01f) return;
+    Refresh();
+
+    const float centreY = (box.rect.top + box.rect.bottom) * 0.5f;
+    ID2D1SolidColorBrush* ink = nullptr;
+    if (FAILED(context->CreateSolidColorBrush(PillInk(0.92f * opacity), &ink)) || !ink) return;
+    ID2D1SolidColorBrush* muted = nullptr;
+    context->CreateSolidColorBrush(PillInk(0.55f * opacity), &muted);
+    ID2D1SolidColorBrush* accent = nullptr;
+    D2D1_COLOR_F accentColour = island::CurrentTheme().accent;
+    accentColour.a *= opacity;
+    context->CreateSolidColorBrush(accentColour, &accent);
+    ID2D1SolidColorBrush* searchInk = nullptr;
+    if (searchMarkOpacity > 0.01f) {
+        context->CreateSolidColorBrush(
+            PillInk(0.92f * opacity * std::clamp(searchMarkOpacity, 0.0f, 1.0f)),
+            &searchInk);
+    }
+
+    // The search mark has one fixed home in both the normal and animated
+    // search states. The content after it is laid out independently, so the
+    // mark never shifts when the lavender field grows around it.
+    constexpr float kSearchCentreFromLeft = 16.0f;
+    constexpr float kContentLeftFromLeft = 42.0f;
+    constexpr float kTimeWidth = 74.0f;
+    constexpr float kSeparatorWidth = 14.0f;
+    constexpr float kDateWidth = 116.0f;
+    constexpr float kStatusGap = 6.0f;
+    const float statusWidth = callActive ? 32.0f : (unreadNotifications > 0 ? 32.0f : 12.0f);
+    float cursor = box.rect.left + kContentLeftFromLeft;
+
+    const auto drawMusicWave = [&](float waveCentreX) {
+        // Keep the cover's HUE, but move very pale accents away from the white Niri island so the
+        // waveform remains readable. Dark accents are lifted by the same rule.
+        D2D1_COLOR_F visibleAccent = musicAccent;
+        const float luma =
+            0.2126f * visibleAccent.r + 0.7152f * visibleAccent.g + 0.0722f * visibleAccent.b;
+        float scale = 1.0f;
+        if (luma > 0.68f && luma > 0.001f) scale = 0.48f / luma;
+        if (luma < 0.20f && luma > 0.001f) scale = 0.34f / luma;
+        visibleAccent.r = std::min(1.0f, visibleAccent.r * scale);
+        visibleAccent.g = std::min(1.0f, visibleAccent.g * scale);
+        visibleAccent.b = std::min(1.0f, visibleAccent.b * scale);
+
+        D2D1_COLOR_F fillColour = visibleAccent;
+        fillColour.a = 0.18f * opacity;
+        ID2D1SolidColorBrush* circle = nullptr;
+        context->CreateSolidColorBrush(fillColour, &circle);
+        if (circle) {
+            context->FillEllipse(
+                D2D1::Ellipse(D2D1::Point2F(waveCentreX, centreY), 13.0f, 13.0f),
+                circle);
+            circle->Release();
+        }
+        D2D1_COLOR_F ringColour = visibleAccent;
+        ringColour.a = 0.62f * opacity;
+        context->CreateSolidColorBrush(ringColour, &circle);
+        if (circle) {
+            context->DrawEllipse(
+                D2D1::Ellipse(D2D1::Point2F(waveCentreX, centreY), 13.0f, 13.0f),
+                circle, 1.25f);
+            circle->Release();
+        }
+        ID2D1SolidColorBrush* wave = nullptr;
+        D2D1_COLOR_F waveColour = visibleAccent;
+        waveColour.a = 0.96f * opacity;
+        context->CreateSolidColorBrush(waveColour, &wave);
+        if (wave) {
+            for (int i = 0; i < 5; ++i) {
+                const float phase = musicPhase * 5.0f + static_cast<float>(i) * 0.9f;
+                const float envelope = 0.22f + 0.78f * (0.5f + 0.5f * std::sin(phase));
+                const float level = 0.25f + 0.75f * std::min(1.0f, musicLevel);
+                const float half = 1.5f + 9.5f * envelope * level;
+                const float x = waveCentreX - 5.2f + static_cast<float>(i) * 2.6f;
+                context->DrawLine(D2D1::Point2F(x, centreY - half),
+                                  D2D1::Point2F(x, centreY + half), wave, 2.2f);
+            }
+            wave->Release();
+        }
+    };
+
+    // Search mark, drawn rather than typed so it remains crisp at every DPI.
+    if (searchInk) {
+        const float searchX = box.rect.left + kSearchCentreFromLeft;
+        context->DrawEllipse(
+            D2D1::Ellipse(D2D1::Point2F(searchX, centreY - 1.0f), 5.2f, 5.2f),
+            searchInk, 1.7f);
+        context->DrawLine(D2D1::Point2F(searchX + 4.0f, centreY + 3.0f),
+                          D2D1::Point2F(searchX + 8.0f, centreY + 7.0f), searchInk, 1.7f);
+    }
+
+    const RectF timeBox = {cursor, box.rect.top + 1.0f, cursor + kTimeWidth,
+                           box.rect.bottom - 1.0f};
+    DrawTextIn(context, niriClockFormat_, niriTimeText_, timeBox, ink,
+               DWRITE_TEXT_ALIGNMENT_CENTER,
+               DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    cursor += kTimeWidth;
+
+    const float dotX = cursor + 8.0f;
+    context->FillEllipse(D2D1::Ellipse(D2D1::Point2F(dotX, centreY), 2.0f, 2.0f),
+                         accent ? accent : (muted ? muted : ink));
+    cursor += kSeparatorWidth;
+
+    if (musicPresent && !callActive) {
+        // While music is playing the date/notification group becomes the lyric line. The moving
+        // waveform moves to the far right, where it no longer competes with the search mark.
+        constexpr float kWaveDiameter = 26.0f;
+        constexpr float kWaveGap = 8.0f;
+        const float lyricRight = box.rect.right - kWaveDiameter - kWaveGap - 6.0f;
+        const RectF lyricBox = {cursor, box.rect.top + 1.0f, lyricRight,
+                                box.rect.bottom - 1.0f};
+        wchar_t lyric[512] = {};
+        if (sideLine && sideLine[0] != '\0' &&
+            MultiByteToWideChar(CP_UTF8, 0, sideLine, -1, lyric, 512) > 0 &&
+            lyricBox.right > lyricBox.left) {
+            IDWriteTextFormat* lyricFormat =
+                niriLyricFormat_ ? niriLyricFormat_ : niriDateFormat_;
+            const float available = lyricBox.right - lyricBox.left;
+            IDWriteTextLayout* measuredLayout =
+                LayoutFor(lyric, lyricFormat, 8192.0f, 512.0f);
+            DWRITE_TEXT_METRICS metrics = {};
+            const bool measured =
+                measuredLayout &&
+                SUCCEEDED(measuredLayout->GetMetrics(&metrics));
+            const float textWidth = measured ? metrics.width : 0.0f;
+            // LayoutFor is cache-owned; releasing it here poisons the cache and crashes the next draw.
+            if (!measured || !LyricNeedsScroll(textWidth, available)) {
+                DrawTextIn(context, lyricFormat, lyric, lyricBox, ink,
+                           DWRITE_TEXT_ALIGNMENT_CENTER,
+                           DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            } else {
+                ID2D1Factory* d2dFactory = nullptr;
+                context->GetFactory(&d2dFactory);
+                ID2D1RectangleGeometry* clip = nullptr;
+                if (d2dFactory) {
+                    d2dFactory->CreateRectangleGeometry(
+                        D2D1::RectF(lyricBox.left, lyricBox.top, lyricBox.right,
+                                    lyricBox.bottom),
+                        &clip);
+                    d2dFactory->Release();
+                }
+                if (clip) {
+                    context->PushLayer(
+                        D2D1::LayerParameters1(D2D1::InfiniteRect(), clip,
+                                               D2D1_ANTIALIAS_MODE_PER_PRIMITIVE),
+                        nullptr);
+                }
+                const float stride = textWidth + 40.0f;
+                const float offset =
+                    lyricScrollDip -
+                    stride * static_cast<float>(
+                                 static_cast<long long>(lyricScrollDip / stride));
+                const auto drawAt = [&](float left) {
+                    const RectF drawBox = {left, lyricBox.top, left + textWidth + 4.0f,
+                                           lyricBox.bottom};
+                    DrawTextIn(context, lyricFormat, lyric, drawBox, ink,
+                               DWRITE_TEXT_ALIGNMENT_LEADING,
+                               DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                };
+                const float start = lyricBox.left + 6.0f;
+                drawAt(start - offset);
+                drawAt(start - offset + stride);
+                if (offset > 0.0f) drawAt(start - offset - stride);
+                if (clip) {
+                    context->PopLayer();
+                    clip->Release();
+                }
+            }
+        }
+        const RectF waveButton = island::NiriMusicWaveButtonFor(box);
+        drawMusicWave((waveButton.left + waveButton.right) * 0.5f);
+    } else {
+        wchar_t fullDate[80] = {};
+        std::swprintf(fullDate, 80, L"%ls %04u.%02u.%02u", weekdayText_,
+                      static_cast<unsigned>(time_.wYear),
+                      static_cast<unsigned>(
+                          time_.wMonth >= 1 && time_.wMonth <= 12 ? time_.wMonth : 1),
+                      static_cast<unsigned>(time_.wDay));
+        const RectF secondaryBox = {cursor, box.rect.top + 1.0f, cursor + kDateWidth,
+                                    box.rect.bottom - 1.0f};
+        const wchar_t* secondary = fullDate;
+        wchar_t noticeText[512] = {};
+        if (sideLine && sideLine[0] != '\0' &&
+            MultiByteToWideChar(CP_UTF8, 0, sideLine, -1, noticeText, 512) > 0) {
+            secondary = noticeText;
+        }
+        if (muted && secondaryBox.right > secondaryBox.left) {
+            DrawTextIn(context, niriDateFormat_, secondary, secondaryBox, muted,
+                   DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        }
+        cursor += kDateWidth + kStatusGap;
+
+        // The right-hand status is one compact group: bell (or call waveform) and
+        // the plain count beside it, exactly as in the reference.
+        const float bellX = cursor + 7.0f;
+        if (callActive) {
+            ID2D1SolidColorBrush* call = nullptr;
+            context->CreateSolidColorBrush(
+                D2D1::ColorF(0.18f, 0.82f, 0.48f, 0.95f * opacity), &call);
+            if (call) {
+                for (int i = 0; i < 7; ++i) {
+                    const float phase = musicPhase * 6.0f + static_cast<float>(i) * 0.8f;
+                    const float envelope =
+                        0.25f + 0.75f * (0.5f + 0.5f * std::sin(phase));
+                    const float half =
+                        1.0f + 7.0f * envelope * std::min(1.0f, callLevel);
+                    const float x = cursor + 2.0f + static_cast<float>(i) * 4.0f;
+                    context->DrawLine(D2D1::Point2F(x, centreY - half),
+                                      D2D1::Point2F(x, centreY + half), call, 2.0f);
+                }
+                call->Release();
+            }
+        } else {
+            context->DrawRoundedRectangle(
+                D2D1::RoundedRect(
+                    D2D1::RectF(bellX - 5.0f, centreY - 5.5f, bellX + 5.0f,
+                                centreY + 4.0f),
+                    5.0f, 5.0f),
+                ink, 1.6f);
+            context->FillEllipse(
+                D2D1::Ellipse(D2D1::Point2F(bellX, centreY + 6.5f), 1.7f, 1.7f),
+                ink);
+        }
+        if (!callActive && unreadNotifications > 0) {
+            wchar_t count[16] = {};
+            std::swprintf(count, 16, L"%d", unreadNotifications);
+            const RectF countBox = {cursor + 14.0f, box.rect.top + 1.0f,
+                                    cursor + statusWidth, box.rect.bottom - 1.0f};
+            DrawTextIn(context, niriDateFormat_, count, countBox, ink,
+                       DWRITE_TEXT_ALIGNMENT_CENTER,
+                       DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        }
+    }
+
+    if (searchInk) searchInk->Release();
+    if (accent) accent->Release();
+    if (muted) muted->Release();
+    ink->Release();
+}
+
+void TextRenderer::DrawNiriNotification(ID2D1DeviceContext2* context, const RoundedBox& box,
+                                        const char* line, const uint8_t* iconPixels,
+                                        int iconWidth, int iconHeight,
+                                        unsigned long long iconRevision, float opacity) {
+    if (!context || !line || line[0] == '\0' || opacity <= 0.01f) return;
+    IDWriteTextFormat* format = niriMetricFormat_ ? niriMetricFormat_ : niriDateFormat_;
+    if (!format) return;
+
+    wchar_t text[512] = {};
+    if (MultiByteToWideChar(CP_UTF8, 0, line, -1, text, 512) <= 0) return;
+
+    const float centreY = (box.rect.top + box.rect.bottom) * 0.5f;
+    const float iconCentreX = box.rect.left + 34.0f;
+    D2D1_COLOR_F halo = island::CurrentTheme().accent;
+    halo.a = 0.14f * opacity;
+    if (ID2D1SolidColorBrush* brush = nullptr;
+        SUCCEEDED(context->CreateSolidColorBrush(halo, &brush)) && brush) {
+        context->FillEllipse(
+            D2D1::Ellipse(D2D1::Point2F(iconCentreX, centreY), 16.0f, 16.0f), brush);
+        brush->Release();
+    }
+
+    const float iconSide = 24.0f;
+    const RectF iconBox = {iconCentreX - iconSide * 0.5f, centreY - iconSide * 0.5f,
+                           iconCentreX + iconSide * 0.5f, centreY + iconSide * 0.5f};
+    bool drewIcon = false;
+    if (ID2D1Bitmap1* icon = NotificationIconBitmap(context, iconPixels, iconWidth,
+                                                    iconHeight, iconRevision)) {
+        ID2D1Factory* d2dFactory = nullptr;
+        context->GetFactory(&d2dFactory);
+        ID2D1RoundedRectangleGeometry* clip = nullptr;
+        if (d2dFactory) {
+            d2dFactory->CreateRoundedRectangleGeometry(
+                D2D1::RoundedRect(D2D1::RectF(iconBox.left, iconBox.top, iconBox.right,
+                                             iconBox.bottom),
+                                  7.0f, 7.0f),
+                &clip);
+        }
+        if (clip) {
+            context->PushLayer(
+                D2D1::LayerParameters1(D2D1::InfiniteRect(), clip,
+                                       D2D1_ANTIALIAS_MODE_PER_PRIMITIVE),
+                nullptr);
+        }
+        context->DrawBitmap(
+            icon,
+            D2D1::RectF(iconBox.left, iconBox.top, iconBox.right, iconBox.bottom),
+            opacity, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
+        drewIcon = true;
+        if (clip) {
+            context->PopLayer();
+            clip->Release();
+        }
+        SafeRelease(&d2dFactory);
+    }
+    if (!drewIcon) {
+        wchar_t initial[2] = {text[0], L'\0'};
+        if (ID2D1SolidColorBrush* brush = nullptr;
+            SUCCEEDED(context->CreateSolidColorBrush(PillInk(0.88f * opacity), &brush)) &&
+            brush) {
+            DrawTextIn(context, niriLyricFormat_, initial, iconBox, brush,
+                       DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            brush->Release();
+        }
+    }
+
+    if (ID2D1SolidColorBrush* brush = nullptr;
+        SUCCEEDED(context->CreateSolidColorBrush(PillInk(0.92f * opacity), &brush)) &&
+        brush) {
+        const RectF textBox = {iconBox.right + 10.0f, box.rect.top + 1.0f,
+                               box.rect.right - 14.0f, box.rect.bottom - 1.0f};
+        DrawTextIn(context, format, text, textBox, brush, DWRITE_TEXT_ALIGNMENT_LEADING,
+                   DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        brush->Release();
+    }
+}
+
+void TextRenderer::DrawNiriSearchField(ID2D1DeviceContext2* context, const RoundedBox& box,
+                                       float progress, float opacity) {
+    if (!context || opacity <= 0.01f) return;
+    const island::NiriSearchLayout layout =
+        island::NiriSearchLayoutFor(box, progress);
+    if (!layout.valid) return;
+    const RectF field = layout.field;
+    // The open editor is part of the white Niri pill, not a second dark
+    // capsule inside it. The native editor paints the text area with the
+    // theme's pill colour; this layer owns only the magnifier in the left slot.
+    const float radius = (field.bottom - field.top) * 0.5f;
+    ID2D1SolidColorBrush* edge = nullptr;
+    if (SUCCEEDED(context->CreateSolidColorBrush(
+            D2D1::ColorF(0.58f, 0.58f, 0.60f, 0.72f * opacity), &edge)) &&
+        edge) {
+        const D2D1_ROUNDED_RECT outline = {
+            D2D1::RectF(field.left, field.top, field.right, field.bottom),
+            radius, radius};
+        context->DrawRoundedRectangle(&outline, edge, 1.2f);
+        edge->Release();
+    }
+    ID2D1SolidColorBrush* ink = nullptr;
+    if (FAILED(context->CreateSolidColorBrush(PillInk(0.92f * opacity), &ink)) ||
+        !ink) {
+        return;
+    }
+    const float centreY = (field.top + field.bottom) * 0.5f;
+    const float searchX = field.left + island::kNiriSearchIconCentreDip;
+    context->DrawEllipse(
+        D2D1::Ellipse(D2D1::Point2F(searchX, centreY - 1.0f), 5.5f, 5.5f), ink, 1.8f);
+    context->DrawLine(D2D1::Point2F(searchX + 4.0f, centreY + 3.0f),
+                      D2D1::Point2F(searchX + 8.5f, centreY + 7.5f), ink, 1.8f);
+    ink->Release();
+}
+
+void TextRenderer::DrawNiriSearchResults(ID2D1DeviceContext2* context,
+                                         const RoundedBox& island,
+                                         const NiriSearchResultsText& text, float reveal,
+                                         float opacity) {
+    if (!context || opacity <= 0.01f) return;
+    const int count = std::clamp(text.count, 0, island::kStartSearchMaxResults);
+    const island::NiriSearchResultsLayout layout =
+        island::NiriSearchResultsLayoutFor(island, count, text.pending, reveal);
+    if (!layout.valid) return;
+
+    FillCardSurface(context, layout.panel, opacity, reveal < 0.999f);
+    const auto drawText = [&](IDWriteTextFormat* format, const wchar_t* line,
+                              const RectF& box, const D2D1_COLOR_F& colour,
+                              DWRITE_TEXT_ALIGNMENT horizontal,
+                              DWRITE_PARAGRAPH_ALIGNMENT vertical) {
+        if (!format || !line || line[0] == L'\0' || box.right <= box.left) return;
+        if (ID2D1SolidColorBrush* brush = BrushFor(context, colour)) {
+            DrawTextIn(context, format, line, box, brush, horizontal, vertical);
+        }
+    };
+    context->PushAxisAlignedClip(
+        D2D1::RectF(layout.panel.rect.left, layout.panel.rect.top,
+                    layout.panel.rect.right, layout.panel.rect.bottom),
+        D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+
+    if (count == 0) {
+        const wchar_t* message =
+            (text.pending || !text.filesComplete)
+                ? L"\u6B63\u5728\u641C\u7D22\u5E94\u7528\u3001\u8BBE\u7F6E\u548C\u6587\u4EF6\u2026"
+                : L"\u6CA1\u6709\u627E\u5230\u5339\u914D\u9879";
+        drawText(startRowFormat_, message, layout.status, CardInk(0.56f * opacity),
+                 DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        context->PopAxisAlignedClip();
+        return;
+    }
+
+    for (int i = 0; i < count && text.results; ++i) {
+        const island::StartSearchResult& result = text.results[i];
+        const RectF& row = layout.rows[i];
+        const bool active = i == text.selected;
+        const bool hovered = i == text.hovered;
+        if (active || hovered) {
+            const float strength = active ? 0.10f : 0.055f;
+            FillRounded(context, row, 9.0f, CardInk(strength * opacity));
+        }
+
+        const float iconSide = 22.0f;
+        const float iconTop = row.top + (row.bottom - row.top - iconSide) * 0.5f;
+        const RectF iconBox = {row.left + 8.0f, iconTop, row.left + 8.0f + iconSide,
+                               iconTop + iconSide};
+        const uint8_t* png = result.iconPng.empty() ? nullptr : result.iconPng.data();
+        size_t pngSize = result.iconPng.size();
+        if (result.kind == island::SearchResultKind::Application && text.listIcons &&
+            result.sourceIndex >= 0) {
+            png = text.listIcons[result.sourceIndex];
+            pngSize = text.listIconSizes ? text.listIconSizes[result.sourceIndex] : 0;
+        }
+        ID2D1Bitmap1* icon = StartBitmapFor(context, &startListBitmaps_[i], png, pngSize);
+        if (icon) {
+            context->DrawBitmap(
+                icon, D2D1::RectF(iconBox.left, iconBox.top, iconBox.right, iconBox.bottom),
+                opacity, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
+        } else {
+            FillRounded(context, iconBox, 5.0f, CardInk(0.055f * opacity));
+            wchar_t initial[2] = {result.title.empty() ? L'?' : result.title.front(), L'\0'};
+            drawText(startCaptionFormat_, initial, iconBox, CardInk(0.68f * opacity),
+                     DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        }
+
+        const float subtitleWidth = 88.0f;
+        drawText(startRowFormat_, result.title.c_str(),
+                 {iconBox.right + 10.0f, row.top, row.right - subtitleWidth - 8.0f,
+                  row.bottom},
+                 CardInk((active ? 0.92f : 0.76f) * opacity),
+                 DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        drawText(startCaptionFormat_, result.subtitle.c_str(),
+                 {row.right - subtitleWidth, row.top, row.right - 4.0f, row.bottom},
+                 CardInk((active ? 0.58f : 0.40f) * opacity),
+                 DWRITE_TEXT_ALIGNMENT_TRAILING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    }
+
+    context->PopAxisAlignedClip();
+}
+
+void TextRenderer::DrawNiriActiveApp(ID2D1DeviceContext2* context, const RoundedBox& box,
+                                     ID2D1Bitmap1* icon, const wchar_t* title, float opacity) {
+    if (!context || opacity <= 0.01f) return;
+    FillRounded(context, box.rect, box.radiusX,
+                D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.92f * opacity));
+    const float centreY = (box.rect.top + box.rect.bottom) * 0.5f;
+    const float iconSize = 24.0f;
+    const RectF iconBox = {box.rect.left + 8.0f, centreY - iconSize * 0.5f,
+                           box.rect.left + 8.0f + iconSize,
+                           centreY + iconSize * 0.5f};
+    if (ID2D1SolidColorBrush* backing =
+            BrushFor(context, PillInk(0.14f * opacity))) {
+        context->FillEllipse(
+            D2D1::Ellipse(D2D1::Point2F((iconBox.left + iconBox.right) * 0.5f, centreY),
+                          iconSize * 0.5f, iconSize * 0.5f),
+            backing);
+    }
+    if (icon) {
+        context->DrawBitmap(icon, D2D1::RectF(iconBox.left, iconBox.top, iconBox.right,
+                                             iconBox.bottom),
+                            opacity, D2D1_INTERPOLATION_MODE_LINEAR);
+    } else {
+        FillRounded(context, iconBox, 5.0f,
+                    D2D1::ColorF(0.18f, 0.78f, 0.48f, 0.92f * opacity));
+    }
+    ID2D1SolidColorBrush* ink = nullptr;
+    context->CreateSolidColorBrush(D2D1::ColorF(0.12f, 0.11f, 0.16f, 0.92f * opacity), &ink);
+    if (ink && appRowFormat_) {
+        DrawTextIn(context, appRowFormat_, title && title[0] ? title : L"桌面",
+                   {iconBox.right + 7.0f, box.rect.top, box.rect.right - 8.0f,
+                    box.rect.bottom},
+                   ink, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    }
+    if (ink) ink->Release();
+}
+
+void TextRenderer::DrawCardRail(ID2D1DeviceContext2* context, const RoundedBox& card,
+                                int selectedPage, const CardRailText& text, float opacity,
+                                bool moving) {
+    if (!context || opacity <= 0.01f || !niriMetricFormat_) return;
+    FillCardSurface(context, card, opacity, moving);
+    const float handleCentre = (card.rect.left + card.rect.right) * 0.5f;
+    FillRounded(context,
+                {handleCentre - 28.0f, card.rect.top + 8.0f,
+                 handleCentre + 28.0f, card.rect.top + 14.0f},
+                3.0f, D2D1::ColorF(0.75f, 0.72f, 0.82f, 0.55f * opacity));
+    const island::CardRailLayout rail = island::CardRailFor(card);
+    if (!rail.valid) return;
+    const RectF middleDock = {rail.frame.left + 4.0f, rail.nav[0].top - 6.0f,
+                              rail.frame.right - 4.0f,
+                              rail.nav[island::kCardRailNavCount - 1].bottom + 6.0f};
+    FillRounded(context, middleDock, 16.0f,
+                D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.72f * opacity));
+    const RectF powerDock = {rail.frame.left + 4.0f, rail.settings.top - 6.0f,
+                             rail.frame.right - 4.0f, rail.shutdown.bottom + 6.0f};
+    FillRounded(context, powerDock, 16.0f,
+                D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.72f * opacity));
+
+    const D2D1_COLOR_F purple = D2D1::ColorF(0.42f, 0.32f, 0.68f, opacity);
+    const D2D1_COLOR_F muted = D2D1::ColorF(0.46f, 0.43f, 0.54f, 0.88f * opacity);
+    ID2D1SolidColorBrush* purpleBrush = BrushFor(context, purple);
+    ID2D1SolidColorBrush* mutedBrush = BrushFor(context, muted);
+    if (!purpleBrush || !mutedBrush) return;
+
+    const auto selectedSlot = [selectedPage](int slot) {
+        if (selectedPage < 0) return slot == 0;
+        if (slot == 1) return selectedPage == static_cast<int>(island::CardTab::DefaultApps);
+        if (slot == 2) return selectedPage == static_cast<int>(island::CardTab::TrayApps);
+        return slot == 3 && selectedPage == static_cast<int>(island::CardTab::System);
+    };
+    for (int i = 0; i < island::kCardRailNavCount; ++i) {
+        const bool selected = selectedSlot(i);
+        if (selected) {
+            FillRounded(context, rail.nav[i], 11.0f,
+                        D2D1::ColorF(0.42f, 0.32f, 0.68f, 0.98f * opacity));
+        }
+        ID2D1Brush* mark = selected ? BrushFor(context, D2D1::ColorF(1.0f, 1.0f, 1.0f, opacity))
+                                    : purpleBrush;
+        const RectF& box = rail.nav[i];
+        const float cx = (box.left + box.right) * 0.5f;
+        const float cy = (box.top + box.bottom) * 0.5f;
+        if (i == 0) {
+            context->DrawLine(D2D1::Point2F(cx - 7.0f, cy), D2D1::Point2F(cx, cy - 7.0f),
+                              mark, 1.8f);
+            context->DrawLine(D2D1::Point2F(cx, cy - 7.0f), D2D1::Point2F(cx + 7.0f, cy),
+                              mark, 1.8f);
+            context->DrawLine(D2D1::Point2F(cx - 5.0f, cy - 2.0f),
+                              D2D1::Point2F(cx - 5.0f, cy + 7.0f), mark, 1.8f);
+            context->DrawLine(D2D1::Point2F(cx + 5.0f, cy - 2.0f),
+                              D2D1::Point2F(cx + 5.0f, cy + 7.0f), mark, 1.8f);
+        } else if (i == 1) {
+            constexpr float side = 5.0f;
+            for (int q = 0; q < 4; ++q) {
+                const float left = cx + (q % 2 ? 1.5f : -7.5f);
+                const float top = cy + (q >= 2 ? 1.5f : -7.5f);
+                context->DrawRoundedRectangle(
+                    D2D1::RoundedRect(D2D1::RectF(left, top, left + side, top + side), 1.2f,
+                                      1.2f),
+                    mark, 1.4f);
+            }
+        } else if (i == 2) {
+            context->DrawRoundedRectangle(
+                D2D1::RoundedRect(D2D1::RectF(cx - 8.0f, cy - 6.0f, cx + 8.0f, cy + 7.0f),
+                                  3.0f, 3.0f),
+                mark, 1.6f);
+            context->DrawLine(D2D1::Point2F(cx - 7.0f, cy - 1.0f),
+                              D2D1::Point2F(cx + 7.0f, cy - 1.0f), mark, 1.4f);
+        } else {
+            // The system page is a set of controls, not a second settings
+            // destination. Three slider tracks distinguish it from the gear-like
+            // settings mark in the lower dock.
+            constexpr float knobX[3] = {-3.5f, 3.0f, -0.5f};
+            for (int row = 0; row < 3; ++row) {
+                const float y = cy - 6.0f + static_cast<float>(row) * 6.0f;
+                context->DrawLine(D2D1::Point2F(cx - 8.0f, y), D2D1::Point2F(cx + 8.0f, y),
+                                  mark, 1.4f);
+                context->FillEllipse(
+                    D2D1::Ellipse(D2D1::Point2F(cx + knobX[row], y), 2.2f, 2.2f), mark);
+            }
+        }
+    }
+
+    const auto drawPowerButton = [&](const RectF& box, bool restart, bool armed,
+                                     ID2D1Brush* brush, float dx) {
+        if (armed) {
+            FillRounded(context, box, 10.0f,
+                        D2D1::ColorF(0.93f, 0.31f, 0.30f, 0.16f * opacity));
+        }
+        const float cx = (box.left + box.right) * 0.5f;
+        const float cy = (box.top + box.bottom) * 0.5f;
+        if (restart) {
+            context->DrawLine(D2D1::Point2F(cx - 6.0f + dx, cy - 3.0f),
+                              D2D1::Point2F(cx - 2.0f + dx, cy - 7.0f), brush, 1.7f);
+            context->DrawLine(D2D1::Point2F(cx - 2.0f + dx, cy - 7.0f),
+                              D2D1::Point2F(cx + 4.0f + dx, cy - 6.0f), brush, 1.7f);
+            context->DrawLine(D2D1::Point2F(cx + 4.0f + dx, cy - 6.0f),
+                              D2D1::Point2F(cx + 7.0f + dx, cy - 1.0f), brush, 1.7f);
+            context->DrawLine(D2D1::Point2F(cx + 7.0f + dx, cy - 1.0f),
+                              D2D1::Point2F(cx + 5.0f + dx, cy + 5.0f), brush, 1.7f);
+            context->DrawLine(D2D1::Point2F(cx + 5.0f + dx, cy + 5.0f),
+                              D2D1::Point2F(cx - 1.0f + dx, cy + 7.0f), brush, 1.7f);
+            context->DrawLine(D2D1::Point2F(cx - 6.0f + dx, cy - 3.0f),
+                              D2D1::Point2F(cx - 7.0f + dx, cy - 8.0f), brush, 1.7f);
+            context->DrawLine(D2D1::Point2F(cx - 6.0f + dx, cy - 3.0f),
+                              D2D1::Point2F(cx - 1.0f + dx, cy - 2.0f), brush, 1.7f);
+        } else {
+            context->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(cx + dx, cy), 7.0f, 7.0f),
+                                 brush, 1.7f);
+            context->DrawLine(D2D1::Point2F(cx + dx, cy - 8.0f),
+                              D2D1::Point2F(cx + dx, cy - 1.0f), brush, 1.7f);
+        }
+    };
+    const auto drawSettingsButton = [&](const RectF& box, ID2D1Brush* brush, float dx) {
+        const float cx = (box.left + box.right) * 0.5f;
+        const float cy = (box.top + box.bottom) * 0.5f;
+        context->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(cx + dx, cy), 4.2f, 4.2f),
+                             brush, 1.5f);
+        for (int spoke = 0; spoke < 8; ++spoke) {
+            const float angle = static_cast<float>(spoke) * 0.7853982f;
+            context->DrawLine(
+                D2D1::Point2F(cx + dx + std::cos(angle) * 6.0f,
+                              cy + std::sin(angle) * 6.0f),
+                D2D1::Point2F(cx + dx + std::cos(angle) * 8.0f,
+                              cy + std::sin(angle) * 8.0f),
+                brush, 1.3f);
+        }
+    };
+    float confirmProgress = std::clamp(text.powerConfirmProgress, 0.0f, 1.0f);
+    confirmProgress = confirmProgress * confirmProgress * (3.0f - 2.0f * confirmProgress);
+    if (confirmProgress < 0.999f) {
+        ID2D1Brush* fading = mutedBrush;
+        if (confirmProgress > 0.001f) {
+            fading = BrushFor(
+                context, D2D1::ColorF(0.46f, 0.43f, 0.54f,
+                                     0.88f * (1.0f - confirmProgress) * opacity));
+        }
+        drawSettingsButton(rail.settings, fading, -5.0f * confirmProgress);
+        drawPowerButton(rail.restart, true, text.powerConfirmButton == 2, fading,
+                        -5.0f * confirmProgress);
+        drawPowerButton(rail.shutdown, false, text.powerConfirmButton == 3, fading,
+                        -5.0f * confirmProgress);
+    }
+    if (confirmProgress > 0.005f &&
+        (text.powerConfirmShownButton == 2 || text.powerConfirmShownButton == 3)) {
+        RectF confirm = island::CardRailPowerConfirmFor(rail);
+        const float centreY = (confirm.top + confirm.bottom) * 0.5f;
+        const float halfHeight = (confirm.bottom - confirm.top) * 0.5f * confirmProgress;
+        confirm.top = centreY - halfHeight;
+        confirm.bottom = centreY + halfHeight;
+        FillRounded(context, confirm, 12.0f,
+                    D2D1::ColorF(0.93f, 0.31f, 0.30f,
+                                 (0.10f + 0.06f * confirmProgress) * opacity));
+        if (ID2D1SolidColorBrush* edge =
+                BrushFor(context, D2D1::ColorF(0.88f, 0.26f, 0.27f,
+                                               0.26f * confirmProgress * opacity))) {
+            const D2D1_ROUNDED_RECT outline = {
+                D2D1::RectF(confirm.left, confirm.top, confirm.right, confirm.bottom), 12.0f,
+                12.0f};
+            context->DrawRoundedRectangle(&outline, edge, 1.0f);
+        }
+        const wchar_t* action = text.powerConfirmShownButton == 2 ? L"\u91CD\u542F"
+                                                                  : L"\u5173\u673A";
+        const float textOffsetY = (1.0f - confirmProgress) * 4.0f;
+        const float rowsTop = centreY - 18.0f + textOffsetY;
+        const RectF prompt = {confirm.left, rowsTop, confirm.right, rowsTop + 16.0f};
+        const RectF actionBox = {confirm.left, rowsTop + 18.0f, confirm.right,
+                                 rowsTop + 38.0f};
+        if (ID2D1SolidColorBrush* promptInk =
+                BrushFor(context, D2D1::ColorF(0.57f, 0.28f, 0.31f,
+                                               0.88f * confirmProgress * opacity))) {
+            DrawTextIn(context, niriWeatherQualityFormat_, L"\u518D\u6B21\u70B9\u51FB", prompt,
+                       promptInk, DWRITE_TEXT_ALIGNMENT_CENTER,
+                       DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        }
+        if (ID2D1SolidColorBrush* actionInk =
+                BrushFor(context, D2D1::ColorF(0.78f, 0.18f, 0.21f,
+                                               opacity * confirmProgress))) {
+            DrawTextIn(context, niriMetricFormat_, action, actionBox, actionInk,
+                       DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        }
+    }
+
+    ID2D1Bitmap1* avatar =
+        StartBitmapFor(context, &startAvatarBitmap_, text.avatarPng, text.avatarPngSize);
+    if (avatar) {
+        ID2D1EllipseGeometry* circle = nullptr;
+        ID2D1Factory* factory = nullptr;
+        context->GetFactory(&factory);
+        if (factory) {
+            const float cx = (rail.avatar.left + rail.avatar.right) * 0.5f;
+            const float cy = (rail.avatar.top + rail.avatar.bottom) * 0.5f;
+            const float radius = (rail.avatar.right - rail.avatar.left) * 0.5f;
+            factory->CreateEllipseGeometry(D2D1::Ellipse(D2D1::Point2F(cx, cy), radius, radius),
+                                           &circle);
+            factory->Release();
+        }
+        if (circle) {
+            context->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), circle,
+                                                      D2D1_ANTIALIAS_MODE_PER_PRIMITIVE),
+                               nullptr);
+            context->DrawBitmap(avatar,
+                                D2D1::RectF(rail.avatar.left, rail.avatar.top, rail.avatar.right,
+                                            rail.avatar.bottom),
+                                opacity, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
+            context->PopLayer();
+            circle->Release();
+        }
+    } else {
+        context->FillEllipse(
+            D2D1::Ellipse(D2D1::Point2F((rail.avatar.left + rail.avatar.right) * 0.5f,
+                                        (rail.avatar.top + rail.avatar.bottom) * 0.5f),
+                          (rail.avatar.right - rail.avatar.left) * 0.5f,
+                          (rail.avatar.bottom - rail.avatar.top) * 0.5f),
+            BrushFor(context, D2D1::ColorF(0.82f, 0.78f, 0.89f, opacity)));
+        wchar_t initial[2] = {
+            text.accountName && text.accountName[0] ? text.accountName[0] : L'U', L'\0'};
+        DrawTextIn(context, niriMetricFormat_, initial, rail.avatar, purpleBrush,
+                   DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    }
+}
+
+void TextRenderer::DrawWeatherCard(ID2D1DeviceContext2* context, const RoundedBox& card,
+                                   const WeatherSnapshot& weather, float opacity) {
+    if (!context || opacity <= 0.01f || !niriMetricFormat_) return;
+    const WeatherCardLayout layout = WeatherCardFor(card);
+    const D2D1_COLOR_F lavender = D2D1::ColorF(0.86f, 0.81f, 0.98f, 0.96f * opacity);
+    const D2D1_COLOR_F white = D2D1::ColorF(0.96f, 0.95f, 0.98f, 0.98f * opacity);
+    FillRounded(context, layout.current, 22.0f, lavender);
+    FillRounded(context, layout.metrics, 20.0f, white);
+    FillRounded(context, layout.hourly, 20.0f, white);
+    FillRounded(context, layout.daily, 20.0f, white);
+
+    ID2D1SolidColorBrush* ink = nullptr;
+    ID2D1SolidColorBrush* muted = nullptr;
+    context->CreateSolidColorBrush(D2D1::ColorF(0.13f, 0.11f, 0.18f, 0.96f * opacity), &ink);
+    context->CreateSolidColorBrush(D2D1::ColorF(0.38f, 0.35f, 0.45f, 0.88f * opacity), &muted);
+    if (!ink) return;
+    if (!weather.valid) {
+        DrawTextIn(context, niriHeroFormat_, L"天气数据加载中",
+                   {layout.current.left + 22.0f, layout.current.top,
+                    layout.current.right - 22.0f, layout.current.bottom},
+                   ink, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        ink->Release();
+        if (muted) muted->Release();
+        return;
+    }
+
+    wchar_t temperature[32] = {};
+    std::swprintf(temperature, 32, L"%d°",
+                  static_cast<int>(std::lround(weather.temperatureC)));
+    DrawTextIn(context, niriHeroFormat_, temperature,
+               {layout.current.left + 22.0f, layout.current.top + 4.0f,
+                layout.current.left + 214.0f, layout.current.top + 88.0f},
+               ink, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    const wchar_t* word = WeatherWordForCode(weather.code);
+    DrawTextIn(context, niriMetricFormat_, word ? word : L"未知",
+               {layout.current.left + 24.0f, layout.current.top + 92.0f,
+                layout.current.left + 220.0f, layout.current.top + 116.0f},
+               ink, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    wchar_t apparent[96] = {};
+    std::swprintf(apparent, 96, L"体感 %d°", static_cast<int>(std::lround(weather.apparentTemperatureC)));
+    DrawTextIn(context, niriMetricFormat_, apparent,
+               {layout.current.left + 24.0f, layout.current.top + 118.0f,
+                layout.current.left + 250.0f, layout.current.top + 142.0f},
+               muted ? muted : ink, DWRITE_TEXT_ALIGNMENT_LEADING,
+               DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    wchar_t sun[96] = {};
+    std::swprintf(sun, 96, L"日出 %02d:%02d   日落 %02d:%02d", weather.sunriseMinutes / 60,
+                  weather.sunriseMinutes % 60, weather.sunsetMinutes / 60,
+                  weather.sunsetMinutes % 60);
+    DrawTextIn(context, niriMetricFormat_, sun,
+               {layout.current.left + 24.0f, layout.current.bottom - 34.0f,
+                layout.current.right - 130.0f, layout.current.bottom - 10.0f},
+               muted ? muted : ink, DWRITE_TEXT_ALIGNMENT_LEADING,
+               DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    DrawWeatherMarkLarge(context,
+                         {layout.current.right - 118.0f, layout.current.top + 18.0f,
+                          layout.current.right - 22.0f, layout.current.bottom - 18.0f},
+                         weather.code, opacity);
+
+    struct Metric {
+        const wchar_t* label;
+        wchar_t value[48];
+    };
+    Metric metrics[6] = {
+        {L"湿度", {}}, {L"风速", {}}, {L"气压", {}},
+        {L"降水概率", {}}, {L"日出", {}}, {L"日落", {}},
+    };
+    std::swprintf(metrics[0].value, 48, L"%d%%", weather.humidityPercent);
+    std::swprintf(metrics[1].value, 48, L"%.1f m/s", weather.windSpeedKph / 3.6);
+    std::swprintf(metrics[2].value, 48, L"%d hPa", weather.pressureHpa);
+    std::swprintf(metrics[3].value, 48, L"%d%%", weather.precipitationPercent);
+    std::swprintf(metrics[4].value, 48, L"%02d:%02d", weather.sunriseMinutes / 60,
+                  weather.sunriseMinutes % 60);
+    std::swprintf(metrics[5].value, 48, L"%02d:%02d", weather.sunsetMinutes / 60,
+                  weather.sunsetMinutes % 60);
+    const float metricLeft = layout.metrics.left + 18.0f;
+    const float metricTop = layout.metrics.top + 18.0f;
+    const float metricWidth = (layout.metrics.right - layout.metrics.left - 36.0f) / 2.0f;
+    const float metricHeight = (layout.metrics.bottom - layout.metrics.top - 36.0f) / 3.0f;
+    for (int i = 0; i < 6; ++i) {
+        const int column = i % 2;
+        const int row = i / 2;
+        const RectF box = {metricLeft + static_cast<float>(column) * metricWidth,
+                           metricTop + static_cast<float>(row) * metricHeight,
+                           metricLeft + static_cast<float>(column + 1) * metricWidth,
+                           metricTop + static_cast<float>(row + 1) * metricHeight};
+        DrawTextIn(context, niriMetricFormat_, metrics[i].label, box,
+                   muted ? muted : ink, DWRITE_TEXT_ALIGNMENT_LEADING,
+                   DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+        DrawTextIn(context, niriMetricFormat_, metrics[i].value,
+                   {box.left, box.top + 17.0f, box.right, box.bottom}, ink,
+                   DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+    }
+
+    DrawTextIn(context, niriMetricFormat_, L"每小时",
+               {layout.hourly.left + 16.0f, layout.hourly.top + 8.0f,
+                layout.hourly.right - 16.0f, layout.hourly.top + 36.0f},
+               ink, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    for (int i = 0; i < kWeatherHourlyColumns && i < weather.hourCount; ++i) {
+        const RectF& cell = layout.hourlyCells[i];
+        if (i == 0) FillRounded(context, cell, 13.0f, D2D1::ColorF(0.88f, 0.85f, 0.98f,
+                                                                    0.78f * opacity));
+        wchar_t hour[16] = {};
+        std::swprintf(hour, 16, L"%02d:00", weather.hours[i].hour);
+        DrawTextIn(context, niriMetricFormat_, hour,
+                   {cell.left, cell.top + 6.0f, cell.right, cell.top + 28.0f},
+                   i == 0 && muted ? muted : ink, DWRITE_TEXT_ALIGNMENT_CENTER,
+                   DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        DrawWeatherMarkLarge(
+            context, {cell.left + 18.0f, cell.top + 34.0f, cell.right - 18.0f,
+                      cell.top + 86.0f},
+            weather.hours[i].code, opacity);
+        wchar_t value[48] = {};
+        std::swprintf(value, 48, L"%d°", static_cast<int>(std::lround(weather.hours[i].temperatureC)));
+        DrawTextIn(context, niriMetricFormat_, value,
+                   {cell.left, cell.top + 88.0f, cell.right, cell.top + 112.0f},
+                   ink, DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        std::swprintf(value, 48, L"%d%%", weather.hours[i].precipitationPercent);
+        DrawTextIn(context, niriMetricFormat_, value,
+                   {cell.left, cell.bottom - 25.0f, cell.right, cell.bottom - 5.0f},
+                   muted ? muted : ink, DWRITE_TEXT_ALIGNMENT_CENTER,
+                   DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    }
+
+    DrawTextIn(context, niriMetricFormat_, L"每日",
+               {layout.daily.left + 16.0f, layout.daily.top + 8.0f,
+                layout.daily.right - 16.0f, layout.daily.top + 36.0f},
+               ink, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    for (int i = 0; i < weather.dayCount && i < kWeatherDayCount; ++i) {
+        const RectF& cell = layout.dailyCells[i];
+        const int weekday = DayOfWeekMondayFirst(weather.days[i].year, weather.days[i].month,
+                                                 weather.days[i].day);
+        DrawTextIn(context, niriMetricFormat_, kWeekdays[(weekday + 1) % 7],
+                   {cell.left, cell.top + 4.0f, cell.right, cell.top + 28.0f},
+                   ink, DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        DrawWeatherMarkLarge(context,
+                             {cell.left + 20.0f, cell.top + 34.0f, cell.right - 20.0f,
+                              cell.top + 88.0f},
+                             weather.days[i].code, opacity);
+        wchar_t maximum[32] = {};
+        std::swprintf(maximum, 32, L"%d°",
+                      static_cast<int>(std::lround(weather.days[i].temperatureMaxC)));
+        DrawTextIn(context, niriMetricFormat_, maximum,
+                   {cell.left, cell.top + 94.0f, cell.right, cell.top + 116.0f},
+                   ink, DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        wchar_t minimum[32] = {};
+        std::swprintf(minimum, 32, L"%d°",
+                      static_cast<int>(std::lround(weather.days[i].temperatureMinC)));
+        DrawTextIn(context, niriMetricFormat_, minimum,
+                   {cell.left, cell.top + 118.0f, cell.right, cell.top + 140.0f},
+                   muted ? muted : ink, DWRITE_TEXT_ALIGNMENT_CENTER,
+                   DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    }
+
+    if (muted) muted->Release();
+    ink->Release();
+}
+
+void TextRenderer::DrawCommandCenter(ID2D1DeviceContext2* context, const RoundedBox& card,
+                                     const CommandCenterText& text, float opacity) {
+    if (!context || opacity <= 0.01f || !niriMetricFormat_) return;
+    const CommandCenterLayout layout =
+        CommandCenterFor(card, text.filteredCount, text.scrollFirst);
+    const D2D1_COLOR_F white = D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.98f * opacity);
+    const D2D1_COLOR_F inkColour = D2D1::ColorF(45.0f / 255.0f, 38.0f / 255.0f,
+                                                75.0f / 255.0f, 0.97f * opacity);
+    const D2D1_COLOR_F mutedColour = D2D1::ColorF(111.0f / 255.0f, 105.0f / 255.0f,
+                                                  130.0f / 255.0f, 0.88f * opacity);
+    const D2D1_COLOR_F accentColour = D2D1::ColorF(107.0f / 255.0f, 82.0f / 255.0f,
+                                                   174.0f / 255.0f, 0.98f * opacity);
+    const D2D1_COLOR_F cardBorder = D2D1::ColorF(235.0f / 255.0f, 230.0f / 255.0f,
+                                                  245.0f / 255.0f, 0.70f * opacity);
+    const D2D1_COLOR_F mediaBorder = D2D1::ColorF(233.0f / 255.0f, 213.0f / 255.0f,
+                                                   255.0f / 255.0f, 0.60f * opacity);
+    ID2D1SolidColorBrush* ink = BrushFor(context, inkColour);
+    ID2D1SolidColorBrush* muted = BrushFor(context, mutedColour);
+    ID2D1SolidColorBrush* accent = BrushFor(context, accentColour);
+    if (!ink || !muted || !accent) return;
+
+    const auto strokeRounded = [&](const RectF& rect, float radius, const D2D1_COLOR_F& colour,
+                                   float width) {
+        if (ID2D1SolidColorBrush* brush = BrushFor(context, colour)) {
+            context->DrawRoundedRectangle(
+                D2D1::RoundedRect(D2D1::RectF(rect.left, rect.top, rect.right, rect.bottom),
+                                  radius, radius),
+                brush, width);
+        }
+    };
+    const auto drawText = [&](IDWriteTextFormat* format, const wchar_t* value, const RectF& where,
+                              ID2D1Brush* brush, DWRITE_TEXT_ALIGNMENT horizontal,
+                              DWRITE_PARAGRAPH_ALIGNMENT vertical) {
+        DrawTextIn(context, format, value, where, brush, horizontal, vertical);
+    };
+    const auto softShadow = [&](const RectF& box, float radius) {
+        constexpr float spread[] = {18.0f, 12.0f, 7.0f, 3.0f};
+        constexpr float alpha[] = {0.010f, 0.014f, 0.020f, 0.022f};
+        for (int i = 0; i < 4; ++i) {
+            const float d = spread[i];
+            FillRounded(context,
+                        {box.left - d, box.top + 2.0f, box.right + d, box.bottom + d + 2.0f},
+                        radius + d * 0.35f,
+                        D2D1::ColorF(107.0f / 255.0f, 82.0f / 255.0f, 174.0f / 255.0f,
+                                     alpha[i] * opacity));
+        }
+    };
+
+    // The hero clock is a tinted focal card, exactly as in the reference.
+    const D2D1_GRADIENT_STOP clockStops[] = {
+        {0.0f, D2D1::ColorF(241.0f / 255.0f, 236.0f / 255.0f, 252.0f / 255.0f,
+                            0.98f * opacity)},
+        {0.52f, D2D1::ColorF(247.0f / 255.0f, 244.0f / 255.0f, 254.0f / 255.0f,
+                             0.98f * opacity)},
+        {1.0f, D2D1::ColorF(236.0f / 255.0f, 229.0f / 255.0f, 249.0f / 255.0f,
+                            0.98f * opacity)},
+    };
+    ID2D1GradientStopCollection* clockGradientStops = nullptr;
+    ID2D1LinearGradientBrush* clockGradient = nullptr;
+    if (SUCCEEDED(context->CreateGradientStopCollection(
+            clockStops, ARRAYSIZE(clockStops), D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP,
+            &clockGradientStops)) &&
+        clockGradientStops &&
+        SUCCEEDED(context->CreateLinearGradientBrush(
+            D2D1::LinearGradientBrushProperties(
+                D2D1::Point2F(layout.clock.left, layout.clock.top),
+                D2D1::Point2F(layout.clock.right, layout.clock.bottom)),
+            clockGradientStops, &clockGradient)) &&
+        clockGradient) {
+        const D2D1_ROUNDED_RECT rounded = {
+            D2D1::RectF(layout.clock.left, layout.clock.top, layout.clock.right,
+                        layout.clock.bottom),
+            24.0f, 24.0f};
+        context->FillRoundedRectangle(&rounded, clockGradient);
+    }
+    SafeRelease(&clockGradient);
+    SafeRelease(&clockGradientStops);
+    if (ID2D1SolidColorBrush* glow = BrushFor(
+            context, D2D1::ColorF(0.42f, 0.32f, 0.68f, 0.07f * opacity))) {
+        context->FillEllipse(
+            D2D1::Ellipse(D2D1::Point2F(layout.clock.right - 6.0f,
+                                       layout.clock.bottom + 4.0f),
+                          48.0f, 48.0f),
+            glow);
+    }
+    softShadow(layout.weather, 24.0f);
+    FillRounded(context, layout.weather, 24.0f, white);
+    softShadow(layout.calendar, 16.0f);
+    FillRounded(context, layout.calendar, 16.0f, white);
+    if (ID2D1SolidColorBrush* glow = BrushFor(
+            context, D2D1::ColorF(107.0f / 255.0f, 82.0f / 255.0f, 174.0f / 255.0f,
+                                  0.07f * opacity))) {
+        context->FillEllipse(
+            D2D1::Ellipse(D2D1::Point2F(layout.media.right - 4.0f, layout.media.top + 6.0f),
+                          64.0f, 64.0f),
+            glow);
+        context->FillEllipse(
+            D2D1::Ellipse(D2D1::Point2F(layout.media.left + 10.0f, layout.media.bottom - 6.0f),
+                          44.0f, 44.0f),
+            glow);
+    }
+    softShadow(layout.media, 24.0f);
+    FillRounded(context, layout.media, 24.0f, white);
+    strokeRounded(layout.weather, 24.0f, cardBorder, 1.0f);
+    strokeRounded(layout.calendar, 16.0f, cardBorder, 1.0f);
+    strokeRounded(layout.media, 24.0f, mediaBorder, 1.0f);
+
+    Refresh();
+    DrawTextIn(context, niriCommandTimeFormat_, timeText_,
+               {layout.clock.left + 14.0f, layout.clock.top + 8.0f,
+                layout.clock.right - 10.0f, layout.clock.top + 64.0f},
+               ink, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    wchar_t date[80] = {};
+    std::swprintf(date, 80, L"%ls · %u年%u月%u日", weekdayText_,
+                  static_cast<unsigned>(time_.wYear), static_cast<unsigned>(time_.wMonth),
+                  static_cast<unsigned>(time_.wDay));
+    DrawTextIn(context, niriCommandDateFormat_, date,
+               {layout.clock.left + 16.0f, layout.clock.top + 62.0f,
+                layout.clock.right - 12.0f, layout.clock.top + 82.0f},
+               muted ? muted : ink, DWRITE_TEXT_ALIGNMENT_LEADING,
+               DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    FillRounded(context, layout.clockChip, layout.clockChip.bottom - layout.clockChip.top,
+                D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.90f * opacity));
+    strokeRounded(layout.clockChip, (layout.clockChip.bottom - layout.clockChip.top) * 0.5f,
+                  D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f * opacity), 1.0f);
+    const float clockChipCentreY = (layout.clockChip.top + layout.clockChip.bottom) * 0.5f;
+    context->DrawEllipse(
+        D2D1::Ellipse(D2D1::Point2F(layout.clockChip.left + 10.0f, clockChipCentreY),
+                      3.2f, 3.2f),
+        accent, 1.2f);
+    context->DrawLine(D2D1::Point2F(layout.clockChip.left + 10.0f, clockChipCentreY),
+                      D2D1::Point2F(layout.clockChip.left + 10.0f, clockChipCentreY - 2.0f),
+                      accent, 1.0f);
+    DrawTextIn(context, niriCommandChipFormat_, L"\u5317\u4EAC\u65F6\u95F4",
+               {layout.clockChip.left + 18.0f, layout.clockChip.top,
+                layout.clockChip.right - 6.0f, layout.clockChip.bottom},
+               accent, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+
+    const WeatherSnapshot* weather = text.weather;
+    if (weather && weather->valid) {
+        const RectF liveChip = {layout.weather.right - 62.0f, layout.weather.top + 10.0f,
+                                layout.weather.right - 10.0f, layout.weather.top + 30.0f};
+        FillRounded(context, liveChip, 10.0f,
+                    D2D1::ColorF(236.0f / 255.0f, 253.0f / 255.0f, 245.0f / 255.0f,
+                                  0.96f * opacity));
+        strokeRounded(liveChip, 10.0f,
+                      D2D1::ColorF(167.0f / 255.0f, 243.0f / 255.0f, 208.0f / 255.0f,
+                                    0.60f * opacity),
+                      1.0f);
+        wchar_t airQuality[32] = {};
+        if (weather->airQualityIndex >= 0) {
+            std::swprintf(airQuality, 32, L"%ls %d", AirQualityWord(weather->airQualityIndex),
+                          weather->airQualityIndex);
+        } else {
+            wcscpy_s(airQuality, L"实时");
+        }
+        DrawTextIn(context, niriWeatherQualityFormat_, airQuality, liveChip,
+                   BrushFor(context, D2D1::ColorF(5.0f / 255.0f, 150.0f / 255.0f,
+                                                  105.0f / 255.0f, opacity)),
+                   DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        wchar_t temperature[32] = {};
+        std::swprintf(temperature, 32, L"%d°",
+                      static_cast<int>(std::lround(weather->temperatureC)));
+        DrawTextIn(context, niriWeatherTempFormat_, temperature,
+                   {layout.weather.left + 12.0f, layout.weather.bottom - 50.0f,
+                    layout.weather.right - 10.0f, layout.weather.bottom - 24.0f},
+                   ink, DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        const wchar_t* word = WeatherWordForCode(weather->code);
+        DrawTextIn(context, niriWeatherWordFormat_, word ? word : L"未知",
+                   {layout.weather.left + 10.0f, layout.weather.bottom - 23.0f,
+                    layout.weather.right - 10.0f, layout.weather.bottom - 5.0f},
+                   muted ? muted : ink, DWRITE_TEXT_ALIGNMENT_CENTER,
+                   DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        const float weatherCentreX = (layout.weather.left + layout.weather.right) * 0.5f;
+        const RectF weatherBadge = {weatherCentreX - 20.0f, layout.weather.top + 42.0f,
+                                    weatherCentreX + 20.0f, layout.weather.top + 82.0f};
+        FillRounded(context, weatherBadge, 16.0f,
+                    D2D1::ColorF(253.0f / 255.0f, 230.0f / 255.0f, 138.0f / 255.0f,
+                                  0.58f * opacity));
+        DrawWeatherMarkLarge(context,
+                             {weatherBadge.left + 9.0f, weatherBadge.top + 9.0f,
+                              weatherBadge.right - 9.0f, weatherBadge.bottom - 9.0f},
+                             weather->code, opacity);
+    } else {
+        DrawTextIn(context, niriMetricFormat_, L"天气暂无数据", layout.weather,
+                   muted ? muted : ink, DWRITE_TEXT_ALIGNMENT_CENTER,
+                   DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    }
+
+    FillRounded(context, layout.calendarIcon, 6.0f,
+                D2D1::ColorF(245.0f / 255.0f, 243.0f / 255.0f, 250.0f / 255.0f,
+                              0.96f * opacity));
+    const float calendarIconCx = (layout.calendarIcon.left + layout.calendarIcon.right) * 0.5f;
+    const float calendarIconCy = (layout.calendarIcon.top + layout.calendarIcon.bottom) * 0.5f;
+    context->DrawRoundedRectangle(
+        D2D1::RoundedRect(D2D1::RectF(calendarIconCx - 5.0f, calendarIconCy - 5.0f,
+                                     calendarIconCx + 5.0f, calendarIconCy + 5.0f),
+                          1.5f, 1.5f),
+        accent, 1.0f);
+    context->DrawLine(D2D1::Point2F(calendarIconCx - 5.0f, calendarIconCy - 1.5f),
+                      D2D1::Point2F(calendarIconCx + 5.0f, calendarIconCy - 1.5f), accent, 1.0f);
+    wchar_t monthTitle[64] = {};
+    std::swprintf(monthTitle, 64, L"%u年%u月", static_cast<unsigned>(time_.wYear),
+                  static_cast<unsigned>(time_.wMonth));
+    DrawTextIn(context, niriNotificationTitleFormat_, monthTitle, layout.calendarTitle, ink,
+               DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    DrawTextIn(context, niriMetricFormat_, L"‹", layout.calendarPrevious,
+               accent ? accent : ink, DWRITE_TEXT_ALIGNMENT_CENTER,
+               DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    DrawTextIn(context, niriMetricFormat_, L"›", layout.calendarNext,
+               accent ? accent : ink, DWRITE_TEXT_ALIGNMENT_CENTER,
+               DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    const wchar_t shortWeekdays[7][3] = {L"一", L"二", L"三", L"四", L"五", L"六", L"日"};
+    for (int column = 0; column < 7; ++column) {
+        DrawTextIn(context, niriCalendarWeekdayFormat_, shortWeekdays[column],
+                   layout.calendarCells[column], muted ? muted : ink,
+                   DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    }
+    const int first = DayOfWeekMondayFirst(time_.wYear, time_.wMonth, 1);
+    const int days = DaysInMonth(time_.wYear, time_.wMonth);
+    for (int row = 1; row < kCommandCenterCalendarRows; ++row) {
+        for (int column = 0; column < 7; ++column) {
+            const int index = (row - 1) * 7 + column;
+            const int day = index - first + 1;
+            RectF cell = layout.calendarCells[row * 7 + column];
+            if (day < 1 || day > days) continue;
+            if (day == time_.wDay) {
+                FillRounded(context, cell, 9.0f,
+                            D2D1::ColorF(107.0f / 255.0f, 82.0f / 255.0f,
+                                          174.0f / 255.0f, 0.98f * opacity));
+            }
+            wchar_t dayText[8] = {};
+            std::swprintf(dayText, 8, L"%d", day);
+            ID2D1Brush* dayInk =
+                day == time_.wDay ? BrushFor(context, ThemeHighlight(0.96f * opacity)) : ink;
+            DrawTextIn(context, niriCalendarDayFormat_, dayText, cell,
+                       dayInk,
+                       DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        }
+    }
+
+    if (text.music && text.music->present) {
+        const MusicInfo& music = *text.music;
+        ID2D1Bitmap1* artwork =
+            StartBitmapFor(context, &commandArtworkBitmap_, music.artwork, music.artworkSize);
+        const D2D1_GRADIENT_STOP coverStops[] = {
+            {0.0f, D2D1::ColorF(83.0f / 255.0f, 57.0f / 255.0f, 148.0f / 255.0f, opacity)},
+            {0.52f, D2D1::ColorF(107.0f / 255.0f, 82.0f / 255.0f, 174.0f / 255.0f, opacity)},
+            {1.0f, D2D1::ColorF(213.0f / 255.0f, 199.0f / 255.0f, 238.0f / 255.0f, opacity)},
+        };
+        ID2D1GradientStopCollection* coverGradientStops = nullptr;
+        ID2D1LinearGradientBrush* coverGradient = nullptr;
+        if (SUCCEEDED(context->CreateGradientStopCollection(
+                coverStops, ARRAYSIZE(coverStops), D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP,
+                &coverGradientStops)) &&
+            coverGradientStops &&
+            SUCCEEDED(context->CreateLinearGradientBrush(
+                D2D1::LinearGradientBrushProperties(
+                    D2D1::Point2F(layout.mediaCover.left, layout.mediaCover.bottom),
+                    D2D1::Point2F(layout.mediaCover.right, layout.mediaCover.top)),
+                coverGradientStops, &coverGradient)) &&
+            coverGradient) {
+            const D2D1_ROUNDED_RECT rounded = {
+                D2D1::RectF(layout.mediaCover.left, layout.mediaCover.top,
+                            layout.mediaCover.right, layout.mediaCover.bottom),
+                16.0f, 16.0f};
+            context->FillRoundedRectangle(&rounded, coverGradient);
+        }
+        SafeRelease(&coverGradient);
+        SafeRelease(&coverGradientStops);
+
+        const RectF artworkBox = {layout.mediaCover.left + 2.0f, layout.mediaCover.top + 2.0f,
+                                  layout.mediaCover.right - 2.0f,
+                                  layout.mediaCover.bottom - 2.0f};
+        if (artwork) {
+            ID2D1RoundedRectangleGeometry* clip = nullptr;
+            ID2D1Factory* factory = nullptr;
+            context->GetFactory(&factory);
+            if (factory) {
+                factory->CreateRoundedRectangleGeometry(
+                    D2D1::RoundedRect(
+                        D2D1::RectF(artworkBox.left, artworkBox.top, artworkBox.right,
+                                    artworkBox.bottom),
+                        14.0f, 14.0f),
+                    &clip);
+                factory->Release();
+            }
+            if (clip) {
+                context->PushLayer(
+                    D2D1::LayerParameters1(D2D1::InfiniteRect(), clip,
+                                           D2D1_ANTIALIAS_MODE_PER_PRIMITIVE),
+                    nullptr);
+                context->DrawBitmap(
+                    artwork,
+                    D2D1::RectF(artworkBox.left, artworkBox.top, artworkBox.right,
+                                artworkBox.bottom),
+                    opacity, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
+                context->PopLayer();
+                clip->Release();
+            }
+            // A reflection is the BOTTOM edge of the cover mirrored below it and
+            // dissolved into the card. The previous code squeezed the whole cover
+            // into a 28 DIP strip, which preserved its caption and produced a second,
+            // distorted album rather than a reflection.
+            const RectF reflection = {
+                layout.mediaCover.left, layout.mediaCover.bottom + 1.0f,
+                layout.mediaCover.right, layout.mediaCover.bottom + 29.0f};
+            const D2D1_SIZE_U artworkPixels = artwork->GetPixelSize();
+            if (artworkPixels.height > 0 && artworkPixels.width > 0) {
+                const D2D1_RECT_F reflectionSource = {
+                    0.0f, static_cast<float>(artworkPixels.height) * 0.68f,
+                    static_cast<float>(artworkPixels.width),
+                    static_cast<float>(artworkPixels.height)};
+                ID2D1RoundedRectangleGeometry* reflectionClip = nullptr;
+                ID2D1Factory* reflectionFactory = nullptr;
+                context->GetFactory(&reflectionFactory);
+                if (reflectionFactory) {
+                    reflectionFactory->CreateRoundedRectangleGeometry(
+                        D2D1::RoundedRect(
+                            D2D1::RectF(reflection.left, reflection.top, reflection.right,
+                                        reflection.bottom),
+                            16.0f, 16.0f),
+                        &reflectionClip);
+                    reflectionFactory->Release();
+                }
+                if (reflectionClip) {
+                    context->PushLayer(
+                        D2D1::LayerParameters1(D2D1::InfiniteRect(), reflectionClip,
+                                               D2D1_ANTIALIAS_MODE_PER_PRIMITIVE),
+                        nullptr);
+                    D2D1_MATRIX_3X2_F previousTransform = D2D1::Matrix3x2F::Identity();
+                    context->GetTransform(&previousTransform);
+                    context->SetTransform(
+                        previousTransform *
+                        D2D1::Matrix3x2F::Scale(
+                            1.0f, -1.0f,
+                            D2D1::Point2F(0.0f, reflection.top)));
+                    const float height = reflection.bottom - reflection.top;
+                    context->DrawBitmap(
+                        artwork,
+                        D2D1::RectF(reflection.left, reflection.top - height,
+                                    reflection.right, reflection.top),
+                        0.28f * opacity, D2D1_INTERPOLATION_MODE_LINEAR,
+                        reflectionSource);
+                    context->SetTransform(previousTransform);
+                    context->PopLayer();
+                    reflectionClip->Release();
+                }
+
+                const D2D1_GRADIENT_STOP reflectionMaskStops[] = {
+                    {0.0f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.14f * opacity)},
+                    {0.48f, D2D1::ColorF(0.98f, 0.97f, 0.99f, 0.68f * opacity)},
+                    {1.0f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.98f * opacity)},
+                };
+                ID2D1GradientStopCollection* reflectionMaskStopsCollection = nullptr;
+                ID2D1LinearGradientBrush* reflectionMask = nullptr;
+                if (SUCCEEDED(context->CreateGradientStopCollection(
+                        reflectionMaskStops, ARRAYSIZE(reflectionMaskStops), D2D1_GAMMA_2_2,
+                        D2D1_EXTEND_MODE_CLAMP, &reflectionMaskStopsCollection)) &&
+                    reflectionMaskStopsCollection &&
+                    SUCCEEDED(context->CreateLinearGradientBrush(
+                        D2D1::LinearGradientBrushProperties(
+                            D2D1::Point2F(reflection.left, reflection.top),
+                            D2D1::Point2F(reflection.left, reflection.bottom)),
+                        reflectionMaskStopsCollection, &reflectionMask)) &&
+                    reflectionMask) {
+                    const D2D1_ROUNDED_RECT rounded = {
+                        D2D1::RectF(reflection.left, reflection.top, reflection.right,
+                                    reflection.bottom),
+                        16.0f, 16.0f};
+                    context->FillRoundedRectangle(&rounded, reflectionMask);
+                }
+                SafeRelease(&reflectionMask);
+                SafeRelease(&reflectionMaskStopsCollection);
+            }
+            const D2D1_GRADIENT_STOP glossStops[] = {
+                {0.0f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.32f * opacity)},
+                {0.42f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.10f * opacity)},
+                {1.0f, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.0f)},
+            };
+            ID2D1GradientStopCollection* glossGradientStops = nullptr;
+            ID2D1LinearGradientBrush* gloss = nullptr;
+            if (SUCCEEDED(context->CreateGradientStopCollection(
+                    glossStops, ARRAYSIZE(glossStops), D2D1_GAMMA_2_2,
+                    D2D1_EXTEND_MODE_CLAMP, &glossGradientStops)) &&
+                glossGradientStops &&
+                SUCCEEDED(context->CreateLinearGradientBrush(
+                    D2D1::LinearGradientBrushProperties(
+                        D2D1::Point2F(artworkBox.left, artworkBox.top),
+                        D2D1::Point2F(artworkBox.left, artworkBox.bottom)),
+                    glossGradientStops, &gloss)) &&
+                gloss) {
+                const D2D1_ROUNDED_RECT rounded = {
+                    D2D1::RectF(artworkBox.left, artworkBox.top, artworkBox.right,
+                                artworkBox.bottom),
+                    14.0f, 14.0f};
+                context->FillRoundedRectangle(&rounded, gloss);
+            }
+            SafeRelease(&gloss);
+            SafeRelease(&glossGradientStops);
+        } else {
+            FillRounded(context, artworkBox, 14.0f,
+                        D2D1::ColorF(0.91f, 0.87f, 0.98f, opacity));
+            DrawTextIn(context, niriClockFormat_, L"\u266A", artworkBox, accent,
+                       DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        }
+        wchar_t title[384] = {};
+        wchar_t artist[256] = {};
+        wchar_t album[256] = {};
+        MultiByteToWideChar(CP_UTF8, 0, music.title, -1, title, 384);
+        MultiByteToWideChar(CP_UTF8, 0, music.artist, -1, artist, 256);
+        MultiByteToWideChar(CP_UTF8, 0, music.album, -1, album, 256);
+        DrawTextIn(context, niriNotificationTitleFormat_, title, layout.mediaTitle, ink,
+                   DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        wchar_t subtitle[512] = {};
+        if (artist[0] && album[0]) {
+            std::swprintf(subtitle, 512, L"%ls  ·  %ls", artist, album);
+        } else {
+            std::swprintf(subtitle, 512, L"%ls",
+                          artist[0] ? artist
+                                    : (album[0] ? album : L"\u672A\u77E5\u827A\u672F\u5BB6"));
+        }
+        const wchar_t* stateLabel =
+            music.state == PlaybackState::Playing ? L"播放中" : L"已暂停";
+        const RectF stateChip = {layout.mediaSubtitle.right - 52.0f,
+                                 layout.mediaSubtitle.top + 2.0f,
+                                 layout.mediaSubtitle.right,
+                                 layout.mediaSubtitle.bottom - 1.0f};
+        FillRounded(context, stateChip, 9.0f,
+                    D2D1::ColorF(0.93f, 0.90f, 0.98f, 0.94f * opacity));
+        DrawTextIn(context, niriWeatherQualityFormat_, stateLabel, stateChip, accent,
+                   DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        RectF subtitleBox = layout.mediaSubtitle;
+        subtitleBox.right = stateChip.left - 8.0f;
+        DrawTextIn(context, niriMediaSubtitleFormat_, subtitle, subtitleBox, muted,
+                   DWRITE_TEXT_ALIGNMENT_LEADING,
+                   DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+
+        D2D1_COLOR_F waveColour = text.musicAccent;
+        waveColour.a = 0.95f * opacity;
+        if (ID2D1SolidColorBrush* wave = BrushFor(context, waveColour)) {
+            for (int i = 0; i < 5; ++i) {
+                const float phase = text.musicWavePhase * 5.0f + static_cast<float>(i) * 0.8f;
+                const float value =
+                    0.25f + 0.75f * std::min(1.0f, text.musicLevelKnown ? text.musicLevel : 0.35f);
+                const float half = 2.0f + 9.0f * (0.5f + 0.5f * std::sin(phase)) * value;
+                const float x = layout.mediaWave.left + 3.0f + static_cast<float>(i) * 4.2f;
+                const float cy = (layout.mediaWave.top + layout.mediaWave.bottom) * 0.5f;
+                context->DrawLine(D2D1::Point2F(x, cy - half), D2D1::Point2F(x, cy + half),
+                                  wave, 2.0f);
+            }
+        }
+
+        const auto clockText = [](long long ms, wchar_t* out, size_t capacity) {
+            const long long total = ms > 0 ? ms / 1000 : 0;
+            std::swprintf(out, capacity, L"%lld:%02lld", total / 60, total % 60);
+        };
+        wchar_t elapsed[16] = {};
+        wchar_t duration[16] = {};
+        clockText(music.positionMs, elapsed, 16);
+        clockText(music.durationMs, duration, 16);
+        DrawTextIn(context, niriMediaTimeFormat_, elapsed, layout.mediaElapsed, muted,
+                   DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        DrawTextIn(context, niriMediaTimeFormat_, duration, layout.mediaDuration, muted,
+                   DWRITE_TEXT_ALIGNMENT_TRAILING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        FillRounded(context, layout.mediaProgress, 3.0f,
+                    D2D1::ColorF(237.0f / 255.0f, 230.0f / 255.0f, 249.0f / 255.0f,
+                                  opacity));
+        const float fraction =
+            music.durationMs > 0
+                ? std::clamp(static_cast<float>(music.positionMs) /
+                                 static_cast<float>(music.durationMs),
+                             0.0f, 1.0f)
+                : 0.0f;
+        RectF progressFill = layout.mediaProgress;
+        progressFill.right = progressFill.left +
+                             (progressFill.right - progressFill.left) * fraction;
+        FillRounded(context, progressFill, 3.0f, accentColour);
+        const float knobX = progressFill.right;
+        const float knobY =
+            (layout.mediaProgress.top + layout.mediaProgress.bottom) * 0.5f;
+        context->FillEllipse(
+            D2D1::Ellipse(D2D1::Point2F(knobX, knobY), 5.0f, 5.0f),
+            BrushFor(context, D2D1::ColorF(1.0f, 1.0f, 1.0f, opacity)));
+        context->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(knobX, knobY), 5.0f, 5.0f),
+                             accent, 2.0f);
+
+        FillRounded(context, layout.mediaPlayPause, 22.0f, accentColour);
+        const auto drawStep = [&](const RectF& box, bool forward) {
+            const float cx = (box.left + box.right) * 0.5f;
+            const float cy = (box.top + box.bottom) * 0.5f;
+            const float direction = forward ? 1.0f : -1.0f;
+            context->DrawLine(D2D1::Point2F(cx + direction * 6.0f, cy - 7.0f),
+                              D2D1::Point2F(cx + direction * 6.0f, cy + 7.0f), muted,
+                              1.8f);
+            context->DrawLine(D2D1::Point2F(cx - direction * 5.0f, cy - 7.0f),
+                              D2D1::Point2F(cx + direction * 2.0f, cy), muted, 1.8f);
+            context->DrawLine(D2D1::Point2F(cx + direction * 2.0f, cy),
+                              D2D1::Point2F(cx - direction * 5.0f, cy + 7.0f), muted,
+                              1.8f);
+        };
+        drawStep(layout.mediaPrevious, false);
+        drawStep(layout.mediaNext, true);
+        ID2D1SolidColorBrush* transportInk =
+            BrushFor(context, D2D1::ColorF(1.0f, 1.0f, 1.0f, opacity));
+        const float playCx = (layout.mediaPlayPause.left + layout.mediaPlayPause.right) * 0.5f;
+        const float playCy = (layout.mediaPlayPause.top + layout.mediaPlayPause.bottom) * 0.5f;
+        if (music.state == PlaybackState::Playing) {
+            context->DrawLine(D2D1::Point2F(playCx - 3.5f, playCy - 6.0f),
+                              D2D1::Point2F(playCx - 3.5f, playCy + 6.0f), transportInk,
+                              2.6f);
+            context->DrawLine(D2D1::Point2F(playCx + 3.5f, playCy - 6.0f),
+                              D2D1::Point2F(playCx + 3.5f, playCy + 6.0f), transportInk,
+                              2.6f);
+        } else {
+            context->DrawLine(D2D1::Point2F(playCx - 4.0f, playCy - 7.0f),
+                              D2D1::Point2F(playCx + 7.0f, playCy), transportInk, 2.4f);
+            context->DrawLine(D2D1::Point2F(playCx + 7.0f, playCy),
+                              D2D1::Point2F(playCx - 4.0f, playCy + 7.0f), transportInk,
+                              2.4f);
+        }
+    } else {
+        DrawTextIn(context, niriMetricFormat_, L"当前无播放内容", layout.media,
+                   muted ? muted : ink, DWRITE_TEXT_ALIGNMENT_CENTER,
+                   DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    }
+
+    DrawTextIn(context, niriNotificationHeaderFormat_, L"通知",
+               layout.notificationsTitle,
+               ink, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    FillRounded(context, layout.notificationCountChip, 12.0f,
+                D2D1::ColorF(237.0f / 255.0f, 230.0f / 255.0f, 249.0f / 255.0f,
+                              0.96f * opacity));
+    wchar_t notificationCount[16] = {};
+    std::swprintf(notificationCount, 16, L"%d",
+                  text.historyActive ? text.notificationTotal : text.unreadCount);
+    DrawTextIn(context, niriNotificationMetaFormat_, notificationCount,
+               layout.notificationCountChip,
+               accent, DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    const float preferenceCx = layout.preferencesButton.left + 10.0f;
+    const float preferenceCy =
+        (layout.preferencesButton.top + layout.preferencesButton.bottom) * 0.5f;
+    for (int line = 0; line < 3; ++line) {
+        const float y = preferenceCy - 5.0f + static_cast<float>(line) * 5.0f;
+        context->DrawLine(D2D1::Point2F(preferenceCx - 6.0f, y),
+                          D2D1::Point2F(preferenceCx + 6.0f, y), muted, 1.2f);
+        const float knob = preferenceCx - 2.5f + static_cast<float>(line) * 2.5f;
+        context->FillEllipse(D2D1::Ellipse(D2D1::Point2F(knob, y), 1.8f, 1.8f), muted);
+    }
+    DrawTextIn(context, niriNotificationMetaFormat_, L"偏好设置",
+               {layout.preferencesButton.left + 20.0f, layout.preferencesButton.top,
+                layout.preferencesButton.right, layout.preferencesButton.bottom},
+               muted, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+
+    const auto widen = [](const char* utf8, wchar_t* out, int capacity) {
+        if (!out || capacity <= 0) return;
+        out[0] = L'\0';
+        if (!utf8 || utf8[0] == '\0') return;
+        MultiByteToWideChar(CP_UTF8, 0, utf8, -1, out, capacity);
+    };
+    if (text.notifications && text.visibleCount > 0) {
+        for (int i = 0; i < text.visibleCount && i < layout.notificationRowsShown; ++i) {
+            const int storeIndex = text.visibleIndices[i];
+            const Notification* item = text.notifications->At(storeIndex);
+            if (!item) continue;
+            const RectF& row = layout.notificationRows[i];
+            softShadow(row, 16.0f);
+            FillRounded(context, row, 16.0f, white);
+            strokeRounded(row, 16.0f, cardBorder, 1.0f);
+            wchar_t app[64] = {};
+            wchar_t title[kTitleCapacity] = {};
+            wchar_t body[kBodyCapacity] = {};
+            widen(item->app, app, 64);
+            widen(item->title, title, kTitleCapacity);
+            widen(item->body, body, kBodyCapacity);
+            const RectF& avatar = layout.notificationAvatar[i];
+            FillRounded(context, avatar, (avatar.right - avatar.left) * 0.5f,
+                        D2D1::ColorF(0.94f, 0.91f, 0.99f, opacity));
+            wchar_t initial[2] = {app[0] ? app[0] : L'N', L'\0'};
+            DrawTextIn(context, niriNotificationTitleFormat_, initial, avatar, accent,
+                       DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            DrawTextIn(context, niriNotificationAppFormat_, app,
+                       layout.notificationApp[i],
+                       muted ? muted : ink, DWRITE_TEXT_ALIGNMENT_LEADING,
+                       DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            DrawTextIn(context, niriNotificationTitleFormat_, title,
+                       layout.notificationTitle[i],
+                       ink, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            DrawTextIn(context, niriNotificationBodyFormat_, body,
+                       layout.notificationBody[i],
+                       muted ? muted : ink, DWRITE_TEXT_ALIGNMENT_LEADING,
+                       DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+            const unsigned long long now = GetTickCount64();
+            const unsigned long long ageMs =
+                now >= item->timestampMs ? now - item->timestampMs : 0;
+            wchar_t age[32] = {};
+            if (ageMs < 60000ull) {
+                wcscpy_s(age, L"刚刚");
+            } else if (ageMs < 3600000ull) {
+                std::swprintf(age, 32, L"%llu分钟前", ageMs / 60000ull);
+            } else if (ageMs < 86400000ull) {
+                std::swprintf(age, 32, L"%llu小时前", ageMs / 3600000ull);
+            } else {
+                std::swprintf(age, 32, L"%llu天前", ageMs / 86400000ull);
+            }
+            DrawTextIn(context, niriNotificationMetaFormat_, age,
+                       layout.notificationAge[i], muted,
+                       DWRITE_TEXT_ALIGNMENT_TRAILING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            DrawTextIn(context, niriNotificationTitleFormat_, L"打开",
+                       layout.notificationOpen[i],
+                       accent, DWRITE_TEXT_ALIGNMENT_LEADING,
+                       DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            DrawTextIn(context, niriNotificationMetaFormat_, L"关闭",
+                       layout.notificationDismiss[i],
+                       muted, DWRITE_TEXT_ALIGNMENT_LEADING,
+                       DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        }
+    } else {
+        DrawTextIn(context, niriMetricFormat_, L"暂无通知",
+                   {layout.notifications.left + 14.0f, layout.notifications.top + 58.0f,
+                    layout.notifications.right - 14.0f, layout.notifications.bottom - 58.0f},
+                   muted ? muted : ink, DWRITE_TEXT_ALIGNMENT_CENTER,
+                   DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    }
+    if (layout.notificationScrollVisible) {
+        FillRounded(context, layout.notificationScrollTrack, 1.0f,
+                    D2D1::ColorF(0.84f, 0.81f, 0.90f, 0.42f * opacity));
+        FillRounded(context, layout.notificationScrollThumb, 1.0f,
+                    D2D1::ColorF(0.42f, 0.32f, 0.68f, 0.66f * opacity));
+    }
+    FillRounded(context, layout.historyButton, 16.0f,
+                D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.82f * opacity));
+    DrawTextIn(context, niriNotificationMetaFormat_,
+               text.historyActive ? L"未读" : L"全部",
+               layout.historyButton, muted, DWRITE_TEXT_ALIGNMENT_CENTER,
+               DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    FillRounded(context, layout.clearButton, 17.0f,
+                D2D1::ColorF(0.82f, 0.77f, 0.93f, 0.98f * opacity));
+    DrawTextIn(context, niriNotificationTitleFormat_, L"清空", layout.clearButton, ink,
+               DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 }
 
 void TextRenderer::CurrentDateParts(wchar_t* weekday, size_t weekdayCapacity, wchar_t* day,
@@ -3141,6 +4914,8 @@ void TextRenderer::DrawTaskIcons(ID2D1DeviceContext2* context, const RoundedBox&
     }
 
     if (!context || !buttons || count <= 0) return;
+    const island::Theme& theme = island::CurrentTheme();
+    const bool niriLight = std::wcscmp(theme.name, L"Niri") == 0;
 
     // No clip layer here, unlike the old full-width strip.
     //
@@ -3153,7 +4928,9 @@ void TextRenderer::DrawTaskIcons(ID2D1DeviceContext2* context, const RoundedBox&
     ID2D1SolidColorBrush* hoverBrush = nullptr;
     ID2D1SolidColorBrush* textBrush = nullptr;
     ID2D1SolidColorBrush* activeTextBrush = nullptr;
-    const D2D1_COLOR_F hoverColour = D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.18f * opacity);
+    const D2D1_COLOR_F hoverColour =
+        niriLight ? PillInk(0.14f * opacity)
+                  : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.18f * opacity);
     const D2D1_COLOR_F textColour = PillInk(0.84f * opacity);
     const D2D1_COLOR_F activeColour = PillInk(0.98f * opacity);
     context->CreateSolidColorBrush(hoverColour, &hoverBrush);
@@ -3215,7 +4992,6 @@ void TextRenderer::DrawTaskIcons(ID2D1DeviceContext2* context, const RoundedBox&
         // THE BODY IS THE ISLAND'S OWN, not whatever fill the task data carries. The active window's
         // button can arrive with a black fill -- that was the black plate under the black title the user
         // saw. On the glass theme the body is the theme's own pill fill, the same 0.08 the island draws.
-        const island::Theme& theme = island::CurrentTheme();
         D2D1_COLOR_F fill = theme.lens ? theme.pillTop : button.fill;
         fill.a *= appear;
         if (fill.a > 0.001f) {
@@ -3264,6 +5040,12 @@ void TextRenderer::DrawTaskIcons(ID2D1DeviceContext2* context, const RoundedBox&
         // icon behind. Deriving both from one rectangle means they cannot part company.
         if (button.icon) {
             RectF iconBox = TaskIconInBox(box);
+            if (niriLight) {
+                iconBox.left -= 2.0f;
+                iconBox.top -= 2.0f;
+                iconBox.right += 2.0f;
+                iconBox.bottom += 2.0f;
+            }
             // Grown into place, not switched on: at half way the icon is smaller than its box, which is
             // what makes the arrival read as one -- a fade alone at a fixed size still pops.
             if (appear < 0.999f) {
@@ -3284,9 +5066,11 @@ void TextRenderer::DrawTaskIcons(ID2D1DeviceContext2* context, const RoundedBox&
             // and a normal one were the same picture, and the only way to tell was to click it. The wash
             // marks the window that is IN FRONT; this marks the ones that are put away, which is the other
             // half of the same question.
-            const float iconStrength = button.minimised ? 0.55f : 1.0f;
+            const float iconStrength =
+                niriLight ? 1.0f : (button.minimised ? 0.55f : 1.0f);
             DrawBitmapRect(context, button.icon, iconBox, opacity * appear * iconStrength,
-                           D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
+                           niriLight ? D2D1_INTERPOLATION_MODE_LINEAR
+                                     : D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
         }
 
         // The title exists only in the ONE growing button, and only when its box is genuinely wide
@@ -3839,21 +5623,16 @@ void TextRenderer::DrawSystemPanel(ID2D1DeviceContext2* context, const RoundedBo
                                                     text.pageCount > 1, text.pageIndex,
                                                     text.pageCount);
 
-    // The card's own fill, FIRST, so everything else sits on it. The tiles are 6% ink and would be
-    // invisible against a bright wallpaper without the opaque settings surface under them.
-    FillCardSurface(context, box, opacity);
-
     // THE INSET SURFACE, from the reference's sliders block: a darker well inside the card, with a
     // hairline of the card's ink. Drawn before the rows, and only when there is a row to hold.
     if (layout.sliderPanel.right > layout.sliderPanel.left &&
         layout.sliderPanel.bottom > layout.sliderPanel.top) {
-        constexpr float kPanelRadius = 16.0f;
+        constexpr float kPanelRadius = 20.0f;
         const D2D1_ROUNDED_RECT rounded = {
             D2D1::RectF(layout.sliderPanel.left, layout.sliderPanel.top, layout.sliderPanel.right,
                         layout.sliderPanel.bottom),
             kPanelRadius, kPanelRadius};
-        if (ID2D1SolidColorBrush* well = BrushFor(
-                context, D2D1::ColorF(0.012f, 0.022f, 0.044f, 0.34f * opacity))) {
+        if (ID2D1SolidColorBrush* well = BrushFor(context, island::CardInk(0.045f * opacity))) {
             context->FillRoundedRectangle(&rounded, well);
         }
         if (ID2D1SolidColorBrush* edge = BrushFor(context, island::CardInk(0.075f * opacity))) {
@@ -3872,8 +5651,13 @@ void TextRenderer::DrawSystemPanel(ID2D1DeviceContext2* context, const RoundedBo
     // own brush rather than a solid one because the diagonal is most of what makes the tile read as lit.
     const D2D1_COLOR_F onFillTop = D2D1::ColorF(0.086f, 0.537f, 0.910f, 0.96f * opacity);
     const D2D1_COLOR_F onFillBottom = D2D1::ColorF(0.0078f, 0.3843f, 0.6902f, 0.96f * opacity);
-    const auto fillOnTile = [&](const D2D1_ROUNDED_RECT& rounded) {
-        const D2D1_GRADIENT_STOP stops[2] = {{0.0f, onFillTop}, {1.0f, onFillBottom}};
+    const auto fillOnTile = [&](const D2D1_ROUNDED_RECT& rounded, float amount) {
+        if (amount <= 0.001f) return;
+        D2D1_COLOR_F top = onFillTop;
+        D2D1_COLOR_F bottom = onFillBottom;
+        top.a *= amount;
+        bottom.a *= amount;
+        const D2D1_GRADIENT_STOP stops[2] = {{0.0f, top}, {1.0f, bottom}};
         ID2D1GradientStopCollection* collection = nullptr;
         if (FAILED(context->CreateGradientStopCollection(stops, 2, &collection)) || !collection) {
             return;
@@ -3888,32 +5672,61 @@ void TextRenderer::DrawSystemPanel(ID2D1DeviceContext2* context, const RoundedBo
         }
         collection->Release();
     };
+    const auto mixColour = [](const D2D1_COLOR_F& from, const D2D1_COLOR_F& to,
+                              float amount) {
+        const float t = std::clamp(amount, 0.0f, 1.0f);
+        return D2D1::ColorF(from.r + (to.r - from.r) * t,
+                            from.g + (to.g - from.g) * t,
+                            from.b + (to.b - from.b) * t,
+                            from.a + (to.a - from.a) * t);
+    };
 
     for (int i = 0; i < layout.tileCount; ++i) {
         const SystemPanelTile& tile = text.tiles[i];
         const RectF& rect = layout.tiles[i];
         if (rect.right <= rect.left || rect.bottom <= rect.top) continue;
 
-        constexpr float kTileRadius = 14.0f;
+        constexpr float kTileRadius = 18.0f;
+        const float animatedOn = std::clamp(tile.onAmount, 0.0f, 1.0f);
+        const float onAmount = animatedOn > 0.001f ? animatedOn : (tile.on ? 1.0f : 0.0f);
+        const float hoverAmount = std::clamp(tile.hoverAmount, 0.0f, 1.0f);
+        const float pressAmount = std::clamp(tile.pressAmount, 0.0f, 1.0f);
         const D2D1_ROUNDED_RECT rounded = {
             D2D1::RectF(rect.left, rect.top, rect.right, rect.bottom), kTileRadius, kTileRadius};
 
         // ON and OFF are different FILLS, which is the whole point of a tile as against a row of text:
         // the state is visible before the label is read. ON takes the reference's blue gradient; OFF is
         // the card's ink at 6%, with a hairline so it still reads as a surface.
-        if (tile.on) {
-            fillOnTile(rounded);
-            if (ID2D1SolidColorBrush* edge =
-                    BrushFor(context, D2D1::ColorF(0.49f, 0.83f, 0.99f, 0.32f * opacity))) {
-                context->DrawRoundedRectangle(&rounded, edge, 1.0f);
-            }
-        } else {
-            if (ID2D1SolidColorBrush* fill = BrushFor(
-                    context, D2D1::ColorF(0.09f, 0.11f, 0.16f, 0.62f * opacity))) {
+        if (onAmount < 0.999f) {
+            if (ID2D1SolidColorBrush* fill =
+                    BrushFor(context, island::CardInk(0.055f * (1.0f - onAmount) * opacity))) {
                 context->FillRoundedRectangle(&rounded, fill);
             }
-            if (ID2D1SolidColorBrush* edge = BrushFor(context, island::CardInk(0.09f * opacity))) {
+            if (ID2D1SolidColorBrush* edge =
+                    BrushFor(context, island::CardInk(0.09f * (1.0f - onAmount) * opacity))) {
                 context->DrawRoundedRectangle(&rounded, edge, 1.0f);
+            }
+        }
+        if (onAmount > 0.001f) {
+            fillOnTile(rounded, onAmount);
+            if (ID2D1SolidColorBrush* edge =
+                    BrushFor(context, D2D1::ColorF(
+                                           0.49f, 0.83f, 0.99f, 0.32f * onAmount * opacity))) {
+                context->DrawRoundedRectangle(&rounded, edge, 1.0f);
+            }
+        }
+        if (hoverAmount > 0.001f) {
+            if (ID2D1SolidColorBrush* wash =
+                    BrushFor(context, D2D1::ColorF(
+                                           1.0f, 1.0f, 1.0f, 0.065f * hoverAmount * opacity))) {
+                context->FillRoundedRectangle(&rounded, wash);
+            }
+        }
+        if (pressAmount > 0.001f) {
+            if (ID2D1SolidColorBrush* pressed =
+                    BrushFor(context, D2D1::ColorF(
+                                           0.0f, 0.0f, 0.0f, 0.09f * pressAmount * opacity))) {
+                context->FillRoundedRectangle(&rounded, pressed);
             }
         }
 
@@ -3921,17 +5734,23 @@ void TextRenderer::DrawSystemPanel(ID2D1DeviceContext2* context, const RoundedBo
         // theme's ink would be dark on the blue in the light themes.
         const D2D1_COLOR_F iconOn = D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.98f * opacity);
         const D2D1_COLOR_F iconOff = island::CardInk(0.92f * opacity);
-        DrawIndicatorGlyph(context, tile.icon, layout.tileIcons[i], tile.iconValue, tile.label,
-                           opacity, panelIconFormat_, bodyFormat_, tile.on ? &iconOn : &iconOff);
+        const D2D1_COLOR_F iconInk = mixColour(iconOff, iconOn, onAmount);
+        RectF iconBox = layout.tileIcons[i];
+        iconBox.top += pressAmount;
+        iconBox.bottom += pressAmount;
+        DrawIndicatorGlyph(context, tile.icon, iconBox, tile.iconValue, tile.label,
+                           opacity, panelIconFormat_, bodyFormat_, &iconInk);
 
         // The chevron at the tile's TOP RIGHT, for the tiles that open a list (see SystemPanelTile).
         if (tile.chevron && gearGlyphFormat_) {
-            if (ID2D1SolidColorBrush* chevronBrush =
-                    BrushFor(context, tile.on ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.85f * opacity)
-                                              : island::CardInk(0.62f * opacity))) {
+            const D2D1_COLOR_F chevronColour =
+                mixColour(island::CardInk(0.62f * opacity),
+                          D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.85f * opacity), onAmount);
+            if (ID2D1SolidColorBrush* chevronBrush = BrushFor(context, chevronColour)) {
                 constexpr float side = 14.0f;
-                const D2D1_RECT_F area = D2D1::RectF(rect.right - side - 16.0f, rect.top + 18.0f,
-                                                     rect.right - 16.0f, rect.top + 18.0f + side);
+                const D2D1_RECT_F area = D2D1::RectF(
+                    rect.right - side - 16.0f, rect.top + 18.0f + pressAmount,
+                    rect.right - 16.0f, rect.top + 18.0f + side + pressAmount);
                 const wchar_t chevron[] = {L'\uE76C', L'\0'};   // ChevronRight, Segoe Fluent Icons
                 context->DrawTextW(chevron, 1, gearGlyphFormat_, area, chevronBrush,
                                    D2D1_DRAW_TEXT_OPTIONS_CLIP);
@@ -3941,18 +5760,26 @@ void TextRenderer::DrawSystemPanel(ID2D1DeviceContext2* context, const RoundedBo
         // The name, then the state under it: both INSIDE the tile's lower left, the reference's
         // hierarchy (13 semibold white over 11 dim).
         if (tile.label && tile.label[0] != L'\0') {
-            if (ID2D1SolidColorBrush* labelBrush =
-                    BrushFor(context, tile.on ? D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.98f * opacity)
-                                              : island::CardInk(0.90f * opacity))) {
-                DrawTextIn(context, panelLabelFormat_, tile.label, layout.tileLabels[i], labelBrush,
+            const D2D1_COLOR_F labelColour =
+                mixColour(island::CardInk(0.90f * opacity),
+                          D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.98f * opacity), onAmount);
+            RectF labelBox = layout.tileLabels[i];
+            labelBox.top += pressAmount;
+            labelBox.bottom += pressAmount;
+            if (ID2D1SolidColorBrush* labelBrush = BrushFor(context, labelColour)) {
+                DrawTextIn(context, panelLabelFormat_, tile.label, labelBox, labelBrush,
                            DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
             }
         }
         if (tile.stateText && tile.stateText[0] != L'\0') {
-            if (ID2D1SolidColorBrush* subBrush =
-                    BrushFor(context, tile.on ? D2D1::ColorF(0.86f, 0.94f, 1.0f, 0.86f * opacity)
-                                              : island::CardInk(0.55f * opacity))) {
-                DrawTextIn(context, panelSubFormat_, tile.stateText, layout.tileSubLabels[i],
+            const D2D1_COLOR_F subColour =
+                mixColour(island::CardInk(0.55f * opacity),
+                          D2D1::ColorF(0.86f, 0.94f, 1.0f, 0.86f * opacity), onAmount);
+            RectF subLabelBox = layout.tileSubLabels[i];
+            subLabelBox.top += pressAmount;
+            subLabelBox.bottom += pressAmount;
+            if (ID2D1SolidColorBrush* subBrush = BrushFor(context, subColour)) {
+                DrawTextIn(context, panelSubFormat_, tile.stateText, subLabelBox,
                            subBrush, DWRITE_TEXT_ALIGNMENT_LEADING,
                            DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
             }
@@ -4079,13 +5906,13 @@ void TextRenderer::DrawSystemPanel(ID2D1DeviceContext2* context, const RoundedBo
     // THE FOOTER: an inset rounded plate, a two-line power reading at the left, and three round buttons
     // at the right. This is the red-boxed area in the reference; it must read as its own control surface.
     if (layout.footer.right > layout.footer.left && layout.footer.bottom > layout.footer.top) {
-        constexpr float kFooterRadius = 16.0f;
+        constexpr float kFooterRadius = 20.0f;
         const D2D1_ROUNDED_RECT footerPlate = {
             D2D1::RectF(layout.footer.left, layout.footer.top, layout.footer.right,
                         layout.footer.bottom),
             kFooterRadius, kFooterRadius};
         if (ID2D1SolidColorBrush* plate =
-                BrushFor(context, D2D1::ColorF(0.028f, 0.040f, 0.062f, 0.30f * opacity))) {
+                BrushFor(context, island::CardInk(0.04f * opacity))) {
             context->FillRoundedRectangle(&footerPlate, plate);
         }
         if (ID2D1SolidColorBrush* edge = BrushFor(context, island::CardInk(0.065f * opacity))) {
@@ -4271,7 +6098,6 @@ void TextRenderer::DrawSoundPage(ID2D1DeviceContext2* context, const RoundedBox&
     if (text.mixCount < 0) return;
 
     const SoundPageLayout layout = SoundPageFor(box, text.deviceCount, text.mixCount, text.scroll);
-    FillCardSurface(context, box, opacity);
 
     const auto brushFor = [&](float alpha, ID2D1SolidColorBrush** brush) {
         *brush = nullptr;
@@ -4674,17 +6500,6 @@ void TextRenderer::DrawStartPage(ID2D1DeviceContext2* context, const RoundedBox&
     const island::StartPageLayout layout = island::StartPageFor(card);
     if (!layout.valid) return;
 
-    FillCardSurface(context, card, opacity);
-
-    // The shutdown red of the reference's power button. Not a theme colour: on every theme the power action
-    // is the red one, which is how the reference tells it apart from the three beside it.
-    constexpr float kDangerR = 0.92f;
-    constexpr float kDangerG = 0.26f;
-    constexpr float kDangerB = 0.28f;
-
-    const D2D1_COLOR_F ink = CardInk(0.92f * opacity);
-    const D2D1_COLOR_F warm = D2D1::ColorF(1.0f, 0.72f, 0.35f, 0.95f * opacity);
-
     ID2D1Factory* d2dFactory = nullptr;
     context->GetFactory(&d2dFactory);
 
@@ -4749,106 +6564,58 @@ void TextRenderer::DrawStartPage(ID2D1DeviceContext2* context, const RoundedBox&
         return index == hovered ? 1.0f : 0.0f;
     };
 
-    // --- the search field, the card's top band -----------------------------------------------------
-    //
-    // The D2D surface is the visual shell; when focused, an owned native edit window covers only the text
-    // area so IME and ordinary keyboard input work without changing the main bar's NOACTIVATE contract.
-    const bool searchHasQuery = text.searchQuery && text.searchQuery[0] != L'\0';
-    // THE SINGLE SEARCH SURFACE. The native editor is positioned inside this rectangle and uses the exact
-    // same near-black fill, so its GDI background disappears into the D2D field. The reference is a quiet
-    // command-palette capsule: neutral edge, cyan optical mark, and no saturated blue focus outline.
-    const D2D1_COLOR_F searchSurface = D2D1::ColorF(0.025f, 0.033f, 0.045f, 0.98f * opacity);
-    const float searchEdge = text.searchInputVisible ? 0.24f : (text.searchHovered ? 0.17f : 0.11f);
-    fillRect({layout.search.left - 1.0f, layout.search.top - 1.0f, layout.search.right + 1.0f,
-              layout.search.bottom + 1.0f},
-             island::kStartSearchRadiusDip + 1.0f, CardInk(0.035f * opacity));
-    fillRect(layout.search, island::kStartSearchRadiusDip, searchSurface);
-    strokeRect(layout.search, island::kStartSearchRadiusDip,
-               CardInk(searchEdge * opacity),
-               1.0f);
+    // --- the page row: two adjacent launcher tabs ------------------------------------------------
     {
-        const float centreX = (layout.searchIcon.left + layout.searchIcon.right) * 0.5f;
-        const float centreY = (layout.searchIcon.top + layout.searchIcon.bottom) * 0.5f;
-        if (ID2D1SolidColorBrush* mark =
-                BrushFor(context, D2D1::ColorF(0.18f, 0.78f, 0.90f, 0.96f * opacity))) {
-            // The magnifier as strokes: a ring and a handle, so it is the same mark at every DPI and cannot
-            // be an empty box from a font that is not installed.
-            constexpr float kRadius = 6.2f;
-            context->DrawEllipse(
-                D2D1::Ellipse(D2D1::Point2F(centreX - 1.2f, centreY - 1.2f), kRadius, kRadius), mark,
-                1.8f);
-            context->DrawLine(D2D1::Point2F(centreX + 3.9f, centreY + 3.9f),
-                              D2D1::Point2F(centreX + 8.0f, centreY + 8.0f), mark, 2.0f);
-        }
-        // While the native editor is visible it paints the text and placeholder itself. Once it loses
-        // focus, the D2D card owns the same query so the results remain readable.
-        if (!text.searchInputVisible) {
-            drawText(startSearchFormat_,
-                     searchHasQuery ? text.searchQuery
-                                    : L"\u641C\u7D22\u5E94\u7528\u3001\u8BBE\u7F6E\u6216\u6587\u4EF6\u2026",
-                     layout.searchHint,
-                     CardInk((searchHasQuery ? 0.92f : 0.56f) * opacity),
-                     DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-        }
-        if (searchHasQuery) {
-            const float clearX =
-                (layout.searchClear.left + layout.searchClear.right) * 0.5f;
-            const float clearY =
-                (layout.searchClear.top + layout.searchClear.bottom) * 0.5f;
-            if (ID2D1SolidColorBrush* mark = BrushFor(context, CardInk(0.66f * opacity))) {
-                constexpr float kHalf = 4.5f;
-                context->DrawLine(D2D1::Point2F(clearX - kHalf, clearY - kHalf),
-                                  D2D1::Point2F(clearX + kHalf, clearY + kHalf), mark, 1.6f);
-                context->DrawLine(D2D1::Point2F(clearX + kHalf, clearY - kHalf),
-                                  D2D1::Point2F(clearX - kHalf, clearY + kHalf), mark, 1.6f);
-            }
-        }
-    }
-
-    // --- the page row: 固定常用 and the all-applications grid button --------------------------------
-    {
-        const bool allSelected = text.page == 1 && text.allAppsMode;
+        const bool allSelected = text.page == 1;
         const bool pinnedSelected = !allSelected;
         const float tabRadius = island::kStartTabHeightDip * 0.5f;
-        const D2D1_COLOR_F selectedFill = CardInk(0.15f * opacity);
-        const D2D1_COLOR_F selectedEdge = CardInk(0.20f * opacity);
+        const D2D1_COLOR_F selectedFill = D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.78f * opacity);
+        const D2D1_COLOR_F selectedEdge = CardInk(0.075f * opacity);
+        const D2D1_COLOR_F quietFill = CardInk(0.035f * opacity);
+
         if (pinnedSelected) {
             fillRect(layout.pinnedTab, tabRadius, selectedFill);
             strokeRect(layout.pinnedTab, tabRadius, selectedEdge, 1.0f);
         } else if (text.pinnedTabHovered) {
-            fillRect(layout.pinnedTab, tabRadius, CardInk(0.07f * opacity));
+            fillRect(layout.pinnedTab, tabRadius, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.42f * opacity));
+        } else {
+            fillRect(layout.pinnedTab, tabRadius, quietFill);
         }
-        drawText(startRowFormat_, L"\u56FA\u5B9A\u5E38\u7528", layout.pinnedTab,
-                 CardInk((pinnedSelected ? 0.96f : 0.55f) * opacity),
-                 DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        const island::Theme& theme = island::CurrentTheme();
+        const float pinnedCentreY = (layout.pinnedTab.top + layout.pinnedTab.bottom) * 0.5f;
+        if (ID2D1SolidColorBrush* dot = BrushFor(
+                context, D2D1::ColorF(theme.accent.r, theme.accent.g, theme.accent.b,
+                                      (pinnedSelected ? 0.98f : 0.46f) * opacity))) {
+            context->FillEllipse(
+                D2D1::Ellipse(D2D1::Point2F(layout.pinnedTab.left + 15.0f, pinnedCentreY),
+                              3.2f, 3.2f),
+                dot);
+        }
+        wchar_t pinnedLabel[32] = {};
+        std::swprintf(pinnedLabel, 32, L"\u56FA\u5B9A\u5E38\u7528  %d", text.pinCount);
+        drawText(startRowFormat_, pinnedLabel,
+                 {layout.pinnedTab.left + 22.0f, layout.pinnedTab.top,
+                  layout.pinnedTab.right - 8.0f, layout.pinnedTab.bottom},
+                 CardInk((pinnedSelected ? 0.86f : 0.56f) * opacity),
+                 DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 
-        // The only button on this row: a real way into the all-applications grid.
+        // The all-applications destination is a peer tab, exactly as in the reference, rather than a
+        // lone grid glyph in the far corner.
         const float buttonRadius = (layout.allAppsButton.bottom - layout.allAppsButton.top) * 0.5f;
         if (allSelected) {
             fillRect(layout.allAppsButton, buttonRadius, selectedFill);
+            strokeRect(layout.allAppsButton, buttonRadius, selectedEdge, 1.0f);
         } else if (text.allAppsHovered) {
-            fillRect(layout.allAppsButton, buttonRadius, CardInk(0.08f * opacity));
+            fillRect(layout.allAppsButton, buttonRadius,
+                     D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.42f * opacity));
+        } else {
+            fillRect(layout.allAppsButton, buttonRadius, quietFill);
         }
-        strokeRect(layout.allAppsButton, buttonRadius,
-                   CardInk((allSelected || text.allAppsHovered ? 0.18f : 0.08f) * opacity), 1.0f);
-        if (ID2D1SolidColorBrush* mark = BrushFor(context, CardInk(0.58f * opacity))) {
-            constexpr float kSquare = 6.0f;
-            constexpr float kGap = 3.0f;
-            const float centreX = (layout.allAppsButton.left + layout.allAppsButton.right) * 0.5f;
-            const float centreY = (layout.allAppsButton.top + layout.allAppsButton.bottom) * 0.5f;
-            const float left = centreX - kSquare - kGap * 0.5f;
-            const float top = centreY - kSquare - kGap * 0.5f;
-            for (int row = 0; row < 2; ++row) {
-                for (int column = 0; column < 2; ++column) {
-                    const float cellLeft = left + static_cast<float>(column) * (kSquare + kGap);
-                    const float cellTop = top + static_cast<float>(row) * (kSquare + kGap);
-                    const D2D1_ROUNDED_RECT cell = {
-                        D2D1::RectF(cellLeft, cellTop, cellLeft + kSquare, cellTop + kSquare), 1.5f,
-                        1.5f};
-                    context->FillRoundedRectangle(&cell, mark);
-                }
-            }
-        }
+        wchar_t allLabel[32] = {};
+        std::swprintf(allLabel, 32, L"\u5168\u90E8\u5E94\u7528  %d", text.listCount);
+        drawText(startRowFormat_, allLabel, layout.allAppsButton,
+                 CardInk((allSelected ? 0.86f : 0.56f) * opacity),
+                 DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     }
 
     // --- one application: its picture and its name -------------------------------------------------
@@ -4862,11 +6629,17 @@ void TextRenderer::DrawStartPage(ID2D1DeviceContext2* context, const RoundedBox&
         if (wash > 0.01f) {
             fillRect(cell, 12.0f, CardInk(0.055f * wash * opacity));
         }
+        // The reference gives every application a quiet plate. It makes transparent icons legible on the
+        // lavender card and gives the grid a consistent rhythm without covering the artwork itself.
+        const RectF plateShadow = {iconBox.left + 1.0f, iconBox.top + 3.0f,
+                                   iconBox.right + 1.0f, iconBox.bottom + 3.0f};
+        fillRect(plateShadow, island::kStartAppIconRadiusDip, CardInk(0.028f * opacity));
+        fillRect(iconBox, island::kStartAppIconRadiusDip,
+                 D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.74f * opacity));
+        strokeRect(iconBox, island::kStartAppIconRadiusDip, CardInk(0.065f * opacity), 1.0f);
         if (bitmap) {
             drawRoundedBitmap(bitmap, iconBox, island::kStartAppIconRadiusDip);
         } else {
-            fillRect(iconBox, island::kStartAppIconRadiusDip, CardInk(0.06f * opacity));
-            strokeRect(iconBox, island::kStartAppIconRadiusDip, CardInk(0.09f * opacity), 1.0f);
             // An icon that has not arrived yet holds the exact final geometry with a deterministic
             // monogram. This is deliberately not an empty dot: a failed Shell extraction must still look
             // like an application, and the tile must not jump when the real image arrives.
@@ -5133,89 +6906,38 @@ void TextRenderer::DrawStartPage(ID2D1DeviceContext2* context, const RoundedBox&
         }
     }
 
-    // --- the footer: the account at the left, the power group at the right -------------------------
-    //
-    // One hairline over the band, the panel's own footer rule. The footer is drawn on every page: it is the
-    // card's frame, and the account and the power control are always the same two things.
-    if (ID2D1SolidColorBrush* rule = BrushFor(context, CardInk(0.08f * opacity))) {
-        context->DrawLine(D2D1::Point2F(layout.footer.left, layout.footer.top),
-                          D2D1::Point2F(layout.footer.right, layout.footer.top), rule, 1.0f);
+    // --- the status foot: a quiet anchor beneath the collection --------------------------------
+    if (layout.statusRule.right > layout.statusRule.left) {
+        fillRect(layout.statusRule, 0.5f, CardInk(0.065f * opacity));
     }
-    // The account picture, round: a square picture beside a name reads as two unrelated things.
     {
-        const float avatarRadius = (layout.avatar.right - layout.avatar.left) * 0.5f;
-        ID2D1Bitmap1* avatar =
-            StartBitmapFor(context, &startAvatarBitmap_, text.avatarPng, text.avatarPngSize);
-        if (avatar) {
-            drawRoundedBitmap(avatar, layout.avatar, avatarRadius);
-        } else {
-            fillRect(layout.avatar, avatarRadius, CardInk(0.10f * opacity));
+        const float centreY = (layout.status.top + layout.status.bottom) * 0.5f;
+        if (ID2D1SolidColorBrush* dot =
+                BrushFor(context, D2D1::ColorF(0.20f, 0.76f, 0.45f, 0.94f * opacity))) {
+            context->FillEllipse(
+                D2D1::Ellipse(D2D1::Point2F(layout.status.left + 4.0f, centreY), 3.0f, 3.0f),
+                dot);
         }
-        strokeRect(layout.avatar, avatarRadius, CardInk(0.18f * opacity), 1.0f);
-    }
+        drawText(startCaptionFormat_, L"\u7CFB\u7EDF\u8FD0\u884C\u6B63\u5E38",
+                 {layout.status.left + 14.0f, layout.status.top,
+                  layout.status.left + 118.0f, layout.status.bottom},
+                 CardInk(0.52f * opacity), DWRITE_TEXT_ALIGNMENT_LEADING,
+                 DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 
-    const wchar_t* footerLine =
-        text.powerConfirmHint ? text.powerConfirmHint : (text.accountName ? text.accountName : L"");
-    drawText(startRowFormat_, footerLine, layout.accountName,
-             text.powerConfirmHint ? warm : ink, DWRITE_TEXT_ALIGNMENT_LEADING,
-             DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-
-    // The power group: four direct controls (lock, sleep, restart, shutdown).
-    {
-        const float groupRadius = (layout.powerGroup.bottom - layout.powerGroup.top) * 0.5f;
-        fillRect(layout.powerGroup, groupRadius, CardInk(0.05f * opacity));
-        strokeRect(layout.powerGroup, groupRadius, CardInk(0.10f * opacity), 1.0f);
-
-        for (int i = 0; i < island::kStartPowerButtons; ++i) {
-            const RectF& button = layout.powerButtons[i];
-            const float radius = (button.right - button.left) * 0.5f;
-            const bool power = i == island::kStartPowerButtons - 1;
-            const bool armed = text.powerConfirmButton == i;
-            const float wash = washAt(text.powerWashes, i, text.hoveredPowerButton);
-            if (power || armed) {
-                // The red action: the reference's power button is the only red thing in the footer, and it
-                // brightens while hovered or while waiting for its confirmation click.
-                const float hot = armed ? 1.0f : wash;
-                fillRect(button, radius,
-                         D2D1::ColorF(kDangerR, kDangerG, kDangerB,
-                                      (0.14f + 0.18f * hot) * opacity));
-                strokeRect(button, radius,
-                           D2D1::ColorF(kDangerR, kDangerG, kDangerB,
-                                        (0.42f + 0.30f * hot) * opacity),
-                           1.0f);
-            } else {
-                fillRect(button, radius, CardInk((0.03f + 0.07f * wash) * opacity));
-                strokeRect(button, radius, CardInk((0.08f + 0.10f * wash) * opacity), 1.0f);
-            }
-
-            const float centreX = (button.left + button.right) * 0.5f;
-            const float centreY = (button.top + button.bottom) * 0.5f;
-            if (power) {
-                // THE POWER MARK, DRAWN AS GEOMETRY: the icon font's power codepoint (E7E8) came out as an
-                // empty box on this machine, and a symbol that is the whole meaning of a button cannot be a
-                // thing that might not be there. A full ring with the stem crossing its top.
-                constexpr float kRingRadius = 6.5f;
-                if (ID2D1SolidColorBrush* mark =
-                        BrushFor(context, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.96f * opacity))) {
-                    const D2D1_ELLIPSE ring =
-                        D2D1::Ellipse(D2D1::Point2F(centreX, centreY), kRingRadius, kRingRadius);
-                    context->DrawEllipse(&ring, mark, 1.6f);
-                    context->DrawLine(D2D1::Point2F(centreX, centreY - kRingRadius - 1.2f),
-                                      D2D1::Point2F(centreX, centreY - 0.5f), mark, 1.8f);
-                }
-            } else if (panelIconFormat_) {
-                // Lock, sleep and restart. These are controls now, not reference decoration.
-                const wchar_t marks[3] = {L'\uE72E', L'\uE708', L'\uE72C'};
-                if (ID2D1SolidColorBrush* mark =
-                        BrushFor(context, CardInk((0.66f + 0.20f * wash) * opacity))) {
-                    const D2D1_RECT_F area =
-                        D2D1::RectF(button.left, button.top, button.right, button.bottom);
-                    const wchar_t glyph = marks[i];
-                    context->DrawTextW(&glyph, 1, panelIconFormat_, area, mark,
-                                       D2D1_DRAW_TEXT_OPTIONS_CLIP);
-                }
-            }
+        if (ID2D1SolidColorBrush* divider = BrushFor(context, CardInk(0.18f * opacity))) {
+            context->FillEllipse(
+                D2D1::Ellipse(D2D1::Point2F(layout.status.left + 132.0f, centreY), 1.4f, 1.4f),
+                divider);
         }
+        wchar_t detail[48] = {};
+        std::swprintf(detail, 48, text.page == 1 ? L"\u5DF2\u52A0\u8F7D %d \u4E2A\u5E94\u7528"
+                                                : L"%d \u4E2A\u56FA\u5B9A\u5E38\u7528",
+                      text.page == 1 ? text.listCount : text.pinCount);
+        drawText(startCaptionFormat_, detail,
+                 {layout.status.left + 146.0f, layout.status.top,
+                  layout.status.right - 8.0f, layout.status.bottom},
+                 CardInk(0.38f * opacity), DWRITE_TEXT_ALIGNMENT_LEADING,
+                 DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     }
 
     if (d2dFactory) d2dFactory->Release();

@@ -27,6 +27,7 @@
 add_library(island_domain STATIC
     domain/MiniJson.cpp
     domain/Motion.cpp
+    domain/ScrollTiling.cpp
     domain/TrayLedger.cpp
 )
 target_include_directories(island_domain PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -62,7 +63,11 @@ add_library(island_platform STATIC
     platform/NativeTaskbar.cpp
     platform/BackdropCapture.cpp
     platform/ScreenInk.cpp
+    platform/ScrollTilingGrabLayer.cpp
+    platform/ScrollTilingWindows.cpp
+    platform/SystemLoad.cpp
     platform/ThumbnailPreview.cpp
+    platform/WindowEventMonitor.cpp
     platform/WindowList.cpp
 )
 target_link_libraries(island_platform PUBLIC island_core)
@@ -124,6 +129,8 @@ add_library(island_app STATIC
     app/BarSettings.cpp
     app/IslandWindow.cpp
     app/PlayerWindow.cpp
+    app/ScrollTiling.cpp
+    app/ScrollTilingViewport.cpp
     app/SettingsWindow.cpp
 )
 target_link_libraries(island_app PUBLIC island_render)
@@ -162,6 +169,7 @@ add_executable(island_bar
     selftest/ChecksJson.cpp
     selftest/ChecksCards.cpp
     selftest/ChecksInput.cpp
+    selftest/ChecksTiling.cpp
     selftest/Diagnostics.cpp
 )
 target_link_libraries(island_bar PRIVATE island_cli)

@@ -5,6 +5,7 @@
 #include "render/Ambient.h"   // the island's weather: rain, sunset, night, the slow sun
 #include "render/Theme.h"   // the material: two stops, a highlight, a hairline, an accent and an ink
 #include "render/GlassMaterial.h"   // the shadow under the shape and the grain over it
+#include "domain/NiriBarLayout.h"
 
 #include "core/Log.h"
 // Reused rather than reimplemented, so the music card's source icon and a taskbar button's icon
@@ -20,6 +21,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cwchar>
 #include <vector>
 
 #pragma comment(lib, "d3d11.lib")
@@ -30,6 +32,10 @@
 
 namespace island {
 namespace {
+
+bool NiriLayoutActive() {
+    return std::wcscmp(CurrentTheme().name, L"Niri") == 0;
+}
 
 template <typename T>
 void SafeRelease(T** pp) {
@@ -479,27 +485,7 @@ void Renderer::DrawDecks(const RoundedBox& island, const FrameState& frame) {
     // average colour that was here was a flat, milky disc: "雾蒙蒙", and not the island. The live wallpaper
     // shows through the same body the island uses; what the row does not get is the pill's WGC warp (that
     // would be a second lens for the row, not a colour).
-    for (int i = 0; i < frame.taskButtonCount && i < FrameState::kMaxTaskButtons; ++i) {
-        taskButtons_[i] = frame.taskButtons[i];
-        taskButtons_[i].icon = IconForWindow(frame.taskButtonWindow[i]);
-        taskButtons_[i].fill = frame.pill.fill;
-
-        // Reported once per window, the first time its icon is resolved. "A button has no icon" has
-        // three causes a screenshot cannot separate -- the window has none, the icon could not become a
-        // bitmap, or the draw skipped it -- and this tells them apart instead of the next change being a
-        // guess.
-        static HWND reported[64] = {};
-        static int reportedCount = 0;
-        bool seen = false;
-        for (int r = 0; r < reportedCount; ++r) {
-            if (reported[r] == frame.taskButtonWindow[i]) seen = true;
-        }
-        if (!seen && reportedCount < 64) {
-            reported[reportedCount++] = frame.taskButtonWindow[i];
-            LogLine(L"  taskbar icon: hwnd %p -> %s", reinterpret_cast<void*>(frame.taskButtonWindow[i]),
-                    taskButtons_[i].icon ? L"ok" : L"NONE");
-        }
-    }
+    PrepareTaskButtons(frame);
     // Every button's OWN opening amount for the icon row, taken from the buttons just resolved. The
     // indicators are NOT part of it: they are on the bar's other deck, so they neither occupy its slots
     // nor move with them.
@@ -611,6 +597,28 @@ void Renderer::DrawDecks(const RoundedBox& island, const FrameState& frame) {
                             frame.systemButtonOpen, onTheCluster, frame.contentOpacity);
 }
 
+void Renderer::PrepareTaskButtons(const FrameState& frame) {
+    for (int i = 0; i < frame.taskButtonCount && i < FrameState::kMaxTaskButtons; ++i) {
+        taskButtons_[i] = frame.taskButtons[i];
+        taskButtons_[i].icon = IconForWindow(frame.taskButtonWindow[i]);
+        taskButtons_[i].fill =
+            NiriLayoutActive() ? island::CurrentTheme().pillTop : frame.pill.fill;
+
+        static HWND reported[64] = {};
+        static int reportedCount = 0;
+        bool seen = false;
+        for (int r = 0; r < reportedCount; ++r) {
+            if (reported[r] == frame.taskButtonWindow[i]) seen = true;
+        }
+        if (!seen && reportedCount < 64) {
+            reported[reportedCount++] = frame.taskButtonWindow[i];
+            LogLine(L"  taskbar icon: hwnd %p -> %s",
+                    reinterpret_cast<void*>(frame.taskButtonWindow[i]),
+                    taskButtons_[i].icon ? L"ok" : L"NONE");
+        }
+    }
+}
+
 void Renderer::RenderFrame(const FrameState& frame) {
     if (!d2dContext_ || !swapChain_) return;
 
@@ -700,6 +708,12 @@ void Renderer::RenderFrame(const FrameState& frame) {
                 ? island::RowAnchorBox(pill.box, fillPill)
                 : pill.box;
 
+        // In the Niri layout the hover card is the island itself, not a flyout
+        // over it. Once the outer card is up, every pixel of the old island
+        // material must stand down: otherwise its narrower backing remains
+        // visible behind the card's tab row during the morph.
+        const bool niriMorphCard = NiriLayoutActive() && frame.outerCardUp;
+
         // `box` is the ANIMATED shape for everything that is not the pill's own fill: the content, the
         // icon row, the indicators and the card all follow the animation, and only the pill's outline
         // must stay the pill. Bound here so the two are named apart and neither can shadow the other.
@@ -721,9 +735,34 @@ void Renderer::RenderFrame(const FrameState& frame) {
         // The surface is assembled by the SAME function the glass window behind it is placed from
         // (TaskStripLayout.h), so the blur cannot end somewhere the drawing does not.
         const bool decksDrawn =
+            !NiriLayoutActive() &&
             island::IslandSurfaceShowsDecks(frame.contentOpacity, frame.fullscreenApp);
         RoundedBox shape =
             island::IslandSurfaceFromPillBox(pillBox, decksDrawn, frame.trayIconCount > 0);
+        if (NiriLayoutActive() && frame.barShape == island::BarShape::Notch &&
+            !frame.outerCardUp) {
+            const D2D1_SIZE_F viewport = d2dContext_->GetSize();
+            const RoundedBox anchorIsland =
+                (frame.restingPill.rect.right > frame.restingPill.rect.left)
+                    ? island::RowAnchorBox(box, frame.restingPill)
+                    : box;
+            const island::NiriBarLayout niri =
+                island::NiriBarLayoutFor(viewport.width, anchorIsland,
+                                         frame.taskButtonCount);
+            const float leftExtent = island::NiriSideGroupVisualExtent(
+                frame.niriNotchLeftExtent);
+            const float rightExtent = island::NiriSideGroupVisualExtent(
+                frame.niriNotchRightExtent);
+            if (leftExtent > 0.001f) {
+                const float targetLeft = niri.activeApp.rect.left;
+                shape.rect.left += (targetLeft - shape.rect.left) * leftExtent;
+            }
+            if (rightExtent > 0.001f) {
+                const float targetRight =
+                    niri.taskRow.right + island::kTaskIconPadDip;
+                shape.rect.right += (targetRight - shape.rect.right) * rightExtent;
+            }
+        }
         // A wide notice/call strip is drawn beside the island, and the glass surface has to reach its
         // ends: the film and the rim otherwise stop at the pill's edge, which read as a vertical knife
         // cut through the right-hand end of the strip.
@@ -765,7 +804,9 @@ void Renderer::RenderFrame(const FrameState& frame) {
         // shadow 0 (默认) draws nothing here, which is why adding all of this cannot change that one's
         // pixels. 18 DIP of reach is the brief's "blur 20px, opacity 20%", rounded to what the pill's own
         // size can carry without the shadow reading as a second object.
-        island::DrawSoftShadow(d2dContext_, rounded, theme.shadow, 18.0f);
+        if (!niriMorphCard) {
+            island::DrawSoftShadow(d2dContext_, rounded, theme.shadow, 18.0f);
+        }
         // ... and the WALLPAPER's own colour mixed into the fill, clamped so the ink keeps its contrast
         // (see TintedFill). The bottom stop takes it a little less than the top: the surface is meant to
         // be lighter where the light is, and a wallpaper colour that lightens both ends equally flattens
@@ -858,7 +899,7 @@ void Renderer::RenderFrame(const FrameState& frame) {
             }
         }
 
-        if (lensActive_ && CurrentTheme().lens && !stripOnScreen) {
+        if (!niriMorphCard && lensActive_ && CurrentTheme().lens && !stripOnScreen) {
             // A size change re-warps the LAST captured frame: the window behind did not change, so WGC
             // sends nothing new, and re-opening the session would hand back a blank first frame.
             const int pillW = static_cast<int>(std::lround((rounded.rect.right - rounded.rect.left) * scale_));
@@ -905,19 +946,23 @@ void Renderer::RenderFrame(const FrameState& frame) {
         // The film lifts a touch while the pointer is on the island: the material answers the pointer
         // before anything moves, which is the cheap half of "the glass notices you".
         const float hoverLift = (frame.pointerOnIsland && CurrentTheme().lens) ? 1.12f : 1.0f;
-        island::DrawSmokedBase(d2dContext_, rounded, theme, pillTopFill, pillBottomFill, hoverLift);
+        if (!niriMorphCard) {
+            island::DrawSmokedBase(d2dContext_, rounded, theme, pillTopFill, pillBottomFill, hoverLift);
+        }
 
         // NO WASHES on the clear lens: the wide top ellipse, the blobs and the grain all left a veil over
         // the background. What is left is the refracted image, the 2.5 DIP rim band and its words.
-        if (!theme.lens) {
-            island::DrawSurfaceLighting(d2dContext_, rounded, theme, 1.0f);
-            island::DrawTopSheen(d2dContext_, rounded, theme, frame.pillPointerFraction, 1.0f);
-        } else {
-            // The 2.5 DIP rim band: it follows the rounded ends (the horizontal top wash did not, which made
-            // the caps look cut); bright top, almost nothing at the sides, a soft dark at the bottom.
-            island::DrawLensRimBand(d2dContext_, rounded, theme, 1.0f);
-            // ... and the light the glass gathers just inside its bottom edge, which is the thickness.
-            island::DrawLensBottomCaustic(d2dContext_, rounded, theme, 1.0f);
+        if (!niriMorphCard) {
+            if (!theme.lens) {
+                island::DrawSurfaceLighting(d2dContext_, rounded, theme, 1.0f);
+                island::DrawTopSheen(d2dContext_, rounded, theme, frame.pillPointerFraction, 1.0f);
+            } else {
+                // The 2.5 DIP rim band: it follows the rounded ends (the horizontal top wash did not, which made
+                // the caps look cut); bright top, almost nothing at the sides, a soft dark at the bottom.
+                island::DrawLensRimBand(d2dContext_, rounded, theme, 1.0f);
+                // ... and the light the glass gathers just inside its bottom edge, which is the thickness.
+                island::DrawLensBottomCaustic(d2dContext_, rounded, theme, 1.0f);
+            }
         }
 
         // THE ISLAND'S OWN SKY: rain that falls, a sunset that glows, stars at night and the slow sun,
@@ -925,7 +970,7 @@ void Renderer::RenderFrame(const FrameState& frame) {
         // the STATUS LINE's branch, so it vanished the moment music took that line -- "放音乐的时候 根据
         // 天气和时间变化的效果没有了". Here it is behind the music row, a call and a message too. A card's
         // own copy is drawn by FillCardSurface (see SetCardAmbient).
-        {
+        if (!niriMorphCard && !NiriLayoutActive()) {
             SYSTEMTIME localNow = {};
             GetLocalTime(&localNow);
             const int nowMinutes = static_cast<int>(localNow.wHour) * 60 +
@@ -938,27 +983,33 @@ void Renderer::RenderFrame(const FrameState& frame) {
 
         // The rim: 0 in 玻璃 -- the drawn 1 DIP line read as a ring around the pill. The painted themes
         // still opt in.
-        island::DrawThinRim(d2dContext_, rounded, theme, frame.pointerOnIsland ? 1.10f : 1.0f);
+        if (!niriMorphCard) {
+            island::DrawThinRim(d2dContext_, rounded, theme, frame.pointerOnIsland ? 1.10f : 1.0f);
+        }
 
         // THE LIQUID-GLASS LAYERS (round 53, Theme.h): a specular highlight that follows the pointer along
         // the top edge, and the double edge -- a faint dark line outside, a bright one inside -- that reads
         // as the thickness of the glass. Both are drawn from the theme's own fields, so 默认 is unchanged.
         // The pointer's own light. Only while the pointer is ON the island: at rest the bar must be still,
         // and a highlight that stays wherever the pointer left it is a decoration, not a reflection.
-        if (frame.pointerOnIsland) {
+        if (!niriMorphCard && frame.pointerOnIsland) {
             island::DrawSpecularSweep(d2dContext_, rounded, theme, frame.pillPointerFraction, 1.0f);
         }
 
         // The end tints, for a theme that asks for them. 玻璃 sets `tint` to 0: the reference has no
         // coloured fringe.
-        island::DrawEdgeTints(d2dContext_, rounded, theme, 1.0f);
+        if (!niriMorphCard) {
+            island::DrawEdgeTints(d2dContext_, rounded, theme, 1.0f);
+        }
 
         // NO EDGE AT ALL, at the user's request: no outside line, no dark thickness, no inner curvature
         // lines. The island is the light on the surface and its content, nothing drawn round it.
 
         // ... and the grain over the whole surface, which is what keeps a flat translucent colour from
         // reading as plastic. Same rule as the shadow: a theme that asks for none gets none.
-        if (!theme.lens) island::DrawGrain(d2dContext_, rounded, theme.grain);
+        if (!niriMorphCard && !theme.lens) {
+            island::DrawGrain(d2dContext_, rounded, theme.grain);
+        }
 
         // Content last, so it sits on top of the fill. It is drawn only when the
         // frame asks for it: at zero content opacity the text is skipped rather
@@ -1067,7 +1118,74 @@ void Renderer::RenderFrame(const FrameState& frame) {
                 }
             }
 
-            if (announcing) {
+            const bool inlineSearch = NiriLayoutActive() && frame.niriInlineSearch;
+            float islandLineOpacity = frame.contentOpacity;
+            if (NiriLayoutActive() && frame.outerCardUp) {
+                const float pillHeight =
+                    frame.restingPill.rect.bottom - frame.restingPill.rect.top;
+                const float boxHeight = box.rect.bottom - box.rect.top;
+                const float morphProgress = std::clamp(
+                    (boxHeight - pillHeight) /
+                        std::max(1.0f, kExpandedHeightDip - pillHeight),
+                    0.0f, 1.0f);
+                islandLineOpacity *= IslandLineStrengthForMorph(morphProgress);
+            }
+            const bool hideIslandLine = NiriLayoutActive() && frame.outerCardUp;
+            const auto drawNiriIslandLine = [&](float opacity, const RoundedBox& target,
+                                                float searchMarkOpacity = 1.0f) {
+                if (announcing) {
+                    if (!frame.callUp && frame.notification) {
+                        text_->DrawNiriNotification(
+                            d2dContext_, target, frame.noticeLine,
+                            frame.notificationIconPixels, frame.notificationIconWidth,
+                            frame.notificationIconHeight, frame.notificationIconRevision,
+                            opacity);
+                    } else {
+                        text_->DrawNiriTopBar(
+                            d2dContext_, target, opacity, frame.unreadNotifications,
+                            frame.noticeLine, frame.restingState == IslandState::MusicStrip,
+                            frame.musicLevel, frame.musicWavePhase, frame.musicAccent,
+                            frame.callUp, frame.callStrip.level, 0.0f, searchMarkOpacity);
+                    }
+                } else if (frame.restingState == IslandState::MusicStrip) {
+                    const char* side = frame.lyricLine && frame.lyricLine[0] != '\0'
+                                           ? frame.lyricLine
+                                           : frame.fallbackLine;
+                    text_->DrawNiriTopBar(d2dContext_, target, opacity,
+                                          frame.unreadNotifications, side, true,
+                                          frame.musicLevel, frame.musicWavePhase,
+                                          frame.musicAccent, false, 0.0f,
+                                          frame.lyricScrollDip, searchMarkOpacity);
+                } else {
+                    text_->DrawNiriTopBar(d2dContext_, target, opacity,
+                                          frame.unreadNotifications, nullptr, false,
+                                          0.0f, 0.0f, D2D1::ColorF(0.40f, 0.80f, 0.95f, 1.0f),
+                                          false, 0.0f, 0.0f, searchMarkOpacity);
+                }
+            };
+            if (inlineSearch) {
+                const island::NiriSearchMotion searchMotion =
+                    island::NiriSearchMotionFor(frame.niriSearchProgress);
+                if (searchMotion.contentOpacity > 0.01f) {
+                    RoundedBox moving = box;
+                    moving.rect.left += searchMotion.contentShiftDip;
+                    moving.rect.right += searchMotion.contentShiftDip;
+                    d2dContext_->PushAxisAlignedClip(
+                        D2D1::RectF(box.rect.left, box.rect.top, box.rect.right, box.rect.bottom),
+                        D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+                    drawNiriIslandLine(frame.contentOpacity * searchMotion.contentOpacity,
+                                       moving, 0.0f);
+                    d2dContext_->PopAxisAlignedClip();
+                }
+                text_->DrawNiriSearchField(d2dContext_, box, frame.niriSearchProgress,
+                                           frame.contentOpacity);
+                text_->DrawNiriSearchResults(d2dContext_, box, frame.niriSearchResults,
+                                             frame.niriSearchResultsProgress,
+                                             frame.contentOpacity);
+            } else if (!hideIslandLine && announcing) {
+                if (NiriLayoutActive()) {
+                    drawNiriIslandLine(frame.contentOpacity, intoPill ? lineBox : box);
+                } else {
                 // WHERE: the strip while the strip is the bar's own shape, and the PILL once a card is up.
                 // The same rule the lyric below follows with `lineBox`, and for the same reason -- once a
                 // card is up, `box` IS the card, and the bar's own line belongs in the pill that is still
@@ -1094,41 +1212,47 @@ void Renderer::RenderFrame(const FrameState& frame) {
                     text_->DrawTrackLine(d2dContext_, noticeBox, frame.noticeLine, 0.0f,
                                          frame.contentOpacity);
                 }
-            } else if (frame.state == IslandState::NoticeStrip) {
+                }
+            } else if (!hideIslandLine && frame.state == IslandState::NoticeStrip) {
                 // The strip is up with nothing to announce -- the clock is the only thing it can still say,
                 // and it keeps the strip's own box rather than the pill's, which is what it did before this
                 // branch was split.
                 text_->DrawClock(d2dContext_, box, frame.clock, frame.contentOpacity);
-            } else if (frame.restingState == IslandState::MusicStrip) {
-                // The wave first, so the words are on top of it. Only while music is what the bar is
-                // showing: a wave is a reading of the music, not of the bar.
-                if (frame.musicLevelKnown && frame.contentOpacity > 0.01f) {
-                    text_->DrawAudioWave(d2dContext_, lineBox, frame.musicWavePhase, frame.musicLevel,
-                                         frame.musicAccent, frame.contentOpacity);
-                }
-                if (frame.lyricLine && frame.lyricLine[0] != '\0') {
-                    TextRenderer::LineRoll fade;
-                    fade.previous = frame.lyricLinePrev;
-                    fade.progress = frame.lyricLineRoll;
-                    fade.previousScrollDip = frame.lyricLinePrevScrollDip;
-                    text_->DrawLyricLine(d2dContext_, lineBox, frame.lyricLine,
-                                         frame.lyricScrollDip, frame.contentOpacity, fade,
-                                         &frame.musicAccent);
-                } else if (frame.fallbackLine && frame.fallbackLine[0] != '\0') {
-                    // No lyrics available: the track name is the honest fallback.
-                    TextRenderer::LineRoll fade;
-                    fade.previous = frame.lyricLinePrev;
-                    fade.progress = frame.lyricLineRoll;
-                    fade.previousScrollDip = frame.lyricLinePrevScrollDip;
-                    text_->DrawTrackLine(d2dContext_, lineBox, frame.fallbackLine,
-                                         frame.lyricScrollDip, frame.contentOpacity, fade,
-                                         &frame.musicAccent);
+            } else if (!hideIslandLine && frame.restingState == IslandState::MusicStrip) {
+                if (NiriLayoutActive()) {
+                    // Keep the clock and notification count legible even while music is playing.
+                    // The lyric is a secondary line inside the same wide capsule rather than a
+                    // replacement shape, which is the defining difference from the old layout.
+                    drawNiriIslandLine(frame.contentOpacity, intoPill ? lineBox : box);
                 } else {
-                    text_->DrawClock(d2dContext_, lineBox,
-                                     intoPill ? ClockStyle::Compact : frame.clock,
-                                     frame.contentOpacity);
+                    if (frame.musicLevelKnown && frame.contentOpacity > 0.01f) {
+                        text_->DrawAudioWave(d2dContext_, lineBox, frame.musicWavePhase,
+                                             frame.musicLevel, frame.musicAccent,
+                                             frame.contentOpacity);
+                    }
+                    if (frame.lyricLine && frame.lyricLine[0] != '\0') {
+                        TextRenderer::LineRoll fade;
+                        fade.previous = frame.lyricLinePrev;
+                        fade.progress = frame.lyricLineRoll;
+                        fade.previousScrollDip = frame.lyricLinePrevScrollDip;
+                        text_->DrawLyricLine(d2dContext_, lineBox, frame.lyricLine,
+                                             frame.lyricScrollDip, frame.contentOpacity, fade,
+                                             &frame.musicAccent);
+                    } else if (frame.fallbackLine && frame.fallbackLine[0] != '\0') {
+                        TextRenderer::LineRoll fade;
+                        fade.previous = frame.lyricLinePrev;
+                        fade.progress = frame.lyricLineRoll;
+                        fade.previousScrollDip = frame.lyricLinePrevScrollDip;
+                        text_->DrawTrackLine(d2dContext_, lineBox, frame.fallbackLine,
+                                             frame.lyricScrollDip, frame.contentOpacity, fade,
+                                             &frame.musicAccent);
+                    } else {
+                        text_->DrawClock(d2dContext_, lineBox,
+                                         intoPill ? ClockStyle::Compact : frame.clock,
+                                         frame.contentOpacity);
+                    }
                 }
-            } else {
+            } else if (!hideIslandLine) {
                 // THE DATE AND THE TIME, IN THE PILL, WHICH IS STILL ON SCREEN BENEATH A CARD.
                 //
                 // This is the state the island is in when it has NOTHING ELSE TO SAY -- no call, no
@@ -1154,9 +1278,14 @@ void Renderer::RenderFrame(const FrameState& frame) {
                 //
                 // NO SURFACE: the pill has already been filled with exactly the colour the strip paints
                 // for itself.
-                text_->DrawStatusLine(d2dContext_, lineBox, frame.contentOpacity, frame.statusSky,
-                                      frame.statusTemperature, frame.statusCode,
-                                      D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
+                if (NiriLayoutActive()) {
+                    drawNiriIslandLine(frame.contentOpacity, lineBox);
+                } else {
+                    text_->DrawStatusLine(d2dContext_, lineBox, frame.contentOpacity,
+                                          frame.statusSky, frame.statusTemperature,
+                                          frame.statusCode,
+                                          D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
+                }
             }
 
 
@@ -1181,7 +1310,8 @@ void Renderer::RenderFrame(const FrameState& frame) {
                     : box;
             // ... and NOT while a full-screen application is in front: then only the island is the bar
             // ("只要显示灵动岛就行 左右两侧的不用显示"), and this line stands in the band the island's left.
-            if (frame.statusStripOpacity > 0.01f && !frame.fullscreenApp) {
+            if (frame.statusStripOpacity > 0.01f && !frame.fullscreenApp &&
+                !NiriLayoutActive()) {
                 // Multiplied by the BAR's own strength, so a card opening beneath the strip cannot dim
                 // it -- the same rule the deck is drawn under -- and on the island's own colour, so the
                 // words stand on the bar rather than on the wallpaper.
@@ -1202,8 +1332,9 @@ void Renderer::RenderFrame(const FrameState& frame) {
                                       // The lens already IS the surface: its own film and rim cover
                                       // the strip. A second rectangular fill here showed up as a hard
                                       // box with vertical edges sitting on the glass.
-                                      island::CurrentTheme().lens ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f)
-                                                                  : frame.pill.fill);
+                                      island::CurrentTheme().lens
+                                          ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f)
+                                          : island::CurrentTheme().cardFill);
             }
 
             // The card hangs from the control that was pressed, so its LEFT edge is moved to where that
@@ -1213,8 +1344,9 @@ void Renderer::RenderFrame(const FrameState& frame) {
             // Done here rather than in the layout functions because every one of them (the music card,
             // the system panel, the notification) takes a box and lays itself out inside it; moving the
             // box is the single change that moves all three.
+            const bool islandMorph = NiriLayoutActive() && frame.outerCardUp;
             RoundedBox card = box;
-            if (frame.cardLeftDip > 0.0f) {
+            if (frame.cardLeftDip > 0.0f && !islandMorph) {
                 card.rect.left = frame.cardLeftDip;
                 card.rect.right = frame.cardLeftDip + frame.cardSize.widthDip;
             }
@@ -1249,6 +1381,24 @@ void Renderer::RenderFrame(const FrameState& frame) {
             // it from the island it belongs to.
             const bool outerCard = frame.outerCardUp;
             if (outerCard) {
+                if (islandMorph) {
+                    const float finalWidth = frame.cardSize.widthDip;
+                    const float finalHeight = frame.cardSize.heightDip;
+                    const bool collapsing = frame.state != IslandState::Expanded;
+                    card = island::NiriCardMorphFor(
+                        box, frame.restingPill, finalWidth, finalHeight, collapsing);
+                    outerCardReveal = card.rect.bottom - card.rect.top;
+
+                    const float centreX =
+                        (frame.restingPill.rect.left + frame.restingPill.rect.right) * 0.5f;
+                    panelCard = card;
+                    panelCard.rect.left = centreX - finalWidth * 0.5f;
+                    panelCard.rect.right = centreX + finalWidth * 0.5f;
+                    panelCard.rect.top = frame.restingPill.rect.top;
+                    panelCard.rect.bottom = panelCard.rect.top + finalHeight;
+                    panelCard.radiusX = kCardRadiusDip;
+                    panelCard.radiusY = kCardRadiusDip;
+                } else {
                 // THE PANEL IS LAID OUT AT ITS FINAL SIZE, AND THE CARD GROWS TO REVEAL IT.
                 //
                 // Two separate rectangles, and keeping them separate is the whole point:
@@ -1299,6 +1449,33 @@ void Renderer::RenderFrame(const FrameState& frame) {
                 if (frame.cardLeftDip > 0.0f) {
                     panelCard.rect.left = frame.cardLeftDip;
                     panelCard.rect.right = frame.cardLeftDip + frame.cardSize.widthDip;
+                }
+                }
+            }
+
+            // THE NIRI CARD IS THE ISLAND MORPHING, not a separately faded panel. Draw the animated
+            // rounded rectangle itself as the base surface and interpolate the Niri pill colour into
+            // the card colour with it. Content below is still clipped to this same rectangle, so both
+            // directions read as one continuous shape.
+            if (islandMorph) {
+                float surfaceT = outerCardReveal / std::max(cardFaceHeight, 1.0f);
+                surfaceT = std::clamp(surfaceT, 0.0f, 1.0f);
+                surfaceT = surfaceT * surfaceT * (3.0f - 2.0f * surfaceT);
+                const auto mix = [surfaceT](const D2D1_COLOR_F& from, const D2D1_COLOR_F& to) {
+                    return D2D1::ColorF(from.r + (to.r - from.r) * surfaceT,
+                                        from.g + (to.g - from.g) * surfaceT,
+                                        from.b + (to.b - from.b) * surfaceT,
+                                        from.a + (to.a - from.a) * surfaceT);
+                };
+                ID2D1SolidColorBrush* morphBrush = nullptr;
+                if (SUCCEEDED(d2dContext_->CreateSolidColorBrush(
+                        mix(theme.pillTop, theme.cardFill), &morphBrush)) &&
+                    morphBrush) {
+                    const D2D1_ROUNDED_RECT morph = {
+                        D2D1::RectF(card.rect.left, card.rect.top, card.rect.right, card.rect.bottom),
+                        card.radiusX, card.radiusY};
+                    d2dContext_->FillRoundedRectangle(&morph, morphBrush);
+                    morphBrush->Release();
                 }
             }
 
@@ -1384,9 +1561,12 @@ void Renderer::RenderFrame(const FrameState& frame) {
                     //
                     // Scoped to the clip rather than written onto `card` itself, so that the rectangle the
                     // CONTENT is composed in can stay at its final size while this one grows.
-                    const float clipRight = (frame.cardLeftDip > 0.0f)
-                                                ? frame.cardLeftDip + frame.cardSize.widthDip
-                                                : card.rect.right;
+                    // The clip and the visible morph are ONE rectangle. In the Niri layout the
+                    // card body narrows back into the island during retraction, while its content
+                    // is still composed at the final card width. Taking the right edge from the
+                    // final width left a wide, shallow slice of card background alive after the
+                    // body had already become the pill -- the horizontal ghost strip.
+                    const float clipRight = card.rect.right;
                     // The BOTTOM edge is the reveal, not the box height: the box is 36 DIP taller than the
                     // panel can be revealed by, so using it left the band of tile tops described in
                     // OuterCardRevealDip.
@@ -1407,23 +1587,45 @@ void Renderer::RenderFrame(const FrameState& frame) {
                 // which is what it used to do -- laid its cover, title and controls out again on every
                 // frame of its own growth, which is the reflow 7.77 chased in the panel.
                 if (frame.cardOwner == CardOwner::SystemPanel) {
+                    RoundedBox pageCard = panelCard;
+                    pageCard.rect.right -= island::kCardRailReserveDip;
+                    TextRenderer::CardRailText rail;
+                    rail.avatarPng = frame.accountAvatarPng;
+                    rail.avatarPngSize = frame.accountAvatarPngSize;
+                    rail.accountName = frame.accountName;
+                    rail.powerConfirmButton = frame.railPowerConfirmButton;
+                    rail.powerConfirmShownButton = frame.railPowerConfirmShownButton;
+                    rail.powerConfirmProgress = frame.railPowerConfirmProgress;
+                    text_->DrawCardRail(d2dContext_, panelCard, frame.cardTab, rail,
+                                        frame.cardOpacity, frame.cardSurfaceMoving);
                     // The panel has THREE levels, and which one is showing is the frame's business: the
                     // tiles, the 声音输出 page the output-device button opens, or the tray page the tray
                     // button at the other end of the bar opens. Same card, same place, same animation.
-                    if (frame.trayPageOpen) {
-                        text_->DrawTrayPage(d2dContext_, panelCard, frame.trayPage,
+                    if (frame.weatherPageOpen) {
+                        text_->DrawWeatherCard(d2dContext_, pageCard, frame.weather,
+                                               frame.cardOpacity);
+                    } else if (frame.centerPageOpen) {
+                        TextRenderer::CommandCenterText center = frame.commandCenter;
+                        center.weather = &frame.weather;
+                        center.musicLevel = frame.musicLevel;
+                        center.musicLevelKnown = frame.musicLevelKnown;
+                        center.musicWavePhase = frame.musicWavePhase;
+                        center.musicAccent = frame.musicAccent;
+                        text_->DrawCommandCenter(d2dContext_, pageCard, center,
+                                                 frame.cardOpacity);
+                    } else if (frame.trayPageOpen) {
+                        text_->DrawTrayPage(d2dContext_, pageCard, frame.trayPage,
                                             frame.trayIcons, frame.trayIconCount, frame.trayRevision,
-                                            frame.cardOpacity, frame.trayHoveredIndex,
-                                            frame.cardSurfaceMoving);
+                                            frame.cardOpacity, frame.trayHoveredIndex);
                     } else if (frame.soundPageOpen) {
-                        text_->DrawSoundPage(d2dContext_, panelCard, frame.soundPage,
+                        text_->DrawSoundPage(d2dContext_, pageCard, frame.soundPage,
                                              frame.cardOpacity);
                     } else if (frame.startPageOpen) {
                         // The Start card, which is a LEVEL of this card rather than a card of its own: the
                         // same rectangle, the same animation, and the same dismiss rules.
-                        text_->DrawStartPage(d2dContext_, panelCard, frame.startCard, frame.cardOpacity);
+                        text_->DrawStartPage(d2dContext_, pageCard, frame.startCard, frame.cardOpacity);
                     } else {
-                        text_->DrawSystemPanel(d2dContext_, panelCard, frame.systemPanel,
+                        text_->DrawSystemPanel(d2dContext_, pageCard, frame.systemPanel,
                                                frame.cardOpacity);
                     }
 
@@ -1529,6 +1731,13 @@ void Renderer::RenderFrame(const FrameState& frame) {
                 }
             }
 
+            // The card content is clipped inside the morph. The island line is the other side of the
+            // hand-off, so draw it last once the card has almost reached the pill.
+            if (NiriLayoutActive() && frame.outerCardUp && !inlineSearch &&
+                islandLineOpacity > 0.01f) {
+                drawNiriIslandLine(islandLineOpacity, lineBox);
+            }
+
         // THE DECKS LAST, so nothing composed into the card can cover them.
         //
         // The card is the tallest thing on the bar and it hangs from a control on the left deck, which
@@ -1561,11 +1770,67 @@ void Renderer::RenderFrame(const FrameState& frame) {
         //
         // `barIsland`, computed once above, is exactly that box -- the status strip stands beside this deck
         // and is measured from the same rectangle, so the two are the same shape by construction.
-        const RoundedBox& deckIsland = barIsland;
+        const RoundedBox niriDeckIsland =
+            (NiriLayoutActive() && frame.outerCardUp)
+                ? island::NiriDeckBoxFor(box, frame.restingPill,
+                                         frame.cardSize.widthDip,
+                                         frame.cardSize.heightDip,
+                                         frame.state != IslandState::Expanded)
+                : barIsland;
+        const RoundedBox& deckIsland = niriDeckIsland;
         // ... and not while a full-screen application is in front: the deck and the application icon row
         // are the "left and right sides" that must stay off screen with it.
         if (frame.contentOpacity > 0.01f && !frame.fullscreenApp) {
-            DrawDecks(deckIsland, frame);
+            const D2D1_SIZE_F viewport = d2dContext_->GetSize();
+            if (NiriLayoutActive()) {
+                PrepareTaskButtons(frame);
+                const island::NiriBarLayout niri =
+                    island::NiriBarLayoutFor(viewport.width, deckIsland,
+                                             frame.taskButtonCount);
+
+                int active = -1;
+                for (int i = 0; i < frame.taskButtonCount; ++i) {
+                    if (frame.taskButtons[i].active) {
+                        active = i;
+                        break;
+                    }
+                }
+                // The left-hand bubble names the window that currently has focus.
+                // When the desktop is visible there is no such window, so keep the
+                // slot empty instead of presenting "desktop" as an application.
+                const float leftExtent = island::NiriSideGroupVisualExtent(
+                    frame.niriNotchLeftExtent);
+                if (active >= 0 && leftExtent > 0.01f) {
+                    island::RoundedBox activeApp = niri.activeApp;
+                    const float shift =
+                        island::NiriSideGroupVisualOffsetDip(frame.niriNotchLeftExtent);
+                    activeApp.rect.left -= shift;
+                    activeApp.rect.right -= shift;
+                    text_->DrawNiriActiveApp(d2dContext_, activeApp, taskButtons_[active].icon,
+                                             taskButtons_[active].title,
+                                             frame.contentOpacity * leftExtent);
+                }
+
+                island::RoundedBox taskAnchor = deckIsland;
+                const float rightExtent = island::NiriSideGroupVisualExtent(
+                    frame.niriNotchRightExtent);
+                taskAnchor.rect.right =
+                    niri.taskRow.left - kTaskIconPadDip +
+                    island::NiriSideGroupVisualOffsetDip(frame.niriNotchRightExtent);
+                float rowAmounts[island::kMaxTaskIcons] = {};
+                for (int i = 0; i < niri.taskCount; ++i) {
+                    rowAmounts[i] = taskButtons_[i].hoverAmount;
+                }
+                if (niri.taskCount > 0 && rightExtent > 0.01f) {
+                    text_->DrawTaskIcons(
+                        d2dContext_, taskAnchor, taskButtons_, niri.taskCount,
+                        frame.taskHoveredIndex, frame.contentOpacity * rightExtent,
+                        rowAmounts, niri.taskCount, 0.0f, 0.0f,
+                        frame.taskButtonAppearValid ? frame.taskButtonAppear : nullptr);
+                }
+            } else {
+                DrawDecks(deckIsland, frame);
+            }
         }
     }
 }

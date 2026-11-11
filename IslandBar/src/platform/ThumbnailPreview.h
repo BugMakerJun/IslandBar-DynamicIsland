@@ -19,6 +19,7 @@
 #pragma once
 
 #include <windows.h>
+#include <cmath>
 
 // HTHUMBNAIL, the handle a DWM thumbnail registration answers with. It is a member of this class, and
 // the header needs the declaration for it -- leaving it out makes the compiler read the member's NAME as
@@ -37,21 +38,22 @@ namespace island {
 // shape from the window made every preview a different size, which is what "现在预览框 大小也不一样"
 // reported: a row of previews should be one shape, the way the shell's own are, and the window's
 // proportions belong inside the picture rather than in the frame around it.
-inline constexpr float kThumbnailMaxWidthDip  = 260.0f;
-inline constexpr float kThumbnailMaxHeightDip = 160.0f;
+inline constexpr float kThumbnailMaxWidthDip  = 276.0f;
+inline constexpr float kThumbnailMaxHeightDip = 168.0f;
 
 // How far below the bar's own underside the preview hangs.
 inline constexpr float kThumbnailGapDip = 10.0f;
 
-// The card the picture stands in: a title row, a margin, and a rounded corner.
+// The card the picture stands in: a header, a margin, a footer, and a rounded corner.
 //
 // The preview is a CARD rather than a bare rectangle of someone else's window, because a raw bitmap
 // floating under the bar reads as a rendering fault (reported as such: "从第七个预览框就变成这样了"
 // was a window squeezed into a strip, with nothing around it to say what it was). The card says what
 // it is: the application's icon, the window's title, and the picture inside a frame.
-inline constexpr float kThumbnailPadDip   = 8.0f;
-inline constexpr float kThumbnailTitleDip = 22.0f;
-inline constexpr float kThumbnailRadiusDip = 12.0f;
+inline constexpr float kThumbnailPadDip    = 10.0f;
+inline constexpr float kThumbnailHeaderDip = 38.0f;
+inline constexpr float kThumbnailFooterDip = 28.0f;
+inline constexpr float kThumbnailRadiusDip = 16.0f;
 
 // Where a preview goes, in SCREEN PIXELS: the CARD (this window's own rectangle) and the PICTURE
 // inside it (the rectangle the compositor draws the thumbnail into).
@@ -74,19 +76,45 @@ inline constexpr float kThumbnailRadiusDip = 12.0f;
 // same object with different contents" and "the previews are all different objects".
 struct ThumbnailPlacement {
     RECT card = {};      // the rounded card: what this window is
-    RECT picture = {};   // the thumbnail's destination, inside the card
+    RECT header = {};    // application identity and live state
+    RECT slot = {};      // the fixed screen area inside the card
+    RECT picture = {};   // the thumbnail's destination, inside the slot
+    RECT footer = {};    // the real action the icon below the pointer performs
+    float scale = 1.0f;
     bool valid = false;
 };
 
 ThumbnailPlacement ThumbnailBoxFor(int sourceWidthPx, int sourceHeightPx, const RECT& iconBoxPx,
                                    const RECT& monitorPx, float scale);
 
+// The path a pointer takes from the task icon down into the preview card. Keeping this
+// as one rectangle prevents the card disappearing in the gap or the card itself.
+inline RECT ThumbnailKeepRectFor(const RECT& iconPx, const RECT& cardPx, float scale) {
+    const LONG margin = static_cast<LONG>(std::lround(4.0f * (scale > 0.0f ? scale : 1.0f)));
+    RECT keep = {};
+    keep.left = (iconPx.left < cardPx.left ? iconPx.left : cardPx.left) - margin;
+    keep.top = (iconPx.top < cardPx.top ? iconPx.top : cardPx.top) - margin;
+    keep.right = (iconPx.right > cardPx.right ? iconPx.right : cardPx.right) + margin;
+    keep.bottom = (iconPx.bottom > cardPx.bottom ? iconPx.bottom : cardPx.bottom) + margin;
+    return keep;
+}
+
+inline bool ThumbnailKeepContains(const RECT& keepPx, POINT point) {
+    return point.x >= keepPx.left && point.x <= keepPx.right && point.y >= keepPx.top &&
+           point.y <= keepPx.bottom;
+}
+
 // The card's own furniture: its body, its ink and its rim. Supplied by the app layer from the active
 // theme, because platform/ must not know about render/Theme.
 struct PreviewStyle {
     COLORREF fill = RGB(18, 18, 22);
+    COLORREF fillBottom = RGB(8, 9, 14);
+    COLORREF panel = RGB(5, 7, 11);
     COLORREF ink = RGB(214, 219, 228);
+    COLORREF mutedInk = RGB(137, 145, 160);
     COLORREF rim = RGB(56, 56, 66);
+    COLORREF highlight = RGB(82, 91, 109);
+    COLORREF accent = RGB(35, 120, 212);
 };
 
 // The preview window itself.
@@ -133,6 +161,7 @@ public:
     bool Visible() const { return visible_; }
     HWND Source() const { return source_; }
     HWND Handle() const { return hwnd_; }
+    RECT CardRect() const { return card_; }
 
     // The last thing the compositor said, for the log: the HRESULT of the update that put the thumbnail
     // on screen (or of the registration that was refused).
@@ -140,6 +169,10 @@ public:
 
     // What the compositor believes the source window measures, filled in by Begin.
     SIZE SourceSize() const { return sourceSize_; }
+
+    // Whether the previewed window was in front when this preview was prepared. This is real state from
+    // GetForegroundWindow, used for the card's status chip; it is not a decoration or a guessed metric.
+    bool SourceActive() const { return sourceActive_; }
 
     // How many times a registration has been refused since the program started, so a window that
     // cannot be previewed is reported once rather than every frame.
@@ -155,12 +188,18 @@ private:
     HTHUMBNAIL thumbnail_ = nullptr;
     SIZE sourceSize_ = {0, 0};
     RECT card_ = {};
+    RECT header_ = {};
+    RECT slot_ = {};
     RECT picture_ = {};
+    RECT footer_ = {};
     PreviewStyle style_ = {};
     // The window's title and icon for the card's header. The icon is the window's own (borrowed, never
     // destroyed): the same one the icon row shows, so the card and the row agree about what the window is.
     wchar_t title_[256] = {};
     HICON icon_ = nullptr;
+    float scale_ = 1.0f;
+    bool sourceActive_ = false;
+    bool sourceMinimized_ = false;
     bool visible_ = false;
     long long lastResult_ = 0;
     int refusals_ = 0;

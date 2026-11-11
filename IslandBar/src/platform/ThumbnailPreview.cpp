@@ -10,13 +10,59 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cwchar>
 
 #pragma comment(lib, "dwmapi.lib")
+#pragma comment(lib, "msimg32.lib")
 
 namespace island {
 namespace {
 
 constexpr wchar_t kThumbnailClassName[] = L"IslandBarThumbnail";
+
+int DipToPx(float dip, float scale) {
+    return static_cast<int>(std::lround(dip * scale));
+}
+
+COLORREF MixColour(COLORREF from, COLORREF to, float amount) {
+    const float t = amount < 0.0f ? 0.0f : (amount > 1.0f ? 1.0f : amount);
+    const auto channel = [t](BYTE a, BYTE b) {
+        return static_cast<BYTE>(static_cast<float>(a) +
+                                 (static_cast<float>(b) - static_cast<float>(a)) * t + 0.5f);
+    };
+    return RGB(channel(GetRValue(from), GetRValue(to)),
+               channel(GetGValue(from), GetGValue(to)),
+               channel(GetBValue(from), GetBValue(to)));
+}
+
+void FillRectColour(HDC dc, const RECT& rect, COLORREF colour) {
+    if (!dc || rect.right <= rect.left || rect.bottom <= rect.top) return;
+    HBRUSH brush = CreateSolidBrush(colour);
+    if (!brush) return;
+    FillRect(dc, &rect, brush);
+    DeleteObject(brush);
+}
+
+void FillVerticalGradient(HDC dc, const RECT& rect, COLORREF top, COLORREF bottom) {
+    if (!dc || rect.right <= rect.left || rect.bottom <= rect.top) return;
+
+    TRIVERTEX vertices[2] = {};
+    vertices[0].x = rect.left;
+    vertices[0].y = rect.top;
+    vertices[0].Red = static_cast<COLOR16>(GetRValue(top) << 8);
+    vertices[0].Green = static_cast<COLOR16>(GetGValue(top) << 8);
+    vertices[0].Blue = static_cast<COLOR16>(GetBValue(top) << 8);
+    vertices[0].Alpha = 0xFF00;
+    vertices[1].x = rect.right;
+    vertices[1].y = rect.bottom;
+    vertices[1].Red = static_cast<COLOR16>(GetRValue(bottom) << 8);
+    vertices[1].Green = static_cast<COLOR16>(GetGValue(bottom) << 8);
+    vertices[1].Blue = static_cast<COLOR16>(GetBValue(bottom) << 8);
+    vertices[1].Alpha = 0xFF00;
+
+    GRADIENT_RECT gradient = {0, 1};
+    GradientFill(dc, vertices, 2, &gradient, 1, GRADIENT_FILL_RECT_V);
+}
 
 } // namespace
 
@@ -28,13 +74,14 @@ ThumbnailPlacement ThumbnailBoxFor(int sourceWidthPx, int sourceHeightPx, const 
     const float slotWidth = kThumbnailMaxWidthDip * scale;
     const float slotHeight = kThumbnailMaxHeightDip * scale;
     const float pad = kThumbnailPadDip * scale;
-    const float title = kThumbnailTitleDip * scale;
+    const float header = kThumbnailHeaderDip * scale;
+    const float footer = kThumbnailFooterDip * scale;
 
-    // THE CARD IS ONE SIZE, whatever window it is showing: one margin, one title row, one slot for the
-    // picture. Every preview in a row is then the same object, which is what the shell's own previews are
-    // and what "现在预览框 大小也不一样" asked for.
+    // THE CARD IS ONE SIZE, whatever window it is showing: one margin, one header, one slot for the
+    // picture and one footer. Every preview in a row is then the same object, which is what the shell's
+    // own previews are and what "现在预览框 大小也不一样" asked for.
     const float cardWidth = slotWidth + pad * 2.0f;
-    const float cardHeight = slotHeight + pad * 2.0f + title;
+    const float cardHeight = slotHeight + pad * 2.0f + header + footer;
 
     // THE PICTURE takes the source's shape INSIDE that slot, and the leftover space becomes card: a
     // letterbox. The shape has to come from the compositor because it stretches what it draws to fill the
@@ -85,19 +132,42 @@ ThumbnailPlacement ThumbnailBoxFor(int sourceWidthPx, int sourceHeightPx, const 
     placement.card.top = static_cast<LONG>(top);
     placement.card.right = static_cast<LONG>(left + cardWidth);
     placement.card.bottom = static_cast<LONG>(top + cardHeight);
+    placement.scale = scale;
+
+    // The named bands are returned as well as being used here. Painting has to leave the picture rectangle
+    // COMPLETELY untouched for DWM, and separate header/slot/footer rectangles make that an explicit part
+    // of the pure geometry instead of four numbers reconstructed independently by the paint code.
+    const int headerBottom = DipToPx(kThumbnailPadDip + kThumbnailHeaderDip, scale);
+    const int slotHeightPx = DipToPx(kThumbnailMaxHeightDip, scale);
+    const int footerHeightPx = DipToPx(kThumbnailFooterDip, scale);
+    placement.header = {placement.card.left, placement.card.top, placement.card.right,
+                        placement.card.top + headerBottom};
+    placement.slot = {placement.card.left + DipToPx(kThumbnailPadDip, scale), placement.header.bottom,
+                      placement.card.right - DipToPx(kThumbnailPadDip, scale),
+                      placement.header.bottom + slotHeightPx};
+    placement.footer = {placement.card.left, placement.card.bottom - footerHeightPx,
+                        placement.card.right, placement.card.bottom};
 
     // The picture is CENTRED in the slot, so the letterbox is even on both sides -- and ROUNDED rather
     // than truncated, because truncating a half-pixel moved the letterbox a pixel to one side and the
     // self-test's own "even top to bottom" caught it (6 above against 8 below).
-    const float slotLeft = static_cast<float>(placement.card.left) + pad;
-    const float slotTop = static_cast<float>(placement.card.top) + pad + title;
-    placement.picture.left = std::lround(slotLeft + (slotWidth - width) * 0.5f);
-    placement.picture.top = std::lround(slotTop + (slotHeight - height) * 0.5f);
+    placement.picture.left =
+        std::lround(static_cast<float>(placement.slot.left) + (slotWidth - width) * 0.5f);
+    placement.picture.top =
+        std::lround(static_cast<float>(placement.slot.top) + (slotHeight - height) * 0.5f);
     placement.picture.right = placement.picture.left + std::lround(width);
     placement.picture.bottom = placement.picture.top + std::lround(height);
 
     placement.valid = (placement.card.right > placement.card.left) &&
                       (placement.card.bottom > placement.card.top) &&
+                      (placement.header.right > placement.header.left) &&
+                      (placement.header.bottom > placement.header.top) &&
+                      (placement.slot.right > placement.slot.left) &&
+                      (placement.slot.bottom > placement.slot.top) &&
+                      (placement.slot.top >= placement.header.bottom) &&
+                      (placement.footer.top >= placement.slot.bottom) &&
+                      (placement.footer.right > placement.footer.left) &&
+                      (placement.footer.bottom > placement.footer.top) &&
                       (placement.picture.right > placement.picture.left) &&
                       (placement.picture.bottom > placement.picture.top);
     return placement;
@@ -156,6 +226,8 @@ void ThumbnailPreview::Destroy() {
         hwnd_ = nullptr;
     }
     source_ = nullptr;
+    sourceActive_ = false;
+    sourceMinimized_ = false;
     visible_ = false;
 }
 
@@ -185,16 +257,20 @@ SIZE ThumbnailPreview::Begin(HWND source) {
         title_[0] = L'\0';
         GetWindowTextW(source, title_, 256);
         DWORD_PTR result = 0;
-        if (!SendMessageTimeoutW(source, WM_GETICON, ICON_SMALL2, 0, SMTO_ABORTIFHUNG, 100, &result)) {
+        if (!SendMessageTimeoutW(source, WM_GETICON, ICON_BIG, 0, SMTO_ABORTIFHUNG, 100, &result)) {
             result = 0;
         }
         icon_ = reinterpret_cast<HICON>(result);
         if (!icon_ &&
-            SendMessageTimeoutW(source, WM_GETICON, ICON_BIG, 0, SMTO_ABORTIFHUNG, 100, &result)) {
+            SendMessageTimeoutW(source, WM_GETICON, ICON_SMALL2, 0, SMTO_ABORTIFHUNG, 100, &result)) {
             icon_ = reinterpret_cast<HICON>(result);
         }
+        if (!icon_) icon_ = reinterpret_cast<HICON>(GetClassLongPtrW(source, GCLP_HICON));
         if (!icon_) icon_ = reinterpret_cast<HICON>(GetClassLongPtrW(source, GCLP_HICONSM));
     }
+
+    sourceActive_ = GetForegroundWindow() == source;
+    sourceMinimized_ = IsIconic(source) != FALSE;
 
     // What the COMPOSITOR believes the source is: this is the number it will draw from, and the shape the
     // card is built around. It is NOT the window's own rectangle, and taking the aspect from there is what
@@ -211,7 +287,11 @@ bool ThumbnailPreview::Place(const ThumbnailPlacement& placement) {
     if (!placement.valid) return false;
 
     card_ = placement.card;
+    header_ = placement.header;
+    slot_ = placement.slot;
     picture_ = placement.picture;
+    footer_ = placement.footer;
+    scale_ = placement.scale > 0.0f ? placement.scale : 1.0f;
 
     const int cardWidth = static_cast<int>(card_.right - card_.left);
     const int cardHeight = static_cast<int>(card_.bottom - card_.top);
@@ -219,7 +299,7 @@ bool ThumbnailPreview::Place(const ThumbnailPlacement& placement) {
     // ROUNDED, by a window region rather than by a layered window: DWM refuses to register a thumbnail
     // whose destination is layered, so the corners are cut out of the window's own shape instead. The
     // region clips the thumbnail exactly as it clips everything else this window draws.
-    const int diameter = static_cast<int>(kThumbnailRadiusDip * 2.0f);
+    const int diameter = DipToPx(kThumbnailRadiusDip * 2.0f, scale_);
     HRGN region = CreateRoundRectRgn(0, 0, cardWidth + 1, cardHeight + 1, diameter, diameter);
     if (region) SetWindowRgn(hwnd_, region, TRUE);   // the window owns the region from here
 
@@ -274,77 +354,175 @@ void ThumbnailPreview::PaintCard(HDC dc) {
     RECT client = {};
     GetClientRect(hwnd_, &client);
 
-    // EVERYTHING BUT THE PICTURE. Filling the whole client would paint OVER the thumbnail, which the
-    // compositor draws into this same window: the four bands around the picture are what this card owns,
-    // and the picture belongs to the compositor.
     const int pictureTop = static_cast<int>(picture_.top - card_.top);
     const int pictureBottom = static_cast<int>(picture_.bottom - card_.top);
     const int pictureLeft = static_cast<int>(picture_.left - card_.left);
     const int pictureRight = static_cast<int>(picture_.right - card_.left);
 
-    // The card's body, painted from the style the app layer supplied. It used to be a hard-coded
-    // RGB(18,18,22) for every theme; the glass theme now hands it the island's own refracted average, so
-    // the card is the island's glass colour rather than a black or white plate.
-    {
-        HBRUSH card = CreateSolidBrush(style_.fill);
-        const RECT bands[4] = {
-            {client.left, client.top, client.right, pictureTop},                  // the header, as wide as the card
-            {client.left, pictureBottom, client.right, client.bottom},            // below the picture
-            {client.left, pictureTop, pictureLeft, pictureBottom},                // left margin
-            {pictureRight, pictureTop, client.right, pictureBottom},              // right margin
-        };
-        for (const RECT& band : bands) {
-            if (band.right > band.left && band.bottom > band.top) FillRect(dc, &band, card);
-        }
-        DeleteObject(card);
+    // DWM owns the picture rectangle and paints it into this HWND. Every fill below stops at one of its
+    // four edges; the header and footer and the letterbox around the picture are ours. Keeping those
+    // regions separate is what lets a richer shell sit around a live thumbnail without covering it.
+    const int slotTop = static_cast<int>(slot_.top - card_.top);
+    const int slotBottom = static_cast<int>(slot_.bottom - card_.top);
+    const int slotLeft = static_cast<int>(slot_.left - card_.left);
+    const int slotRight = static_cast<int>(slot_.right - card_.left);
+    const int footerTop = static_cast<int>(footer_.top - card_.top);
+
+    const RECT topBand = {client.left, client.top, client.right, slotTop};
+    const RECT bottomBand = {client.left, slotBottom, client.right, footerTop};
+    const RECT leftBand = {client.left, slotTop, slotLeft, slotBottom};
+    const RECT rightBand = {slotRight, slotTop, client.right, slotBottom};
+    const RECT footerBand = {client.left, footerTop, client.right, client.bottom};
+
+    FillVerticalGradient(dc, topBand, style_.fill, MixColour(style_.fill, style_.fillBottom, 0.55f));
+    FillVerticalGradient(dc, bottomBand, MixColour(style_.fill, style_.fillBottom, 0.55f),
+                         style_.fillBottom);
+    FillVerticalGradient(dc, leftBand, MixColour(style_.fill, style_.fillBottom, 0.55f),
+                         style_.fillBottom);
+    FillVerticalGradient(dc, rightBand, MixColour(style_.fill, style_.fillBottom, 0.55f),
+                         style_.fillBottom);
+    FillVerticalGradient(dc, footerBand, style_.fillBottom, style_.fill);
+
+    // The letterbox belongs to the screen plate, not the card. The actual image rectangle remains
+    // untouched; these four pieces only cover the space around it.
+    const RECT plateTop = {slotLeft, slotTop, slotRight, pictureTop};
+    const RECT plateBottom = {slotLeft, pictureBottom, slotRight, slotBottom};
+    const RECT plateLeft = {slotLeft, pictureTop, pictureLeft, pictureBottom};
+    const RECT plateRight = {pictureRight, pictureTop, slotRight, pictureBottom};
+    FillRectColour(dc, plateTop, style_.panel);
+    FillRectColour(dc, plateBottom, style_.panel);
+    FillRectColour(dc, plateLeft, style_.panel);
+    FillRectColour(dc, plateRight, style_.panel);
+
+    // The picture gets a recessed one-pixel surround, and each major band gets a restrained separator.
+    const RECT screenRimTop = {slotLeft - 1, pictureTop - 1, slotRight + 1, pictureTop};
+    const RECT screenRimBottom = {slotLeft - 1, pictureBottom, slotRight + 1, pictureBottom + 1};
+    const RECT screenRimLeft = {slotLeft - 1, pictureTop, pictureLeft, pictureBottom};
+    const RECT screenRimRight = {pictureRight, pictureTop, slotRight + 1, pictureBottom};
+    FillRectColour(dc, screenRimTop, style_.rim);
+    FillRectColour(dc, screenRimBottom, style_.rim);
+    FillRectColour(dc, screenRimLeft, style_.rim);
+    FillRectColour(dc, screenRimRight, style_.rim);
+
+    const RECT headerDivider = {client.left + DipToPx(10.0f, scale_), slotTop - 1,
+                                client.right - DipToPx(10.0f, scale_), slotTop};
+    const RECT footerDivider = {client.left + DipToPx(10.0f, scale_), footerTop,
+                                client.right - DipToPx(10.0f, scale_), footerTop + 1};
+    FillRectColour(dc, headerDivider, MixColour(style_.rim, style_.fill, 0.35f));
+    FillRectColour(dc, footerDivider, MixColour(style_.rim, style_.fill, 0.35f));
+
+    // The inner light and the outer hairline are what stop the large dark surface from reading as a flat
+    // rectangle. Both are drawn inside the window region, so the large rounded corners stay clean.
+    const int diameter = DipToPx(kThumbnailRadiusDip * 2.0f, scale_);
+    const RECT topHighlight = {DipToPx(22.0f, scale_), 1,
+                               client.right - DipToPx(22.0f, scale_), 2};
+    FillRectColour(dc, topHighlight, style_.highlight);
+    HPEN pen = CreatePen(PS_SOLID, 1, style_.rim);
+    if (pen) {
+        HGDIOBJ previousPen = SelectObject(dc, pen);
+        HGDIOBJ previousBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+        RoundRect(dc, 0, 0, client.right, client.bottom, diameter, diameter);
+        SelectObject(dc, previousBrush);
+        SelectObject(dc, previousPen);
+        DeleteObject(pen);
     }
 
-    // The hairline under the header: without it the title floats over the picture when the window's own
-    // content starts right at its top edge.
-    HBRUSH line = CreateSolidBrush(style_.rim);
-    const RECT divider = {client.left, pictureTop - 1, client.right, pictureTop};
-    if (divider.bottom > divider.top) FillRect(dc, &divider, line);
-    DeleteObject(line);
-
-    // The card's own edge: the same idea as the island's rim band, in the one stroke GDI gives. It is
-    // drawn INSIDE the region the window already has, so the rim cannot stick out of the rounded corner.
-    {
-        const int diameter = static_cast<int>(kThumbnailRadiusDip * 2.0f);
-        HPEN pen = CreatePen(PS_SOLID, 2, style_.rim);
-        if (pen) {
-            HGDIOBJ previousPen = SelectObject(dc, pen);
-            HGDIOBJ previousBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
-            RoundRect(dc, 1, 1, client.right - 1, client.bottom - 1, diameter, diameter);
-            SelectObject(dc, previousBrush);
-            SelectObject(dc, previousPen);
-            DeleteObject(pen);
-        }
-    }
-
-    // The icon and the title, so the card says which window this is.
-    const int iconSize = 16;
-    int textLeft = 10;
+    // The top row says which window this is. The icon is materially larger than the old 16 px mark, and
+    // the status chip is driven only by the real foreground/minimised state captured when Begin prepared
+    // the thumbnail.
+    const int iconSize = DipToPx(28.0f, scale_);
+    const int iconLeft = DipToPx(12.0f, scale_);
+    const int iconTop = DipToPx(kThumbnailPadDip, scale_) +
+                        (DipToPx(kThumbnailHeaderDip, scale_) - iconSize) / 2;
     if (icon_) {
-        DrawIconEx(dc, 10, (pictureTop - iconSize) / 2, icon_, iconSize, iconSize, 0, nullptr,
-                   DI_NORMAL);
-        textLeft = 10 + iconSize + 8;
+        DrawIconEx(dc, iconLeft, iconTop, icon_, iconSize, iconSize, 0, nullptr, DI_NORMAL);
+    } else {
+        const RECT fallback = {iconLeft, iconTop, iconLeft + iconSize, iconTop + iconSize};
+        FillRectColour(dc, fallback, MixColour(style_.accent, style_.fill, 0.18f));
     }
 
-    if (title_[0] != L'\0' && textLeft < static_cast<int>(client.right) - 16) {
-        SetBkMode(dc, TRANSPARENT);
-        SetTextColor(dc, style_.ink);
-        HFONT font = CreateFontW(-13, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                                 OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                                 DEFAULT_PITCH, L"Segoe UI Variable Text");
-        HGDIOBJ previous = font ? SelectObject(dc, font) : nullptr;
-        RECT text = {textLeft, 0, static_cast<LONG>(client.right) - 12, pictureTop};
-        // DT_END_ELLIPSIS rather than a hard cut: a title that does not fit ends in "...", which reads as a
-        // long title, where a cut reads as a broken card.
-        DrawTextW(dc, title_, -1, &text, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-        if (font) {
+    SetBkMode(dc, TRANSPARENT);
+    const wchar_t* status = sourceActive_ ? L"当前" : (sourceMinimized_ ? L"已最小化" : nullptr);
+    int chipLeft = client.right - DipToPx(12.0f, scale_);
+    if (status) {
+        HFONT chipFont = CreateFontW(-DipToPx(11.0f, scale_), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE,
+                                     FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                     CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI Variable Text");
+        if (chipFont) {
+            HGDIOBJ previous = SelectObject(dc, chipFont);
+            SIZE extent = {};
+            GetTextExtentPoint32W(dc, status, static_cast<int>(wcslen(status)), &extent);
+            const int chipWidth = extent.cx + DipToPx(18.0f, scale_);
+            const int chipHeight = DipToPx(22.0f, scale_);
+            chipLeft = client.right - DipToPx(12.0f, scale_) - chipWidth;
+            const int chipTop = DipToPx(kThumbnailPadDip, scale_) +
+                                (DipToPx(kThumbnailHeaderDip, scale_) - chipHeight) / 2;
+            HBRUSH chipBrush = CreateSolidBrush(MixColour(style_.accent, RGB(255, 255, 255), 0.06f));
+            HPEN chipPen = CreatePen(PS_SOLID, 1, MixColour(style_.accent, RGB(255, 255, 255), 0.24f));
+            HGDIOBJ oldBrush = SelectObject(dc, chipBrush);
+            HGDIOBJ oldPen = SelectObject(dc, chipPen);
+            RoundRect(dc, chipLeft, chipTop, chipLeft + chipWidth, chipTop + chipHeight,
+                      chipHeight, chipHeight);
+            SelectObject(dc, oldPen);
+            SelectObject(dc, oldBrush);
+            DeleteObject(chipPen);
+            DeleteObject(chipBrush);
+            SetTextColor(dc, RGB(255, 255, 255));
+            RECT chipText = {chipLeft, chipTop, chipLeft + chipWidth, chipTop + chipHeight};
+            DrawTextW(dc, status, -1, &chipText, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
             SelectObject(dc, previous);
-            DeleteObject(font);
+            DeleteObject(chipFont);
         }
+    }
+
+    const wchar_t* shownTitle = title_[0] != L'\0' ? title_ : L"窗口预览";
+    const int titleLeft = iconLeft + iconSize + DipToPx(10.0f, scale_);
+    const int titleRight = chipLeft - DipToPx(10.0f, scale_);
+    if (titleLeft < titleRight) {
+        HFONT titleFont = CreateFontW(
+            -DipToPx(15.0f, scale_), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+            OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH,
+            L"Segoe UI Variable Display");
+        HGDIOBJ previous = titleFont ? SelectObject(dc, titleFont) : nullptr;
+        SetTextColor(dc, style_.ink);
+        RECT titleRect = {titleLeft, DipToPx(kThumbnailPadDip, scale_), titleRight, slotTop};
+        DrawTextW(dc, shownTitle, -1, &titleRect,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+        if (titleFont) {
+            SelectObject(dc, previous);
+            DeleteObject(titleFont);
+        }
+    }
+
+    // The footer carries only information the card can stand behind: the DWM image is live, and the icon
+    // above toggles the previewed window. It is a compact action row, not fabricated capture telemetry.
+    const wchar_t* action = sourceActive_ ? L"单击收起窗口"
+                            : sourceMinimized_ ? L"单击恢复窗口"
+                                              : L"单击切换窗口";
+    const int footerTextTop = footerTop + DipToPx(1.0f, scale_);
+    const int footerTextBottom = client.bottom;
+    HFONT footerFont = CreateFontW(-DipToPx(11.0f, scale_), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                                   DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                   CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI Variable Text");
+    if (footerFont) {
+        HGDIOBJ previous = SelectObject(dc, footerFont);
+        HBRUSH dot = CreateSolidBrush(style_.accent);
+        const int dotSize = DipToPx(4.0f, scale_);
+        const int dotLeft = DipToPx(12.0f, scale_);
+        const int dotTop = footerTextTop + (footerTextBottom - footerTextTop - dotSize) / 2;
+        const RECT dotRect = {dotLeft, dotTop, dotLeft + dotSize, dotTop + dotSize};
+        FillRect(dc, &dotRect, dot);
+        DeleteObject(dot);
+
+        SetTextColor(dc, style_.mutedInk);
+        RECT live = {dotLeft + dotSize + DipToPx(7.0f, scale_), footerTextTop,
+                     client.right / 2, footerTextBottom};
+        DrawTextW(dc, L"实时预览", -1, &live, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        RECT hint = {client.right / 2, footerTextTop, client.right - DipToPx(12.0f, scale_),
+                     footerTextBottom};
+        DrawTextW(dc, action, -1, &hint, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+        SelectObject(dc, previous);
+        DeleteObject(footerFont);
     }
 }
 

@@ -44,6 +44,7 @@
 #include "media/Lyrics.h"
 #include "app/AppBar.h"
 #include "domain/TaskStripLayout.h"
+#include "domain/NiriBarLayout.h"
 #include "platform/WindowList.h"
 #include "media/MusicSession.h"
 #include "app/PlayerWindow.h"
@@ -77,6 +78,110 @@ namespace island {
 
 void TestCardLayout() {
     Section(L"card control layout");
+
+    {
+        const RoundedBox center =
+            IslandBoxFor(2560.0f, kCollapsedWidthDip, kCollapsedHeightDip);
+        const NiriBarLayout niri = NiriBarLayoutFor(2560.0f, center, 4);
+        Check(niri.activeApp.rect.right < niri.center.rect.left &&
+                  niri.center.rect.right < niri.taskRow.left &&
+                  niri.taskRow.right <= 2560.0f,
+              L"the active app, island and window row are separated and stay on screen");
+        Check(niri.taskCount == 4 &&
+                  NiriTaskAt(niri, (niri.taskButtons[2].left + niri.taskButtons[2].right) * 0.5f,
+                             (niri.taskButtons[2].top + niri.taskButtons[2].bottom) * 0.5f) == 2,
+              L"the Niri layout's hit test follows the controls it lays out");
+        Check(NiriDashboardWanted(true, true, false, false) &&
+                  NiriDashboardWanted(true, false, true, true) &&
+                  !NiriDashboardWanted(true, false, true, false) &&
+                  !NiriDashboardWanted(false, true, true, true),
+              L"the dashboard can start only at the island and the card column only keeps it open");
+        Check(NiriNoticeStateFor(IslandState::NoticeStrip) == IslandState::Collapsed &&
+                  NiriNoticeStateFor(IslandState::MusicStrip) == IslandState::MusicStrip,
+              L"a Niri notice replaces the island content without changing its width");
+
+        const RoundedBox motionCard =
+            BoxForState(IslandState::Expanded,
+                        AnchorForWindow(0.0f, kPillTopMarginDip, 2560.0f));
+        const RoundedBox morphStart =
+            NiriDeckBoxFor(center, center, kSystemPanelWidthDip, kSystemPanelHeightDip);
+        const RoundedBox morphEnd =
+            NiriDeckBoxFor(motionCard, center, kSystemPanelWidthDip,
+                           kSystemPanelHeightDip);
+        const NiriBarLayout startRow = NiriBarLayoutFor(2560.0f, morphStart, 4);
+        const NiriBarLayout endRow = NiriBarLayoutFor(2560.0f, morphEnd, 4);
+        wchar_t morphDetail[192];
+        std::swprintf(morphDetail, 192,
+                      L"morph %.0fx%.0f -> %.0fx%.0f, sides %.0f/%.0f -> %.0f/%.0f",
+                      morphStart.rect.right - morphStart.rect.left,
+                      morphStart.rect.bottom - morphStart.rect.top,
+                      morphEnd.rect.right - morphEnd.rect.left,
+                      morphEnd.rect.bottom - morphEnd.rect.top,
+                      startRow.activeApp.rect.left, startRow.taskRow.left,
+                      endRow.activeApp.rect.left, endRow.taskRow.left);
+        Check(Nearly(morphStart.rect.left, center.rect.left, 0.01f) &&
+                  Nearly(morphStart.rect.right, center.rect.right, 0.01f) &&
+                  Nearly(morphEnd.rect.right - morphEnd.rect.left,
+                         kSystemPanelWidthDip, 0.01f) &&
+                  Nearly(morphEnd.rect.top, center.rect.top, 0.01f) &&
+                  Nearly(morphEnd.rect.bottom, center.rect.bottom, 0.01f) &&
+                  endRow.activeApp.rect.left < startRow.activeApp.rect.left &&
+                  endRow.taskRow.left > startRow.taskRow.left,
+              L"the side groups move horizontally but stay on the bar's vertical band",
+              morphDetail);
+        const RoundedBox midMorph = LerpBox(center, motionCard, 0.70f);
+        const RoundedBox openMorph =
+            NiriDeckBoxFor(midMorph, center, kSystemPanelWidthDip, kSystemPanelHeightDip);
+        const RoundedBox closingMorph =
+            NiriDeckBoxFor(midMorph, center, kSystemPanelWidthDip, kSystemPanelHeightDip, true);
+        Check(closingMorph.rect.right - closingMorph.rect.left <
+                      openMorph.rect.right - openMorph.rect.left &&
+                  Nearly(closingMorph.rect.left, center.rect.left, 0.01f) &&
+                  Nearly(closingMorph.rect.right, center.rect.right, 0.01f),
+              L"a retracting Niri card gives up its width before it leaves a flat bar behind");
+
+        const RoundedBox card = {
+            {860.0f, 50.0f, 860.0f + kSystemPanelWidthDip,
+             50.0f + kSystemPanelHeightDip},
+            kCardRadiusDip, kCardRadiusDip};
+        const RectF body = CardBodyFor(card);
+        const CardRailLayout rail = CardRailFor(card);
+        Check(body.top == card.rect.top && body.right <= rail.frame.left &&
+                  rail.valid && rail.avatar.bottom <= rail.nav[0].top &&
+                  rail.nav[kCardRailNavCount - 1].bottom <= rail.settings.top &&
+                  rail.settings.bottom <= rail.restart.top,
+              L"the unified card uses a right rail and no top tab strip");
+        const auto railCentre = [](const RectF& rect) {
+            return D2D1::Point2F((rect.left + rect.right) * 0.5f,
+                                 (rect.top + rect.bottom) * 0.5f);
+        };
+        const D2D1_POINT_2F navCentres[kCardRailNavCount] = {
+            railCentre(rail.nav[0]), railCentre(rail.nav[1]), railCentre(rail.nav[2]),
+            railCentre(rail.nav[3])};
+        const D2D1_POINT_2F settingsCentre = railCentre(rail.settings);
+        const D2D1_POINT_2F restartCentre = railCentre(rail.restart);
+        const D2D1_POINT_2F shutdownCentre = railCentre(rail.shutdown);
+        const RectF confirm = CardRailPowerConfirmFor(rail);
+        const D2D1_POINT_2F confirmCentre = railCentre(confirm);
+        Check(CardRailTargetAt(card, navCentres[0].x, navCentres[0].y) == CardRailTarget::Dashboard &&
+                  CardRailTargetAt(card, navCentres[1].x, navCentres[1].y) ==
+                      CardRailTarget::DefaultApps &&
+                  CardRailTargetAt(card, navCentres[2].x, navCentres[2].y) ==
+                      CardRailTarget::TrayApps &&
+                  CardRailTargetAt(card, navCentres[3].x, navCentres[3].y) ==
+                      CardRailTarget::System &&
+                  CardRailTargetAt(card, settingsCentre.x, settingsCentre.y) ==
+                      CardRailTarget::Settings &&
+                  CardRailTargetAt(card, restartCentre.x, restartCentre.y) ==
+                      CardRailTarget::Restart &&
+                  CardRailTargetAt(card, shutdownCentre.x, shutdownCentre.y) ==
+                      CardRailTarget::ShutDown &&
+                  CardRailTargetAt(card, confirmCentre.x, confirmCentre.y, 2) ==
+                      CardRailTarget::Restart &&
+                  CardRailTargetAt(card, confirmCentre.x, confirmCentre.y, 3) ==
+                      CardRailTarget::ShutDown,
+              L"the right rail gives all actions their own hit target and one power confirmation slot");
+    }
 
     const IslandAnchor anchor = AnchorForWindow(0.0f, 0.0f, 2560.0f);
     RoundedBox card = BoxForState(IslandState::Expanded, anchor);
@@ -938,12 +1043,106 @@ void TestMusicCardLayout() {
     const IslandAnchor anchor = AnchorForWindow(0.0f, 0.0f, 2560.0f);
     RoundedBox card = BoxForState(IslandState::Expanded, anchor);
     card.rect.bottom = card.rect.top + kMusicCardHeightDip;
-    Check(Nearly(CardFaceHeightFor(CardOwner::Music, PanelLevel::Tiles), 280.0f, 0.01f) &&
-              Nearly(CardFaceHeightFor(CardOwner::SystemPanel, PanelLevel::Tiles), 408.0f, 0.01f) &&
-              Nearly(CardFaceHeightFor(CardOwner::SystemPanel, PanelLevel::Start), 500.0f, 0.01f) &&
-              Nearly(CardFaceWidthFor(CardOwner::SystemPanel, PanelLevel::Tiles), 480.0f, 0.01f) &&
-              Nearly(CardFaceWidthFor(CardOwner::SystemPanel, PanelLevel::Tray), 520.0f, 0.01f),
-          L"the system tiles card is compact while Start/tray and music keep their own faces");
+    Check(Nearly(CardFaceHeightFor(CardOwner::Music, PanelLevel::Tiles), 280.0f, 0.01f),
+          L"the music card keeps its compact face");
+    {
+        const PanelLevel systemLevels[] = {
+            PanelLevel::Tiles, PanelLevel::Sound, PanelLevel::Tray,
+            PanelLevel::Start, PanelLevel::Center, PanelLevel::Weather};
+        constexpr int levelCount =
+            static_cast<int>(sizeof(systemLevels) / sizeof(systemLevels[0]));
+        bool sameSize = true;
+        for (PanelLevel level : systemLevels) {
+            sameSize = sameSize &&
+                       Nearly(CardFaceWidthFor(CardOwner::SystemPanel, level),
+                              kSystemPanelWidthDip, 0.01f) &&
+                       Nearly(CardFaceHeightFor(CardOwner::SystemPanel, level),
+                              kSystemPanelHeightDip, 0.01f);
+        }
+        wchar_t sizeDetail[160];
+        std::swprintf(sizeDetail, 160, L"system face %.0f x %.0f DIP across %d levels",
+                      kSystemPanelWidthDip, kSystemPanelHeightDip, levelCount);
+        Check(sameSize, L"every system-panel tab shares one card size", sizeDetail);
+    }
+    {
+        const RoundedBox commandOuter = {
+            {0.0f, 0.0f, kSystemPanelWidthDip, kSystemPanelHeightDip},
+            kCardRadiusDip, kCardRadiusDip};
+        RoundedBox commandCard = commandOuter;
+        commandCard.rect = CardBodyFor(commandOuter);
+        const CommandCenterLayout command = CommandCenterFor(commandCard, 3);
+        Check(command.notificationRowsShown == 3 &&
+                  command.weather.right <= command.notifications.left &&
+                  command.notificationRows[2].bottom <= command.clearButton.top,
+              L"the command centre keeps weather, notifications and footer in separate bands");
+        Check(std::abs((command.weather.left - command.clock.right) - 14.0f) < 0.01f &&
+                  std::abs(((command.mediaCover.right - command.mediaCover.left) - 78.0f)) <
+                      0.01f,
+              L"the command centre keeps the reference's 14 DIP hero gap and 78 DIP cover");
+        const CommandCenterLayout scrolled = CommandCenterFor(commandCard, 16, 5);
+        Check(CommandCenterNotificationScrollLimit(16) == 13 &&
+                  CommandCenterNotificationScrollAfterWheel(0, 16, -99) == 13 &&
+                  CommandCenterNotificationScrollAfterWheel(13, 16, 2) == 11 &&
+                  scrolled.notificationRowsShown == 3 &&
+                  scrolled.notificationScrollVisible &&
+                  scrolled.notificationScrollThumb.top > scrolled.notificationScrollTrack.top &&
+                  scrolled.notificationScrollThumb.bottom <
+                      scrolled.notificationScrollTrack.bottom,
+              L"the notification list scrolls through every item and draws a moving thumb");
+        bool readableBands = true;
+        for (int i = 0; i < command.notificationRowsShown; ++i) {
+            const RectF& app = command.notificationApp[i];
+            const RectF& title = command.notificationTitle[i];
+            const RectF& body = command.notificationBody[i];
+            readableBands = readableBands &&
+                            app.bottom <= title.top + 0.01f &&
+                            title.bottom <= body.top + 0.01f &&
+                            body.bottom - body.top >= 32.0f &&
+                            body.bottom <= command.notificationOpen[i].top - 1.99f;
+        }
+        wchar_t notificationBands[192] = {};
+        const RectF& firstRow = command.notificationRows[0];
+        const RectF& firstBody = command.notificationBody[0];
+        std::swprintf(notificationBands, 192,
+                      L"dashboard_layout: body=%.0fx%.0f notifications=%d rows h=%.1f DIP, "
+                      L"body=%.1f DIP, "
+                      L"body/action gap=%.1f DIP",
+                      commandCard.rect.right - commandCard.rect.left,
+                      commandCard.rect.bottom - commandCard.rect.top,
+                      command.notificationRowsShown, firstRow.bottom - firstRow.top,
+                      firstBody.bottom - firstBody.top,
+                      command.notificationOpen[0].top - firstBody.bottom);
+        Check(readableBands,
+              L"notification app, title and two-line body stay above the actions",
+              notificationBands);
+        const auto commandCentre = [&](const RectF& rect) {
+            return CommandCenterAt(commandCard, 3, (rect.left + rect.right) * 0.5f,
+                                   (rect.top + rect.bottom) * 0.5f);
+        };
+        Check(commandCentre(command.mediaPrevious).target ==
+                      CommandCenterTarget::TransportPrevious &&
+                  commandCentre(command.mediaPlayPause).target ==
+                      CommandCenterTarget::TransportPlayPause &&
+                  commandCentre(command.mediaNext).target ==
+                      CommandCenterTarget::TransportNext,
+              L"the dashboard media controls are real hit targets");
+        Check(command.mediaProgress.bottom < command.mediaPlayPause.top,
+              L"the compact dashboard keeps its progress bar clear of the transport buttons");
+        Check(commandCentre(command.preferencesButton).target ==
+                  CommandCenterTarget::Preferences,
+              L"the dashboard preference caption opens settings");
+        const RoundedBox weatherCard = {
+            {0.0f, 0.0f, kSystemPanelWidthDip, kSystemPanelHeightDip},
+            kCardRadiusDip, kCardRadiusDip};
+        const WeatherCardLayout weather = WeatherCardFor(weatherCard);
+        Check(weather.hourlyCells[kWeatherHourlyColumns - 1].right <= weather.hourly.right &&
+                  weather.dailyCells[kWeatherCardDayColumns - 1].right <= weather.daily.right &&
+                  weather.metrics.left > weather.current.right,
+              L"the weather card's current, hourly and daily bands stay inside the card");
+        Check(AirQualityWord(38) && std::wcscmp(AirQualityWord(38), L"\u826F") == 0 &&
+                  AirQualityWord(-1) == nullptr,
+              L"the weather card labels a real AQI and omits one that is unavailable");
+    }
     const MusicCardLayout layout = MusicCardFor(card);
     const RectF& cardRect = card.rect;
 
@@ -3448,6 +3647,40 @@ void TestMusicCardLayout() {
                       L"a daily answer with no row is refused", dailyDetail);
             }
 
+            {
+                const char* expanded =
+                    "latitude,longitude,elevation,utc_offset_seconds,timezone,timezone_abbreviation\n"
+                    "39.9,116.4,47,28800,Asia/Shanghai,GMT+8\n"
+                    "\n"
+                    "time,temperature_2m,apparent_temperature,relative_humidity_2m,"
+                    "weather_code,surface_pressure,wind_speed_10m,precipitation\n"
+                    "2026-11-09T21:00,4.8,1.5,64,0,1026.7,6.1,0.00\n"
+                    "\n"
+                    "time,temperature_2m,weather_code,precipitation_probability\n"
+                    "2026-11-09T20:00,5.3,0,0\n"
+                    "2026-11-09T21:00,4.8,0,10\n"
+                    "2026-11-09T22:00,3.9,1,20\n"
+                    "\n"
+                    "time,weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset\n"
+                    "2026-11-09,0,9.3,-1.1,2026-11-09T06:52,2026-11-09T17:04\n"
+                    "2026-11-10,1,11.3,-0.3,2026-11-10T06:53,2026-11-10T17:03\n";
+                WeatherSnapshot snapshot;
+                const bool parsed = ParseForecastCsv(expanded, 2026, 11, 9, 21, &snapshot);
+                wchar_t detail[192] = {};
+                std::swprintf(detail, 192, L"%.1f C, h=%d d=%d first=%02d:00",
+                              snapshot.temperatureC, snapshot.hourCount, snapshot.dayCount,
+                              snapshot.hourCount ? snapshot.hours[0].hour : -1);
+                Check(parsed && snapshot.valid && snapshot.hourCount == 2 &&
+                          snapshot.dayCount == 2 && snapshot.hours[0].hour == 21 &&
+                          snapshot.days[0].temperatureMinC == -1.1 &&
+                          snapshot.sunriseMinutes == 6 * 60 + 52,
+                      L"the expanded weather CSV keeps current, future-hour and daily sections",
+                      detail);
+                Check(!ParseForecastCsv("", 2026, 11, 9, 21, &snapshot) &&
+                          !snapshot.valid,
+                      L"an empty expanded answer is refused");
+            }
+
             // The ambient kind: precipitation first, then the REAL sunset window for a clear sky.
             {
                 const int rise = 6 * 60 + 18;
@@ -3577,35 +3810,77 @@ void TestMusicCardLayout() {
                       (wide.card.bottom - wide.card.top) == (unknown.card.bottom - unknown.card.top),
                   L"every window gets a card of the same size", previewDetail);
 
-            // THE CARD IS A MARGIN AND A TITLE ROW AROUND A FIXED SLOT, and the picture is centred inside
-            // that slot. Measured against the SLOT rather than against the picture, because the picture's
-            // own margins include whatever the letterbox leaves.
+            // THE CARD IS A HEADER, MARGIN, FIXED SLOT AND FOOTER, and the picture is centred inside that
+            // slot. Measured against the SLOT rather than against the picture, because the picture's own
+            // margins include whatever the letterbox leaves.
             const LONG pad = static_cast<LONG>(kThumbnailPadDip);
-            const LONG titleDip = static_cast<LONG>(kThumbnailTitleDip);
+            const LONG headerDip = static_cast<LONG>(kThumbnailHeaderDip);
+            const LONG footerDip = static_cast<LONG>(kThumbnailFooterDip);
             const LONG leftGap = wide.picture.left - wide.card.left;
             const LONG rightGap = wide.card.right - wide.picture.right;
             // The letterbox on each side of the slot: zero when the picture fills the slot one way, and
             // LARGER than the margin when it does not -- which is why these are measured against the slot
             // rather than against the picture.
-            const LONG topLetterbox = wide.picture.top - (wide.card.top + pad + titleDip);
-            const LONG bottomLetterbox = (wide.card.bottom - pad) - wide.picture.bottom;
+            const LONG topLetterbox = wide.picture.top - wide.slot.top;
+            const LONG bottomLetterbox = wide.slot.bottom - wide.picture.bottom;
             const LONG cardWidth = wide.card.right - wide.card.left;
             const LONG cardHeight = wide.card.bottom - wide.card.top;
             const LONG expectedWidth =
                 static_cast<LONG>(kThumbnailMaxWidthDip + kThumbnailPadDip * 2.0f);
             const LONG expectedHeight = static_cast<LONG>(
-                kThumbnailMaxHeightDip + kThumbnailPadDip * 2.0f + kThumbnailTitleDip);
+                kThumbnailMaxHeightDip + kThumbnailPadDip * 2.0f + kThumbnailHeaderDip +
+                kThumbnailFooterDip);
             std::swprintf(previewDetail, 256,
-                          L"card %ldx%ld (want %ldx%ld), gaps l%ld r%ld, letterbox t%ld b%ld, margin %.0f",
+                          L"card %ldx%ld (want %ldx%ld), gaps l%ld r%ld, letterbox t%ld b%ld, "
+                          L"header %ld footer %ld",
                           cardWidth, cardHeight, expectedWidth, expectedHeight, leftGap, rightGap,
-                          topLetterbox, bottomLetterbox, kThumbnailPadDip);
+                          topLetterbox, bottomLetterbox, wide.header.bottom - wide.header.top,
+                          wide.footer.bottom - wide.footer.top);
             Check(cardWidth == expectedWidth && cardHeight == expectedHeight &&
                       leftGap >= pad && rightGap >= pad && topLetterbox >= 0 && bottomLetterbox >= 0,
-                  L"the card is a margin and a title row around a fixed slot", previewDetail);
+                  L"the card is a header, margin, fixed slot and footer", previewDetail);
+            Check(wide.header.bottom == wide.slot.top &&
+                      wide.header.bottom - wide.header.top == pad + headerDip &&
+                      wide.footer.bottom - wide.footer.top == footerDip &&
+                      wide.footer.top >= wide.slot.bottom,
+                  L"the named card bands do not overlap the thumbnail slot", previewDetail);
             Check(std::abs(leftGap - rightGap) <= 1,
                   L"the picture is centred in its slot, so its letterbox is even", previewDetail);
             Check(std::abs(topLetterbox - bottomLetterbox) <= 1,
                   L"and even top to bottom", previewDetail);
+
+            const RECT keep = ThumbnailKeepRectFor(icon, wide.card, 1.0f);
+            const POINT gapPoint = {(icon.left + icon.right) / 2,
+                                    (icon.bottom + wide.card.top) / 2};
+            const POINT cardPoint = {(wide.card.left + wide.card.right) / 2,
+                                     (wide.card.top + wide.card.bottom) / 2};
+            const POINT outsidePoint = {keep.left - 20, keep.top - 20};
+            std::swprintf(previewDetail, 256, L"keep x[%ld..%ld] y[%ld..%ld]",
+                          keep.left, keep.right, keep.top, keep.bottom);
+            Check(ThumbnailKeepContains(keep, gapPoint) &&
+                      ThumbnailKeepContains(keep, cardPoint) &&
+                      !ThumbnailKeepContains(keep, outsidePoint),
+                  L"the pointer can walk from its icon into the preview card", previewDetail);
+
+            // Scaling changes every band together. This catches a card whose body grows at 150% while its
+            // header or rounded corner silently stays at 100%, which is exactly what produces soft DPI
+            // layouts that look acceptable in one screenshot and wrong on another monitor.
+            const ThumbnailPlacement scaled = ThumbnailBoxFor(1920, 1080, icon, monitor, 1.5f);
+            std::swprintf(previewDetail, 256,
+                          L"150%% card %ldx%ld, header %ld, footer %ld, slot %ldx%ld",
+                          scaled.card.right - scaled.card.left, scaled.card.bottom - scaled.card.top,
+                          scaled.header.bottom - scaled.header.top,
+                          scaled.footer.bottom - scaled.footer.top,
+                          scaled.slot.right - scaled.slot.left,
+                          scaled.slot.bottom - scaled.slot.top);
+            Check(scaled.valid &&
+                      Nearly(static_cast<float>(scaled.card.right - scaled.card.left),
+                             (kThumbnailMaxWidthDip + kThumbnailPadDip * 2.0f) * 1.5f, 1.0f) &&
+                      Nearly(static_cast<float>(scaled.header.bottom - scaled.header.top),
+                             (kThumbnailPadDip + kThumbnailHeaderDip) * 1.5f, 1.0f) &&
+                      Nearly(static_cast<float>(scaled.footer.bottom - scaled.footer.top),
+                             kThumbnailFooterDip * 1.5f, 1.0f),
+                  L"all named bands scale together at 150 percent", previewDetail);
 
             const float iconCentre = (icon.left + icon.right) * 0.5f;
             const float cardCentre = (wide.card.left + wide.card.right) * 0.5f;
@@ -3718,7 +3993,7 @@ void TestMusicCardLayout() {
             // hold -- so the grid could overflow the card and nothing said so until a photograph did
             // ("托盘卡片里没有显示全啊").
             //
-            // The page is built around BANDS now (header, section, grid, now-playing, footer), so the
+            // The page is built around BANDS now (header, section, grid, system load, footer), so the
             // checks below are as much about each band as about the cells: a band hanging off the card and
             // a footer lying under a cell are both invisible in a corner screenshot and both arithmetic.
             {
@@ -3844,8 +4119,8 @@ void TestMusicCardLayout() {
                           L"a short tray page uses the larger reference tile", trayDetail);
                 }
 
-                // THE FOOTER: inside the card, under the now-playing well, and clear of every cell's hit
-                // rectangle -- a decorative word that swallowed a press would be worse than no word.
+                // THE FOOTER: inside the card, under the system-load well, and clear of every cell's hit
+                // rectangle.
                 {
                     const TrayPageLayout page = TrayPageFor(trayCard, 10);
                     bool clearOfCells = true;
@@ -3854,7 +4129,7 @@ void TestMusicCardLayout() {
                     }
                     const bool footerInside =
                         page.footer.bottom <= trayCard.rect.bottom - kTrayPagePadDip + 0.01f &&
-                        page.footer.top >= page.nowPlaying.bottom &&
+                        page.footer.top >= page.resources.bottom &&
                         page.footerGear.left >= page.footer.left &&
                         page.footerGear.right <= page.footer.right &&
                         page.footerGear.top >= page.footer.top &&
@@ -3875,26 +4150,30 @@ void TestMusicCardLayout() {
                     Check(clearOfCells, L"no tray cell's rectangle reaches the footer", trayDetail);
                 }
 
-                // THE NOW-PLAYING WELL: between the grid and the footer, with its own parts inside it.
+                // THE SYSTEM-LOAD WELL: between the grid and the footer, with memory and CPU readings inside it.
                 {
                     const TrayPageLayout page = TrayPageFor(trayCard, 10);
-                    const bool nowInside =
-                        page.nowPlaying.top >= page.cells[page.count - 1].bottom &&
-                        page.nowPlaying.bottom <= page.footer.top &&
-                        page.nowPlaying.left >= trayCard.rect.left &&
-                        page.nowPlaying.right <= trayCard.rect.right &&
-                        page.nowIcon.left >= page.nowPlaying.left &&
-                        page.nowIcon.right <= page.nowTitle.left &&
-                        page.nowTitle.right <= page.nowPlaying.right &&
-                        page.nowTitle.bottom <= page.nowPlaying.bottom;
+                    const bool resourcesInside =
+                        page.resources.top >= page.cells[page.count - 1].bottom &&
+                        page.resources.bottom <= page.footer.top &&
+                        page.resources.left >= trayCard.rect.left &&
+                        page.resources.right <= trayCard.rect.right &&
+                        page.memoryIcon.left >= page.resources.left &&
+                        page.memoryIcon.right <= page.memoryLabel.left &&
+                        page.memoryLabel.right <= page.memoryValue.left &&
+                        page.memoryBar.left >= page.resources.left &&
+                        page.memoryBar.right <= page.resources.right &&
+                        page.cpuIcon.right <= page.cpuLabel.left &&
+                        page.cpuLabel.right <= page.cpuValue.left &&
+                        page.cpuValue.right <= page.resources.right;
                     std::swprintf(trayDetail, 256,
-                                  L"well y [%.0f..%.0f], last cell bottom %.0f, footer top %.0f, icon "
-                                  L"%.0f..%.0f",
-                                  page.nowPlaying.top, page.nowPlaying.bottom,
-                                  page.cells[page.count - 1].bottom, page.footer.top,
-                                  page.nowIcon.left, page.nowIcon.right);
-                    Check(nowInside,
-                          L"the now-playing well is inside the card, under the grid and above the footer",
+                                  L"load well y [%.0f..%.0f], last cell bottom %.0f, memory bar "
+                                  L"x [%.0f..%.0f]",
+                                  page.resources.top, page.resources.bottom,
+                                  page.cells[page.count - 1].bottom, page.memoryBar.left,
+                                  page.memoryBar.right);
+                    Check(resourcesInside,
+                          L"memory and CPU readings fit the load well above the footer",
                           trayDetail);
                 }
 
@@ -4221,6 +4500,10 @@ void TestMusicCardLayout() {
                     NextPanelLevel(PanelLevel::Tiles, true, true, false, true, false);
                 const PanelLevel startOpen =
                     NextPanelLevel(PanelLevel::Tiles, true, true, false, false, true);
+                const PanelLevel centerOpen =
+                    NextPanelLevel(PanelLevel::Tiles, true, true, false, false, false, true, false);
+                const PanelLevel weatherOpen =
+                    NextPanelLevel(PanelLevel::Center, true, true, false, false, false, false, true);
                 const PanelLevel back =
                     NextPanelLevel(PanelLevel::Sound, true, true, false, false, false);
                 const PanelLevel trayClosing =
@@ -4241,7 +4524,8 @@ void TestMusicCardLayout() {
                               static_cast<int>(gone));
                 Check(panelOpen == PanelLevel::Tiles && trayOpen == PanelLevel::Tray &&
                           soundOpen == PanelLevel::Sound && startOpen == PanelLevel::Start &&
-                          back == PanelLevel::Tiles,
+                          centerOpen == PanelLevel::Center &&
+                          weatherOpen == PanelLevel::Weather && back == PanelLevel::Tiles,
                       L"a page that is asked for is the level the card shows", trayDetail);
                 Check(trayClosing == PanelLevel::Tray && soundClosing == PanelLevel::Sound &&
                           startClosing == PanelLevel::Start,
@@ -4310,63 +4594,55 @@ void TestMusicCardLayout() {
                       trayDetail);
             }
 
-            // THE START CARD'S OWN GEOMETRY: the search field and page row at the top, a six-column grid of
-            // 44 DIP icons, and a footer with the account picture and four direct power controls.
+            // THE START CARD'S OWN GEOMETRY: segmented launcher tabs at the top, a six-column grid of
+            // larger icon plates, and a quiet status band at the bottom. The account/power footer stays
+            // absent because that furniture lives in the right rail.
             {
-                const RoundedBox startCard =
+                RoundedBox startCard =
                     BoxForState(IslandState::Expanded, AnchorForWindow(0.0f, kPillTopMarginDip, 2560.0f));
+                const CardFaceSize startSize =
+                    CardFaceSizeFor(CardOwner::SystemPanel, PanelLevel::Start);
+                startCard.rect.right = startCard.rect.left + startSize.widthDip;
+                startCard.rect.bottom = startCard.rect.top + startSize.heightDip;
+                startCard.rect.right -= kCardRailReserveDip;
                 const StartPageLayout startLayout = StartPageFor(startCard);
                 wchar_t startDetail[384];
                 std::swprintf(startDetail, 384,
-                              L"card x[%.0f,%.0f] y[%.0f,%.0f]; search y[%.0f,%.0f]; tabs y[%.0f,%.0f]; "
-                              L"grid x[%.0f,%.0f] y[%.0f,%.0f]; footer top %.0f; power x[%.0f,%.0f]",
+                              L"card x[%.0f,%.0f] y[%.0f,%.0f]; tabs y[%.0f,%.0f]; "
+                              L"grid x[%.0f,%.0f] y[%.0f,%.0f]",
                               startCard.rect.left, startCard.rect.right, startCard.rect.top,
-                              startCard.rect.bottom, startLayout.search.top, startLayout.search.bottom,
+                              startCard.rect.bottom,
                               startLayout.tabRow.top, startLayout.tabRow.bottom, startLayout.grid.left,
-                              startLayout.grid.right, startLayout.grid.top, startLayout.grid.bottom,
-                              startLayout.footer.top, startLayout.powerButtons[3].left,
-                              startLayout.powerButtons[3].right);
+                              startLayout.grid.right, startLayout.grid.top, startLayout.grid.bottom);
                 Check(startLayout.valid, L"the Start card has a layout", startDetail);
-                // THE SEARCH FIELD: full inner width, inside the card and above the page row.
-                Check(startLayout.search.top > startCard.rect.top &&
-                          startLayout.search.bottom <= startLayout.tabRow.top &&
-                          startLayout.search.left >= startCard.rect.left &&
-                          startLayout.search.right <= startCard.rect.right,
-                      L"the search field is inside the card, above the tabs", startDetail);
-                Check(Nearly(startLayout.search.right - startLayout.search.left,
-                             (startCard.rect.right - startCard.rect.left) - 2.0f * kStartPadDip, 0.01f),
-                      L"... and it spans the card's full inner width", startDetail);
-                Check(Nearly(startLayout.search.bottom - startLayout.search.top,
-                             kStartSearchDip, 0.01f) &&
-                          Nearly(kStartSearchRadiusDip, kStartSearchDip * 0.5f, 0.01f),
-                      L"the search field is a 52 DIP command-palette capsule", startDetail);
-                Check(startLayout.searchHint.left > startLayout.searchIcon.right &&
-                          startLayout.searchHint.right <= startLayout.search.right &&
-                          startLayout.searchHint.top >= startLayout.search.top &&
-                          startLayout.searchHint.bottom <= startLayout.search.bottom,
-                      L"the editable search text sits inside its field", startDetail);
-                // THE PAGE ROW: one title at the left and one real all-applications button at the right.
-                Check(startLayout.pinnedTab.top == startLayout.tabRow.top &&
+                Check(startLayout.search.right <= startLayout.search.left &&
+                          startLayout.footer.right <= startLayout.footer.left &&
+                          startLayout.powerGroup.right <= startLayout.powerGroup.left,
+                      L"the Start card has no search field and no account/power footer", startDetail);
+                // THE PAGE ROW: two adjacent launcher tabs, with the rail still owning the right edge.
+                Check(Nearly(startLayout.tabRow.top, startCard.rect.top + kStartPadDip, 0.01f) &&
+                          startLayout.pinnedTab.top == startLayout.tabRow.top &&
                           startLayout.tabRow.bottom <= startLayout.grid.top &&
                           startLayout.pinnedTab.left == startLayout.tabRow.left &&
+                          startLayout.allAppsButton.left > startLayout.pinnedTab.right &&
                           startLayout.allAppsButton.right <= startCard.rect.right,
-                      L"固定常用 and the grid button share the row between search and grid", startDetail);
-                // THE GRID: below the tabs, above the footer, inside the card.
-                Check(startLayout.grid.bottom < startLayout.footer.top &&
-                          startLayout.footer.bottom <= startCard.rect.bottom &&
+                      L"固定常用 and 全部应用 form a tab pair clear of the rail", startDetail);
+                // THE GRID: below the tabs, and above the status rule reserved for the reference's
+                // system line.
+                Check(Nearly(startLayout.grid.bottom, startLayout.statusRule.top - 6.0f, 0.01f) &&
                           startLayout.grid.left >= startCard.rect.left &&
-                          startLayout.grid.right <= startCard.rect.right,
-                      L"the pins area sits between the tabs and the footer, inside the card", startDetail);
+                          startLayout.grid.right <= startCard.rect.right &&
+                          startLayout.status.right > startLayout.status.left,
+                      L"the apps sit above a reserved status band inside the card body", startDetail);
 
-                // THE TILE: a 44 DIP icon with its name BELOW it, both inside the cell -- which is what
-                // makes the name part of the target instead of a label in the gap under it.
+                // THE TILE: a larger icon plate with its name BELOW it, both inside the cell.
                 const RectF firstCell = StartPinCellFor(startLayout, 0);
                 const RectF firstIcon = StartPinIconFor(startLayout, 0);
                 const RectF firstLabel = StartPinLabelFor(startLayout, 0);
                 Check(Nearly(firstIcon.right - firstIcon.left, kStartAppIconDip, 0.01f) &&
                           Nearly(firstIcon.bottom - firstIcon.top, kStartAppIconDip, 0.01f) &&
-                          Nearly(kStartAppIconRadiusDip, 10.0f, 0.01f),
-                      L"the pinned icon is a 44 DIP square with a 10 DIP radius", startDetail);
+                          Nearly(kStartAppIconRadiusDip, 15.0f, 0.01f),
+                      L"the pinned icon uses the launcher's larger rounded plate", startDetail);
                 Check(firstIcon.left >= firstCell.left && firstIcon.right <= firstCell.right &&
                           firstIcon.top >= firstCell.top && firstLabel.top >= firstIcon.bottom &&
                           firstLabel.bottom <= firstCell.bottom,
@@ -4451,14 +4727,9 @@ void TestMusicCardLayout() {
                         startCard, 1, 6, 4, 0,
                         (thirdSearchRow.left + thirdSearchRow.right) * 0.5f,
                         (thirdSearchRow.top + thirdSearchRow.bottom) * 0.5f, true, kinds, 4, true);
-                    const RectF clear = startLayout.searchClear;
-                    const StartPageHit clearHit = StartPageHitFor(
-                        startCard, 1, 6, 4, 0, (clear.left + clear.right) * 0.5f,
-                        (clear.top + clear.bottom) * 0.5f, true, kinds, 4, true);
                     Check(searchHit.target == StartPageTarget::PickerRow &&
-                              searchHit.index == 2 &&
-                              clearHit.target == StartPageTarget::ClearSearch,
-                          L"search rows and the clear button answer their drawn geometry",
+                              searchHit.index == 2,
+                          L"the internal result list still answers its drawn rows",
                           startDetail);
                     const SearchResultKind fullKinds[] = {
                         SearchResultKind::Application, SearchResultKind::Application,
@@ -4473,35 +4744,17 @@ void TestMusicCardLayout() {
                           startDetail);
                 }
 
-                // THE FOOTER: the picture + name and the four-button power group, all on the lower edge.
-                bool footerInside = startLayout.footer.left >= startCard.rect.left &&
-                                    startLayout.footer.right <= startCard.rect.right &&
-                                    startLayout.footer.bottom <= startCard.rect.bottom &&
-                                    startLayout.avatar.left >= startLayout.footer.left &&
-                                    startLayout.avatar.right <= startLayout.accountName.left &&
-                                    startLayout.accountName.right <= startLayout.powerGroup.left &&
-                                    startLayout.powerGroup.right <= startLayout.footer.right;
-                bool buttonsInside = true;
+                bool footerRemoved = startLayout.footer.right <= startLayout.footer.left &&
+                                     startLayout.avatar.right <= startLayout.avatar.left &&
+                                     startLayout.accountName.right <= startLayout.accountName.left &&
+                                     startLayout.powerGroup.right <= startLayout.powerGroup.left;
                 for (int i = 0; i < kStartPowerButtons; ++i) {
                     const RectF& button = startLayout.powerButtons[i];
-                    if (button.left < startLayout.powerGroup.left ||
-                        button.right > startLayout.powerGroup.right ||
-                        button.top < startLayout.powerGroup.top ||
-                        button.bottom > startLayout.powerGroup.bottom ||
-                        !Nearly(button.right - button.left, kStartPowerDip, 0.01f)) {
-                        buttonsInside = false;
-                    }
-                    if (i > 0 && button.left < startLayout.powerButtons[i - 1].right) {
-                        buttonsInside = false;
+                    if (button.right > button.left) {
+                        footerRemoved = false;
                     }
                 }
-                Check(footerInside,
-                      L"the account picture, name and power group share the footer",
-                      startDetail);
-                Check(buttonsInside &&
-                          Nearly(startLayout.powerButtons[kStartPowerButtons - 1].right,
-                                 startLayout.footer.right - kStartPowerGroupPadDip, 0.01f),
-                      L"the power group is four direct 36 DIP controls", startDetail);
+                Check(footerRemoved, L"the account and power footer is gone", startDetail);
 
                 // THE HIT TESTS, at the points a user would press -- and, for the two decorations, at the
                 // points a user would press and get NOTHING, which is the rule for a mark that is drawn but
@@ -4514,8 +4767,6 @@ void TestMusicCardLayout() {
                 const float tabY = (startLayout.pinnedTab.top + startLayout.pinnedTab.bottom) * 0.5f;
                 const float allX =
                     (startLayout.allAppsButton.left + startLayout.allAppsButton.right) * 0.5f;
-                const float searchX = (startLayout.search.left + startLayout.search.right) * 0.5f;
-                const float searchY = (startLayout.search.top + startLayout.search.bottom) * 0.5f;
                 // A point in the band under the three rows: inside the grid, on no tile.
                 const float emptyX = (startLayout.grid.left + startLayout.grid.right) * 0.5f;
                 const float emptyY = startLayout.grid.top +
@@ -4553,23 +4804,9 @@ void TestMusicCardLayout() {
                           allTabOnPageHit.target == StartPageTarget::AllApps,
                       L"固定常用 and the grid button answer on every page", startDetail);
                 const float outsideX = startCard.rect.right + 12.0f;
-                Check(hitAt(0, 6, searchX, searchY).target == StartPageTarget::Search &&
-                          hitAt(0, 6, outsideX, searchY).target == StartPageTarget::None,
-                      L"the search field is the editable control and the card edge rejects the pointer",
-                      startDetail);
-                bool allPowerButtonsHit = true;
-                for (int i = 0; i < kStartPowerButtons; ++i) {
-                    const RectF& button = startLayout.powerButtons[i];
-                    const StartPageHit hit =
-                        hitAt(0, 6, (button.left + button.right) * 0.5f,
-                              (button.top + button.bottom) * 0.5f);
-                    if (hit.target != StartPageTarget::PowerButton || hit.index != i) {
-                        allPowerButtonsHit = false;
-                    }
-                }
-                Check(allPowerButtonsHit,
-                      L"lock, sleep, restart and shutdown each answer their own footer button",
-                      startDetail);
+                Check(hitAt(0, 6, outsideX, (startLayout.tabRow.top + startLayout.tabRow.bottom) * 0.5f)
+                              .target == StartPageTarget::None,
+                      L"the card edge still rejects the pointer", startDetail);
                 // THE ALL-APPLICATIONS GRID IS HIT-TESTED AS THE GRID IT IS DRAWN AS: a point on the first
                 // cell of the second row is list entry six, which is the arithmetic the drawing uses and the
                 // one the old list-row hit test did not.
@@ -4919,6 +5156,25 @@ void TestMusicCardLayout() {
                     if (!text || !*text || std::wcscmp(text, L"?") == 0) named = false;
                 }
                 Check(named, L"every press result can be said in words");
+
+                // THE FLASH GUARD: a cell with no learned callback must not enter the UIA fallback unless the
+                // operator explicitly opts in. A right press never enters it, and a completed press must not
+                // either.
+                const bool fallbackDecision =
+                    ShouldTryTrayUiaFallback(TrayPressResult::NoEntry, false, true) &&
+                    !ShouldTryTrayUiaFallback(TrayPressResult::NoEntry, false, false) &&
+                    !ShouldTryTrayUiaFallback(TrayPressResult::NoEntry, true, true) &&
+                    !ShouldTryTrayUiaFallback(TrayPressResult::Pressed, false, true);
+                wchar_t fallbackDetail[256] = {};
+                std::swprintf(fallbackDetail, 256,
+                              L"left+missing+enabled=%d, default=%d, right=%d, pressed=%d",
+                              ShouldTryTrayUiaFallback(TrayPressResult::NoEntry, false, true) ? 1 : 0,
+                              ShouldTryTrayUiaFallback(TrayPressResult::NoEntry, false, false) ? 1 : 0,
+                              ShouldTryTrayUiaFallback(TrayPressResult::NoEntry, true, true) ? 1 : 0,
+                              ShouldTryTrayUiaFallback(TrayPressResult::Pressed, false, true) ? 1 : 0);
+                Check(fallbackDecision,
+                      L"only an explicitly enabled left press of an unlearned cell may reveal the shell tray",
+                      fallbackDetail);
             }
         }
 
@@ -4971,9 +5227,11 @@ void TestMusicCardLayout() {
             std::swprintf(dt6, 256, L"card %.0f x %.0f DIP",
                           gridCard.rect.right - gridCard.rect.left,
                           gridCard.rect.bottom - gridCard.rect.top);
-            Check(Nearly(gridCard.rect.right - gridCard.rect.left, 480.0f, 0.01f) &&
-                      Nearly(gridCard.rect.bottom - gridCard.rect.top, 408.0f, 0.01f),
-                  L"the system tiles card is the compact 480 x 408", dt6);
+            Check(Nearly(gridCard.rect.right - gridCard.rect.left,
+                         kSystemPanelWidthDip, 0.01f) &&
+                      Nearly(gridCard.rect.bottom - gridCard.rect.top,
+                             kSystemPanelHeightDip, 0.01f),
+                  L"system settings shares the unified side-rail card size", dt6);
 
             for (int tiles = 1; tiles <= kMaxSystemTiles; ++tiles) {
                 const SystemPanelLayout grid = SystemPanelFor(gridCard, tiles, 1);
@@ -5006,20 +5264,21 @@ void TestMusicCardLayout() {
                 const float cx = (six.tiles[i].left + six.tiles[i].right) * 0.5f;
                 const float cy = (six.tiles[i].top + six.tiles[i].bottom) * 0.5f;
                 std::swprintf(dt6, 256, L"tile %d centre (%.0f,%.0f) -> %d", i, cx, cy,
-                              SystemTileAt(card, 6, cx, cy));
-                Check(SystemTileAt(card, 6, cx, cy) == i, L"a tile's centre hits that tile", dt6);
+                              SystemTileAt(gridCard, 6, cx, cy));
+                Check(SystemTileAt(gridCard, 6, cx, cy) == i,
+                      L"a tile's centre hits that tile", dt6);
             }
             // And a point on the slider row is not a tile, so the slider area is not swallowed.
             const float sliderProbeY = (six.sliders[0].top + six.sliders[0].bottom) * 0.5f;
             std::swprintf(dt6, 256, L"on the slider row -> %d",
-                          SystemTileAt(card, 6,
+                          SystemTileAt(gridCard, 6,
                                        (gridCard.rect.left + gridCard.rect.right) * 0.5f,
                                        sliderProbeY));
-            Check(SystemTileAt(card, 6, (gridCard.rect.left + gridCard.rect.right) * 0.5f,
+            Check(SystemTileAt(gridCard, 6, (gridCard.rect.left + gridCard.rect.right) * 0.5f,
                                sliderProbeY) == -1,
                   L"a point on the slider is not a tile", dt6);
 
-            // THE TILE ITSELF from the compact reference pass: 74 DIP tall, three across, with the glyph in the
+            // THE TILE ITSELF from the repitched launcher pass: 96 DIP tall, three across, with the glyph in the
             // top-left corner and the name and state stacked inside the same surface at the bottom
             // left. Asserted as numbers here because these are the values the reference was measured
             // at -- the old panel shared its height between the tiles, so neither the height nor the
@@ -5027,7 +5286,8 @@ void TestMusicCardLayout() {
             {
                 bool everyTileHeight = true;
                 for (int i = 0; i < six.tileCount; ++i) {
-                    if (!Nearly(six.tiles[i].bottom - six.tiles[i].top, 74.0f, 0.01f)) {
+                    if (!Nearly(six.tiles[i].bottom - six.tiles[i].top,
+                                kSystemTileHeightDip, 0.01f)) {
                         everyTileHeight = false;
                     }
                 }
@@ -5037,7 +5297,7 @@ void TestMusicCardLayout() {
                               six.tiles[0].bottom, six.tiles[3].top,
                               gridCard.rect.right - gridCard.rect.left,
                               gridCard.rect.bottom - gridCard.rect.top);
-                Check(everyTileHeight, L"every tile is 74 DIP tall", dt6);
+                Check(everyTileHeight, L"every tile uses the panel's full-height rhythm", dt6);
                 Check(Nearly(six.tiles[0].top, six.tiles[1].top, 0.01f) &&
                           Nearly(six.tiles[1].top, six.tiles[2].top, 0.01f) &&
                           six.tiles[0].right < six.tiles[1].left &&
@@ -5235,7 +5495,7 @@ void TestMusicCardLayout() {
                               gridCard.rect.bottom);
                 Check(two.footer.bottom <= gridCard.rect.bottom &&
                           two.footer.top >= two.sliderPanel.bottom &&
-                          Nearly(two.footer.bottom - two.footer.top, 60.0f, 0.01f),
+                          Nearly(two.footer.bottom - two.footer.top, 72.0f, 0.01f),
                       L"the footer is inside the card, under the inset panel", dt6);
                 Check(two.footerText.left >= gridCard.rect.left &&
                           two.footerText.right <= two.footerButtons[0].left &&
@@ -5251,15 +5511,15 @@ void TestMusicCardLayout() {
                           two.gearButton.right == two.footerButtons[2].right &&
                           two.gearButton.top == two.footerButtons[2].top,
                       L"the settings button is the footer's third round button", dt6);
-                Check(Nearly(two.sliderPanel.bottom - two.sliderPanel.top, 132.0f, 0.01f) &&
-                          Nearly(two.sliders[0].bottom - two.sliders[0].top, 32.0f, 0.01f) &&
-                          Nearly(two.sliderHitRows[0].bottom - two.sliderHitRows[0].top, 36.0f,
+                Check(Nearly(two.sliderPanel.bottom - two.sliderPanel.top, 164.0f, 0.01f) &&
+                          Nearly(two.sliders[0].bottom - two.sliders[0].top, 38.0f, 0.01f) &&
+                          Nearly(two.sliderHitRows[0].bottom - two.sliderHitRows[0].top, 42.0f,
                                  0.01f) &&
-                          Nearly(two.footerButtons[0].right - two.footerButtons[0].left, 32.0f,
+                          Nearly(two.footerButtons[0].right - two.footerButtons[0].left, 34.0f,
                                  0.01f) &&
                           Nearly(two.footerButtonHits[0].right - two.footerButtonHits[0].left,
-                                 40.0f, 0.01f),
-                      L"the compressed rows keep 36 DIP slider and 40 DIP button hit areas",
+                                 42.0f, 0.01f),
+                      L"the expanded rows keep 42 DIP slider and button hit areas",
                       dt6);
                 Check(two.sliderHitRows[0].top >= two.sliderLabels[0].bottom + 1.0f &&
                           two.sliderHitRows[0].bottom < two.sliderLabels[1].top - 1.0f &&

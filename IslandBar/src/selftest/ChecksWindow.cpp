@@ -1483,9 +1483,20 @@ void TestRenderer(IslandWindow& window) {
                           closing.card, closed.card);
             Check(Nearly(openingThird.card, 0.35f, 0.001f),
                   L"opening: the content waits for the shape's first third", size);
-            Check(Nearly(closing.card, 1.0f, 0.001f) && Nearly(closingThird.card, 0.35f, 0.001f) &&
-                      Nearly(closed.card, 0.35f, 0.001f),
+            Check(Nearly(closing.card, 1.0f, 0.001f) && Nearly(closingThird.card, 0.0f, 0.001f) &&
+                      Nearly(closed.card, 0.0f, 0.001f),
                   L"closing: the content is gone by the shape's first third", size);
+            const float islandAtPill = IslandLineStrengthForMorph(0.0f);
+            const float islandMidFade =
+                IslandLineStrengthForMorph(
+                    (kIslandLineMorphFadeStart + kIslandLineMorphFadeEnd) * 0.5f);
+            const float islandAtCard = IslandLineStrengthForMorph(1.0f);
+            std::swprintf(size, 128, L"island line %.2f -> %.2f -> %.2f",
+                          islandAtPill, islandMidFade, islandAtCard);
+            Check(Nearly(islandAtPill, 1.0f, 0.001f) &&
+                      islandMidFade > 0.0f && islandMidFade < 1.0f &&
+                      Nearly(islandAtCard, 0.0f, 0.001f),
+                  L"the island line cross-fades during the final part of the morph", size);
 
             // The same thing on the pixels: the two strengths really do reach two different places.
             //

@@ -115,6 +115,67 @@ bool ParseCurrentCsv(const char* csv, double* temperatureC, int* weatherCode);
 // the site's own time zone, or false (both set to -1) when there is no such line.
 bool ParseDailyCsv(const char* csv, int* sunriseMinutes, int* sunsetMinutes);
 
+// The expanded reading used by the weather card. The status line only needs a word and a
+// temperature; the card also shows current details plus the next 24 hours and 7 days.
+inline constexpr int kWeatherHourCount = 24;
+inline constexpr int kWeatherDayCount = 7;
+
+struct WeatherHour {
+    int year = 0;
+    int month = 0;
+    int day = 0;
+    int hour = 0;
+    double temperatureC = 0.0;
+    int code = -1;
+    int precipitationPercent = 0;
+};
+
+struct WeatherDay {
+    int year = 0;
+    int month = 0;
+    int day = 0;
+    double temperatureMinC = 0.0;
+    double temperatureMaxC = 0.0;
+    int code = -1;
+    int sunriseMinutes = -1;
+    int sunsetMinutes = -1;
+};
+
+inline const wchar_t* AirQualityWord(int index) {
+    if (index < 0) return nullptr;
+    if (index <= 20) return L"\u4F18";       // 优
+    if (index <= 40) return L"\u826F";       // 良
+    if (index <= 60) return L"\u4E2D\u7B49"; // 中等
+    if (index <= 80) return L"\u5DEE";       // 差
+    if (index <= 100) return L"\u5F88\u5DEE";// 很差
+    return L"\u6781\u5DEE";                  // 极差
+}
+
+struct WeatherSnapshot {
+    bool valid = false;
+    double temperatureC = 0.0;
+    double apparentTemperatureC = 0.0;
+    int code = -1;
+    int humidityPercent = 0;
+    int pressureHpa = 0;
+    int precipitationPercent = 0;
+    double windSpeedKph = 0.0;
+    double precipitationMm = 0.0;
+    int sunriseMinutes = -1;
+    int sunsetMinutes = -1;
+    int airQualityIndex = -1;
+    int hourCount = 0;
+    int dayCount = 0;
+    WeatherHour hours[kWeatherHourCount] = {};
+    WeatherDay days[kWeatherDayCount] = {};
+};
+
+// Parses Open-Meteo's multi-section CSV answer. The hourly section is selected
+// from `currentHour` onward, so the card always starts at the current hour even
+// though the service also returns the hours that have already passed today.
+bool ParseForecastCsv(const char* csv, int currentYear, int currentMonth, int currentDay,
+                      int currentHour, WeatherSnapshot* out);
+
 // The first result's coordinates out of Open-Meteo's geocoding answer.
 //
 // Scanned rather than parsed: the document is
@@ -150,6 +211,7 @@ public:
     // The sunrise/sunset are minutes since local midnight, or -1 until the daily answer arrives.
     bool Get(double* temperatureC, int* code, int* sunriseMinutes = nullptr,
              int* sunsetMinutes = nullptr) const;
+    bool Snapshot(WeatherSnapshot* out) const;
 
     // The reading as the strip prints it, e.g. "\u6674 21\u00b0". Empty when
     // nothing has been fetched yet, which is how the strip knows to show the date
@@ -191,6 +253,7 @@ private:
     int            code_ = -1;
     int            sunriseMinutes_ = -1;
     int            sunsetMinutes_ = -1;
+    WeatherSnapshot snapshot_ = {};
     wchar_t        line_[64] = {};
     volatile long  revision_ = 0;
 };

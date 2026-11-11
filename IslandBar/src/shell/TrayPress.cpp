@@ -23,15 +23,16 @@
 
 namespace island {
 
-// ISLANDBAR_NO_TRAY_UIA=1 turns the UI Automation fallback off, and that switch exists because the fallback
-// has a visible cost: making the shell's taskbar exist for the length of a press (see shell/TrayUia.h). The
-// user asked for a tray that behaves like the real one, and this is how the last few cells get there -- but a
-// flicker they cannot turn off would be worse than the coverage, so it can be turned off, and the bar's own
-// menu answers those cells again exactly as it did before.
+// THE UI AUTOMATION FALLBACK IS OPT-IN. It can reach otherwise unpressable icons, but only by making the
+// native taskbar visible for the lookup. The user's requirement is the opposite: an unlearned cell must open
+// this bar's own menu without flashing Windows' taskbar. `ISLANDBAR_TRAY_UIA=1` restores the old coverage for
+// diagnostics or a machine that accepts that flash; `ISLANDBAR_NO_TRAY_UIA=1` remains an explicit veto.
 bool TrayUiaFallbackEnabled() {
     static const bool enabled = [] {
-        wchar_t setting[8] = {};
-        return !(GetEnvironmentVariableW(L"ISLANDBAR_NO_TRAY_UIA", setting, 8) > 0 && setting[0] == L'1');
+        wchar_t off[8] = {};
+        if (GetEnvironmentVariableW(L"ISLANDBAR_NO_TRAY_UIA", off, 8) > 0 && off[0] == L'1') return false;
+        wchar_t on[8] = {};
+        return GetEnvironmentVariableW(L"ISLANDBAR_TRAY_UIA", on, 8) > 0 && on[0] == L'1';
     }();
     return enabled;
 }
@@ -338,8 +339,8 @@ bool BringApplicationForward(const WindowWatch& watch, wchar_t* out, size_t capa
 //     # exe|message|window class|uid
 //     Weixin.exe|0x8385|Qt51514WxTrayIconMessageWindowClass|0
 //
-// AN APPLICATION WITH NO ENTRY IS PRESSED THE OLD WAY (a real click), and so is one whose entry does not
-// lead to a window: the file is the switch, and deleting a line is the way back.
+// An application with no entry opens the bar's own menu. The optional UI Automation experiment can still be
+// enabled explicitly, but it is not part of the default press path.
 struct TrayCallback {
     wchar_t exe[64] = {};
     unsigned message = 0;
@@ -1256,8 +1257,8 @@ std::wstring RecordedShellTipFor(const TrayPressRequest& request) {
     return tip;
 }
 
-// Presses one icon, and there is only ONE route now: the application's own callback message, sent to its own
-// tray window (see the top of TrayPress.h, and SendTrayCallback for what the message looks like).
+// Presses one icon. The default route is the application's own callback message, sent to its own tray window
+// (see the top of TrayPress.h, and SendTrayCallback for what the message looks like).
 //
 // Everything else this function used to do -- borrow the shell's taskbar invisibly, open its overflow flyout,
 // ask for the icon's rectangle, find the automation button on it, put the pointer on it, click, put the pointer
@@ -1281,15 +1282,13 @@ TrayPressOutcome PressTrayIcon(const TrayPressRequest& request, bool rightClick)
     // honest answer is to ask the SHELL to press them, which is what the real tray does -- see shell/TrayUia.h.
     //
     // IT IS A FALLBACK, NOT THE ROAD. It costs something visible: the shell's taskbar has to exist for the
-    // length of the press, because UIA cannot see a tray that is not there. So a cell whose callback is known
-    // never comes here, a left-held verdict of "this application ignores its callback" is respected (that is a
-    // fact about the application, not about our knowledge), and the whole route can be turned off with
-    // ISLANDBAR_NO_TRAY_UIA=1 -- which is the switch to reach for if the flicker is worse than the coverage.
+    // length of the press, because UIA cannot see a tray that is not there. It is therefore disabled by
+    // default, and an unlearned cell opens this bar's own menu without ever showing the native taskbar.
     // ... AND IT IS TRIED EVEN WHEN THE VERDICT SAYS THE CALLBACK IS IGNORED, which was the first version's
     // mistake: "this application ignores its own callback" is a fact about the MESSAGE route, and this is a
     // different one -- the shell pressing the icon itself. Measured: Steam's left press has been recorded as
     // ignored for two rounds, and through UIA it answers in 453 ms.
-    if (outcome.result == TrayPressResult::NoEntry && !rightClick && TrayUiaFallbackEnabled()) {
+    if (ShouldTryTrayUiaFallback(outcome.result, rightClick, TrayUiaFallbackEnabled())) {
         // TWO NAMES, because the card's is sometimes the executable: see RecordedShellTipFor.
         const std::wstring recordedTip = RecordedShellTipFor(request);
         const TrayUiaOutcome uia =
@@ -1307,6 +1306,10 @@ TrayPressOutcome PressTrayIcon(const TrayPressRequest& request, bool rightClick)
                         request.name, uia.detail);
             std::fflush(stdout);
         }
+    } else if (outcome.result == TrayPressResult::NoEntry && !rightClick) {
+        LogAndPrint(L"  tray press: '%ls' fallback=bar-menu native-taskbar-show=0 reason=uia-disabled\n",
+                    request.name);
+        std::fflush(stdout);
     }
 
     outcome.ms = MillisSince(pressStart);

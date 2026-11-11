@@ -27,6 +27,8 @@
 
 #include <windows.h>
 
+#include <algorithm>
+
 #include "domain/CardLayout.h"   // CardControl: which control a click landed on
 #include "domain/Geometry.h"
 #include "platform/Monitor.h"
@@ -183,7 +185,8 @@ public:
                                     bool noticeStripUp = false,
                                     BarShape barShape = BarShape::Capsule,
                                     float cardHeightDip = kExpandedHeightDip,
-                                    float cardWidthDip = kExpandedWidthDip);
+                                    float cardWidthDip = kExpandedWidthDip,
+                                    float niriRightExtent = 1.0f);
 
     // Whether a call or a message is being announced. The window cannot work this out for itself: while a
     // card is open the state is Expanded, and a notice is not a state -- it is something the bar is SAYING.
@@ -196,6 +199,9 @@ public:
     // the region, the deck, the row and every hit test move together.
     void SetBarShape(BarShape shape);
     BarShape Shape() const { return shape_; }
+    void SetNiriSideHitExtent(float rightExtent) {
+        niriRightExtent_ = std::clamp(rightExtent, 0.0f, 1.0f);
+    }
 
     // Told by the frame loop, which measures it (see island::FullScreenAppInFront). The hit test is
     // answered here, so it has to be told the same thing the renderer was.
@@ -271,7 +277,7 @@ public:
     int  StartPickerScroll() const { return startPickerScroll_; }
     // The Start search uses an owned native edit window for reliable keyboard input and IME while the
     // main bar itself remains WS_EX_NOACTIVATE.
-    void BeginStartSearch();
+    void BeginStartSearch(bool inlineMode = false);
     void EndStartSearch(bool clearText, bool restoreForeground);
     void SetStartSearchText(const wchar_t* text);
     const wchar_t* StartSearchText() const { return startSearchText_; }
@@ -280,8 +286,27 @@ public:
     bool TakeStartSearchEnter();
     bool TakeStartSearchCancel();
     int  TakeStartSearchNavigation();
+    void SetNiriSearchResults(float reveal, int count, bool pending);
+    int NiriSearchResultAtScreen(POINT screenPoint) const;
+    int NiriSearchResultHovered() const { return niriSearchRowHovered_; }
+    bool NiriSearchPanelContainsScreen(POINT screenPoint) const;
+    bool NiriSearchSurfaceContainsScreen(POINT screenPoint) const;
     StartHit StartHitAtScreen(POINT screenPoint) const;
     StartHit StartHitHovered() const { return startHit_; }
+
+    void SetCommandCenterNotificationCount(int count) {
+        commandCenterNotificationCount_ = count > 0 ? count : 0;
+    }
+    void SetCommandCenterOpen(bool open) { commandCenterOpen_ = open; }
+    CommandCenterHit CommandCenterHitAtScreen(POINT screenPoint) const;
+    CardRailTarget CardRailAtScreen(POINT screenPoint) const;
+    void SetRailPowerConfirmButton(int button) { railPowerConfirmButton_ = button; }
+    bool CardRailPowerConfirmContainsScreen(POINT screenPoint) const;
+    bool TakeRailPowerConfirmCancel() {
+        const bool pending = railPowerConfirmCancel_;
+        railPowerConfirmCancel_ = false;
+        return pending;
+    }
 
     // Tells the window how many application icons are on screen.
     //
@@ -363,6 +388,13 @@ public:
     // Whether a screen point is on the toggle for the system panel.
     bool SystemButtonAtScreen(POINT screenPoint) const;
     bool SystemButtonHovered() const { return forcedDeckHover_ ? true : systemHovered_; }
+
+    enum class TopBarTarget { None, Search, Center, MusicWave };
+    // The wide resting island carries search on its left and the command
+    // centre over the clock and bell. This asks against the same resting box
+    // the renderer draws, so the click target cannot drift from the picture.
+    TopBarTarget TopBarTargetAtScreen(POINT screenPoint) const;
+    void SetNiriMusicWaveVisible(bool visible) { niriMusicWaveVisible_ = visible; }
 
     // WHICH card is on screen, named by the frame loop every frame.
     //
@@ -447,7 +479,10 @@ public:
                                float statusStripWidthDip = 0.0f, int trayIconCount = 0,
                                bool noticeStripUp = false,
                                float cardHeightDip = kExpandedHeightDip,
-                               float cardWidthDip = kExpandedWidthDip);
+                               float cardWidthDip = kExpandedWidthDip,
+                               float niriSearchResultsReveal = 0.0f,
+                               int niriSearchResultsCount = 0,
+                               bool niriSearchResultsPending = false);
 
     // The anchor the current box geometry is derived from.
     IslandAnchor CurrentAnchor() const;
@@ -531,6 +566,8 @@ public:
     // picker -- as a signed count (one notch is 1, up is positive). REPORTED rather than applied: the
     // frame loop owns page indexes and scroll offsets, and one owner is what keeps hit geometry in step.
     bool TakeCardWheel(int* notches);
+    void SetViewportWheelEnabled(bool enabled) { viewportWheelEnabled_ = enabled; }
+    bool TakeViewportWheel(int* notches, bool* withControl);
 
     // Where a press on the scrollbar's track wants the page to go: -1 for a screenful towards the top, +1
     // towards the bottom, 0 for the thumb itself (which is dragged rather than jumped).
@@ -558,6 +595,8 @@ public:
     bool PumpMessages();
 
 private:
+    void AccumulateViewportWheel(WPARAM wParam);
+
     static LRESULT CALLBACK WndProcThunk(HWND, UINT, WPARAM, LPARAM);
     LRESULT WndProc(UINT message, WPARAM wParam, LPARAM lParam);
     static LRESULT CALLBACK SearchHostProcThunk(HWND, UINT, WPARAM, LPARAM);
@@ -581,6 +620,7 @@ private:
     // The collapsed shape the bar is in (see SetBarShape). Create() lays the anchor out from it, so it has
     // to be known before the window exists; switching it later re-lays out the anchor.
     BarShape shape_ = BarShape::Capsule;
+    float niriRightExtent_ = 0.0f;
 
     bool  pointerInside_ = false;
     POINT lastPointer_{};
@@ -631,6 +671,10 @@ private:
     bool  soundPageOpen_ = false;
     // Wheel notches seen over the card, waiting to be taken by the frame loop. Positive is up.
     int   cardWheelNotches_ = 0;
+    int   viewportWheelNotches_ = 0;
+    int   viewportWheelRemainder_ = 0;
+    bool  viewportWheelEnabled_ = false;
+    bool  viewportWheelControl_ = false;
     // The wheel's raw delta that has not yet added up to a notch. A precision touchpad, and a wheel that
     // reports its motion in fractions of a notch, send deltas smaller than WHEEL_DELTA -- and an integer
     // division by WHEEL_DELTA throws every one of those away, so the list stood still under a hand that
@@ -680,11 +724,21 @@ private:
     HWND startSearchPreviousForeground_ = nullptr;
     wchar_t startSearchText_[64] = {};
     bool startSearchVisible_ = false;
+    bool startSearchInline_ = false;
+    bool startSearchForegroundHeld_ = false;
+    float niriSearchResultsReveal_ = 0.0f;
+    int niriSearchResultsCount_ = 0;
+    bool niriSearchResultsPending_ = false;
+    int niriSearchRowHovered_ = -1;
+    bool lastLeftButtonDown_ = false;
+    bool niriMusicWaveVisible_ = false;
     bool startSearchEnter_ = false;
     bool startSearchCancel_ = false;
     int startSearchNavigation_ = 0;
     unsigned long long startSearchRevision_ = 1;
     StartHit startHit_ = {};
+    int commandCenterNotificationCount_ = 0;
+    bool commandCenterOpen_ = false;
     // The last hit reported to the log, so the card's hover trace reports changes rather than every poll.
     // A separate pair from the icon row's: the two answers are about different things and one moving must
     // not silence the other.
@@ -694,6 +748,8 @@ private:
     CardOwner cardOwner_ = CardOwner::None;
     float cardWidthDip_ = kExpandedWidthDip;
     float cardHeightDip_ = kExpandedHeightDip;
+    int railPowerConfirmButton_ = -1;
+    bool railPowerConfirmCancel_ = false;
     // The last value written to the log, so the hover trace reports changes rather than every poll.
     int   lastReportedHovered_ = -2;
 

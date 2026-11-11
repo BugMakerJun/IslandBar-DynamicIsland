@@ -81,6 +81,109 @@ struct CardFaceSize {
     float heightDip = kExpandedHeightDip;
 };
 
+// The four destinations still exist as pages; the top tab strip does not.
+enum class CardTab { Dashboard = -1, DefaultApps = 0, TrayApps = 1, System = 2 };
+inline constexpr float kCardRailWidthDip = 48.0f;
+inline constexpr float kCardRailRightInsetDip = 24.0f;
+inline constexpr float kCardRailVerticalInsetDip = 16.0f;
+inline constexpr float kCardRailGapDip = 24.0f;
+inline constexpr float kCardRailReserveDip =
+    kCardRailWidthDip + kCardRailRightInsetDip + kCardRailGapDip;
+inline constexpr float kCardRailSlotDip = 32.0f;
+inline constexpr int kCardRailNavCount = 4;
+
+inline RectF CardBodyFor(const RoundedBox& card) {
+    RectF body = card.rect;
+    body.right -= kCardRailReserveDip;
+    return body;
+}
+
+enum class CardRailTarget {
+    None = 0,
+    Dashboard,
+    DefaultApps,
+    TrayApps,
+    System,
+    Settings,
+    Restart,
+    ShutDown,
+};
+
+struct CardRailLayout {
+    RectF frame;
+    RectF avatar;
+    RectF nav[kCardRailNavCount];
+    RectF settings;
+    RectF restart;
+    RectF shutdown;
+    bool valid = false;
+};
+
+inline CardRailLayout CardRailFor(const RoundedBox& card) {
+    CardRailLayout layout;
+    if (card.rect.right - card.rect.left < 320.0f ||
+        card.rect.bottom - card.rect.top < 260.0f) {
+        return layout;
+    }
+    layout.frame = {card.rect.right - kCardRailRightInsetDip - kCardRailWidthDip,
+                    card.rect.top + kCardRailVerticalInsetDip,
+                    card.rect.right - kCardRailRightInsetDip,
+                    card.rect.bottom - kCardRailVerticalInsetDip};
+    const float centreX = (layout.frame.left + layout.frame.right) * 0.5f;
+    layout.avatar = {centreX - 18.0f, layout.frame.top + 8.0f,
+                     centreX + 18.0f, layout.frame.top + 44.0f};
+
+    constexpr float gap = 6.0f;
+    constexpr float dockTopOffset = 128.0f;
+    for (int i = 0; i < kCardRailNavCount; ++i) {
+        const float top = layout.frame.top + dockTopOffset +
+                          static_cast<float>(i) * (kCardRailSlotDip + gap);
+        layout.nav[i] = {centreX - kCardRailSlotDip * 0.5f, top,
+                         centreX + kCardRailSlotDip * 0.5f,
+                         top + kCardRailSlotDip};
+    }
+
+    const float shutdownTop = layout.frame.bottom - 8.0f - kCardRailSlotDip;
+    const float restartTop = shutdownTop - gap - kCardRailSlotDip;
+    const float settingsTop = restartTop - gap - kCardRailSlotDip;
+    layout.settings = {centreX - kCardRailSlotDip * 0.5f, settingsTop,
+                       centreX + kCardRailSlotDip * 0.5f, settingsTop + kCardRailSlotDip};
+    layout.restart = {centreX - kCardRailSlotDip * 0.5f, restartTop,
+                      centreX + kCardRailSlotDip * 0.5f, restartTop + kCardRailSlotDip};
+    layout.shutdown = {centreX - kCardRailSlotDip * 0.5f, shutdownTop,
+                       centreX + kCardRailSlotDip * 0.5f, shutdownTop + kCardRailSlotDip};
+    layout.valid = true;
+    return layout;
+}
+
+inline RectF CardRailPowerConfirmFor(const CardRailLayout& layout) {
+    return {layout.frame.left + 4.0f, layout.settings.top - 2.0f,
+            layout.frame.right - 4.0f, layout.shutdown.bottom + 2.0f};
+}
+
+inline CardRailTarget CardRailTargetAt(const RoundedBox& card, float x, float y,
+                                       int powerConfirmButton = -1) {
+    const CardRailLayout layout = CardRailFor(card);
+    if (!layout.valid) return CardRailTarget::None;
+    const auto inside = [x, y](const RectF& rect) {
+        return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+    };
+    if ((powerConfirmButton == 2 || powerConfirmButton == 3) &&
+        inside(CardRailPowerConfirmFor(layout))) {
+        return powerConfirmButton == 2 ? CardRailTarget::Restart : CardRailTarget::ShutDown;
+    }
+    static constexpr CardRailTarget targets[kCardRailNavCount] = {
+        CardRailTarget::Dashboard, CardRailTarget::DefaultApps, CardRailTarget::TrayApps,
+        CardRailTarget::System};
+    for (int i = 0; i < kCardRailNavCount; ++i) {
+        if (inside(layout.nav[i])) return targets[i];
+    }
+    if (inside(layout.settings)) return CardRailTarget::Settings;
+    if (inside(layout.restart)) return CardRailTarget::Restart;
+    if (inside(layout.shutdown)) return CardRailTarget::ShutDown;
+    return CardRailTarget::None;
+}
+
 // --- the tray page: the applications' tray icons, inside the panel's own card ------------------
 //
 // A PAGE of the panel rather than a fourth card, for the same reason the 声音输出 page is one: it is the
@@ -101,8 +204,8 @@ struct CardFaceSize {
 //     section row (one dim word)                                             18
 //     gap to the grid                                                        10
 //     grid band (flexible, centred)                                         268
-//     gap to the now-playing well                                            12
-//     now-playing well (26 DIP mark, two lines, inset surface)               52
+//     gap to the system-load well                                            12
+//     resource well (memory bar + CPU reading, inset surface)                52
 //     gap to the footer                                                      12
 //     footer (one 168 x 36 task-manager pill at the right)                   48
 //     padding bottom                                                         18
@@ -132,7 +235,7 @@ inline constexpr float kTrayPageCellGapDip     = 12.0f;
 // rows -- still clears the pressable floor.
 inline constexpr float kTrayPageMinCellDip     = 38.0f;
 inline constexpr float kTrayPageMaxCellDip     = 76.0f;
-inline constexpr float kTrayPageNowDip         = 52.0f;
+inline constexpr float kTrayPageResourceDip    = 52.0f;
 inline constexpr float kTrayPageGapDip         = 12.0f;
 inline constexpr float kTrayPageFooterDip      = 48.0f;
 inline constexpr float kTrayPageButtonDip      = 34.0f;
@@ -140,7 +243,6 @@ inline constexpr float kTrayPageChipHeightDip  = 22.0f;
 inline constexpr float kTrayPageChipWidthDip   = 96.0f;
 // The header's status dot.
 inline constexpr float kTrayPageDotDip         = 8.0f;
-inline constexpr float kTrayPageNowIconDip     = 26.0f;
 // The width reserved for the page's title, between the status dot and the count chip. The caption is the
 // caller's ("系统后台托盘": six 13 DIP characters, so 78 DIP of ink), and the chip stands 12 DIP after the
 // reserved width -- the 6 DIP of air is what keeps the LAST glyph out of the chip if the text face's
@@ -160,11 +262,15 @@ struct TrayPageLayout {
     RectF sectionLabel;   // 驻留托盘应用
     // The grid.
     RectF cells[kMaxTrayIcons];
-    // The now-playing row's inset well, and the parts of the row: its mark, the state word and the track.
-    RectF nowPlaying;
-    RectF nowIcon;
-    RectF nowLabel;
-    RectF nowTitle;
+    // The live system-load well: memory usage with its bar, then CPU usage.
+    RectF resources;
+    RectF memoryIcon;
+    RectF memoryLabel;
+    RectF memoryValue;
+    RectF memoryBar;
+    RectF cpuIcon;
+    RectF cpuLabel;
+    RectF cpuValue;
     // The footer: the hairline at its top edge and the one real Task Manager button.
     RectF footer;
     RectF footerTaskManager;
@@ -239,24 +345,39 @@ inline TrayPageLayout TrayPageFor(const RoundedBox& card, int iconCount) {
     layout.footerTaskManagerLabel.top = layout.footerTaskManager.top;
     layout.footerTaskManagerLabel.bottom = layout.footerTaskManager.bottom;
 
-    // --- the now-playing well, directly above the footer ---------------------------------------
-    layout.nowPlaying.left = left;
-    layout.nowPlaying.right = right;
-    layout.nowPlaying.bottom = layout.footer.top - kTrayPageGapDip;
-    layout.nowPlaying.top = layout.nowPlaying.bottom - kTrayPageNowDip;
-    const float nowCentre = (layout.nowPlaying.top + layout.nowPlaying.bottom) * 0.5f;
-    layout.nowIcon.left = left + 14.0f;
-    layout.nowIcon.right = layout.nowIcon.left + kTrayPageNowIconDip;
-    layout.nowIcon.top = nowCentre - kTrayPageNowIconDip * 0.5f;
-    layout.nowIcon.bottom = layout.nowIcon.top + kTrayPageNowIconDip;
-    layout.nowLabel.left = layout.nowIcon.right + 12.0f;
-    layout.nowLabel.right = layout.nowPlaying.right - 16.0f;
-    layout.nowLabel.top = layout.nowPlaying.top + 9.0f;
-    layout.nowLabel.bottom = layout.nowLabel.top + 18.0f;
-    layout.nowTitle.left = layout.nowLabel.left;
-    layout.nowTitle.top = layout.nowLabel.bottom;
-    layout.nowTitle.bottom = layout.nowPlaying.bottom - 9.0f;
-    layout.nowTitle.right = layout.nowPlaying.right - 16.0f;
+    // --- the live system-load well, directly above the footer -------------------------------------
+    layout.resources.left = left;
+    layout.resources.right = right;
+    layout.resources.bottom = layout.footer.top - kTrayPageGapDip;
+    layout.resources.top = layout.resources.bottom - kTrayPageResourceDip;
+    layout.memoryIcon.left = left + 16.0f;
+    layout.memoryIcon.right = layout.memoryIcon.left + 16.0f;
+    layout.memoryIcon.top = layout.resources.top + 5.0f;
+    layout.memoryIcon.bottom = layout.memoryIcon.top + 16.0f;
+    layout.memoryLabel.left = layout.memoryIcon.right + 8.0f;
+    layout.memoryLabel.right = left + 180.0f;
+    layout.memoryLabel.top = layout.resources.top + 4.0f;
+    layout.memoryLabel.bottom = layout.memoryLabel.top + 20.0f;
+    layout.memoryValue.left = right - 260.0f;
+    layout.memoryValue.right = right - 16.0f;
+    layout.memoryValue.top = layout.memoryLabel.top;
+    layout.memoryValue.bottom = layout.memoryLabel.bottom;
+    layout.memoryBar.left = left + 16.0f;
+    layout.memoryBar.right = right - 16.0f;
+    layout.memoryBar.top = layout.resources.top + 27.0f;
+    layout.memoryBar.bottom = layout.memoryBar.top + 4.0f;
+    layout.cpuIcon.left = left + 16.0f;
+    layout.cpuIcon.right = layout.cpuIcon.left + 16.0f;
+    layout.cpuIcon.top = layout.resources.top + 33.0f;
+    layout.cpuIcon.bottom = layout.cpuIcon.top + 16.0f;
+    layout.cpuLabel.left = layout.cpuIcon.right + 8.0f;
+    layout.cpuLabel.right = left + 240.0f;
+    layout.cpuLabel.top = layout.resources.top + 32.0f;
+    layout.cpuLabel.bottom = layout.resources.bottom - 3.0f;
+    layout.cpuValue.left = right - 180.0f;
+    layout.cpuValue.right = right - 16.0f;
+    layout.cpuValue.top = layout.cpuLabel.top;
+    layout.cpuValue.bottom = layout.cpuLabel.bottom;
 
     if (iconCount == 0) return layout;
 
@@ -265,7 +386,7 @@ inline TrayPageLayout TrayPageFor(const RoundedBox& card, int iconCount) {
     layout.columns = columns;
     const int rows = (iconCount + columns - 1) / columns;
     const float bandTop = layout.section.bottom + kTrayPageSectionGapDip;
-    const float bandBottom = layout.nowPlaying.top - kTrayPageGapDip;
+    const float bandBottom = layout.resources.top - kTrayPageGapDip;
     float band = bandBottom - bandTop;
     if (band < 0.0f) band = 0.0f;
     const float availableWidth = right - left;
@@ -718,16 +839,16 @@ inline float CardLeftFor(float anchorLeftDip, float cardWidthDip, float windowWi
 // NextCardOwner. Every row of that table is asserted in Diagnostics.
 // `Start` is the fourth level: the user's own Start card (see StartPageFor). The bar's own settings
 // moved to a separate activating window on 2026-11-08.
-enum class PanelLevel { Tiles, Sound, Tray, Start };
+enum class PanelLevel { Tiles, Sound, Tray, Start, Center, Weather };
 
-// A card's visible face can differ by owner AND level while the state and animation remain shared.
-// Start and tray are levels of the SystemPanel owner, so owner alone cannot distinguish the compact
-// system-tiles page from the wider pages it shares its lifecycle with.
-inline CardFaceSize CardFaceSizeFor(CardOwner owner, PanelLevel level) {
+// A card's visible face can differ by owner while the state and animation remain shared. Every
+// SystemPanel level is deliberately the same size: the right rail switches pages inside one card,
+// not between differently sized flyouts.
+inline CardFaceSize CardFaceSizeFor(CardOwner owner, PanelLevel) {
     CardFaceSize size;
     if (owner == CardOwner::Music) {
         size.heightDip = kMusicCardHeightDip;
-    } else if (owner == CardOwner::SystemPanel && level == PanelLevel::Tiles) {
+    } else if (owner == CardOwner::SystemPanel) {
         size.widthDip = kSystemPanelWidthDip;
         size.heightDip = kSystemPanelHeightDip;
     }
@@ -743,9 +864,12 @@ inline float CardFaceHeightFor(CardOwner owner, PanelLevel level = PanelLevel::T
 }
 
 inline PanelLevel NextPanelLevel(PanelLevel held, bool cardUp, bool panelWanted, bool trayWanted,
-                                 bool soundWanted, bool startWanted) {
+                                 bool soundWanted, bool startWanted, bool centerWanted = false,
+                                 bool weatherWanted = false) {
     if (!cardUp) return PanelLevel::Tiles;
     if (!panelWanted) return held;   // put away: the card keeps its level while it leaves the screen
+    if (weatherWanted) return PanelLevel::Weather;
+    if (centerWanted) return PanelLevel::Center;
     if (trayWanted) return PanelLevel::Tray;
     if (soundWanted) return PanelLevel::Sound;
     if (startWanted) return PanelLevel::Start;
@@ -796,6 +920,14 @@ inline bool SystemButtonShowsOpen(PanelLevel level) {
 inline bool TrayButtonShowsOpen(PanelLevel level) { return level == PanelLevel::Tray; }
 
 inline bool StartButtonShowsOpen(PanelLevel level) { return level == PanelLevel::Start; }
+
+// The command centre and the weather detail are opened from the island's
+// clock/notification surface rather than from one of the three deck controls.
+// Keeping them as panel levels gives them the existing card lifecycle and
+// outside-click dismissal without introducing a second card system.
+inline bool CenterButtonShowsOpen(PanelLevel level) {
+    return level == PanelLevel::Center || level == PanelLevel::Weather;
+}
 
 // ... AND NONE OF THEM WHEN NO CARD IS UP.
 //
@@ -853,9 +985,10 @@ inline ControlLit ControlLitFor(PanelLevel level, bool panelCardUp) {
 //                                                                        500 (with room for the picker)
 inline constexpr int   kStartColumns    = 6;
 inline constexpr int   kStartRows       = 3;
-// The card's own padding: the shared card's 18, so this page's content sits on the same margins as the
-// system panel's tiles and the tray page's grid.
-inline constexpr float kStartPadDip     = 20.0f;
+// The launcher uses the reference's calmer, larger rhythm: more outer air, a wider icon plate and
+// enough separation between tiles that the grid reads as a deliberate collection rather than a
+// dashboard packed into the top-left corner.
+inline constexpr float kStartPadDip     = 28.0f;
 // The search field is the command-palette silhouette: darker than the card, a fine neutral edge, a
 // cyan optical mark at the left, and enough height for the placeholder to breathe.
 inline constexpr float kStartSearchDip       = 52.0f;
@@ -865,25 +998,27 @@ inline constexpr float kStartSearchIconDip   = 20.0f;
 // captions' own ink plus that padding, written down because this function is pure and cannot measure.
 // The middle two are reference-only categories in this round: they are drawn and deliberately answer no
 // target.
-inline constexpr float kStartTabHeightDip        = 28.0f;
-inline constexpr float kStartTabsGapDip          = 12.0f;   // search field -> page row
-inline constexpr float kStartGridGapDip          = 16.0f;   // page row -> the grid's first icon
-inline constexpr float kStartPinnedTabWidthDip   = 88.0f;   // 固定常用
-inline constexpr float kStartAllAppsButtonDip    = 34.0f;   // the tab row's only right-hand button
-// The grid: six columns of a 44 DIP icon with its name under it, compacted for the 520 DIP card.
+inline constexpr float kStartTabHeightDip        = 32.0f;
+inline constexpr float kStartTabsGapDip          = 10.0f;
+inline constexpr float kStartGridGapDip          = 28.0f;   // page row -> the grid's first icon
+inline constexpr float kStartPinnedTabWidthDip   = 132.0f;  // 固定常用 + its count
+inline constexpr float kStartAllAppsButtonDip    = 118.0f;  // 全部应用 + its count
+// The grid: six columns of a 54 DIP icon with its name under it. The wider cell and row pitch fill the
+// card horizontally and leave the bottom band for the reference-style system status line.
 //
 // The CELL is the whole thing -- icon and caption -- because a tile is one target: the icon and the name
 // below it are pressed together, and the name has to be INSIDE the cell or the rows would be hit-tested
 // against the gaps as well. The two gaps are separate because the reference's are: the columns are
 // separated by 8 and the rows by 8, which keeps a 72 DIP cell with a 44 DIP icon from reading as
 // a stamp sheet.
-inline constexpr float kStartCellWidth         = 72.0f;
-inline constexpr float kStartCellHeight        = 72.0f;
-inline constexpr float kStartColumnGap         = 8.0f;
-inline constexpr float kStartRowGap            = 8.0f;
-inline constexpr float kStartAppIconDip        = 44.0f;
-inline constexpr float kStartAppIconRadiusDip  = 10.0f;
-inline constexpr float kStartLabelGapDip       = 3.0f;
+inline constexpr float kStartCellWidth         = 96.0f;
+inline constexpr float kStartCellHeight        = 116.0f;
+inline constexpr float kStartColumnGap         = 24.0f;
+inline constexpr float kStartRowGap            = 19.0f;
+inline constexpr float kStartAppIconDip        = 58.0f;
+inline constexpr float kStartAppIconRadiusDip  = 15.0f;
+inline constexpr float kStartLabelGapDip       = 8.0f;
+inline constexpr float kStartStatusHeightDip   = 24.0f;
 // The footer. Its band is compact at 48 DIP, and the power group is the reference's pill of four 36 DIP
 // round buttons -- the size the panel's footer buttons use, so the two cards' bottoms read as the same
 // furniture. Only the fourth button answers (see StartPageHitFor); the lock, the moon and the restart are
@@ -907,6 +1042,9 @@ struct StartPageLayout {
     RectF allAppsButton;
     // Where the pins, the add tile and the all-applications grid live.
     RectF grid;
+    // The quiet status band under the grid and its separator rule.
+    RectF status;
+    RectF statusRule;
     // The footer: the account picture, the name's box, and the four-button power group.
     RectF footer;
     RectF avatar;
@@ -929,98 +1067,48 @@ inline StartPageLayout StartPageFor(const RoundedBox& card) {
         kStartColumns * kStartCellWidth + (kStartColumns - 1) * kStartColumnGap;
     const float gridHeight =
         kStartRows * kStartCellHeight + (kStartRows - 1) * kStartRowGap;
-    const float fixedHeight = pad * 2.0f + kStartSearchDip + kStartTabsGapDip + kStartTabHeightDip +
-                              kStartGridGapDip + gridHeight + 16.0f + kStartFooterDip;
+    const float statusBlock = kStartStatusHeightDip + 2.0f;
+    const float fixedHeight =
+        pad * 2.0f + kStartTabHeightDip + kStartGridGapDip + gridHeight + statusBlock;
     if (cardWidth < pad * 2.0f + gridWidth || cardHeight < fixedHeight) {
         return layout;
     }
 
     const float left = card.rect.left + pad;
+    // Callers pass the page BODY (CardBodyFor/PageBodyFor), so the rail is already outside this rectangle.
     const float right = card.rect.right - pad;
 
-    // --- the search field -------------------------------------------------------------------------
-    layout.search.left = left;
-    layout.search.right = right;
-    layout.search.top = card.rect.top + pad;
-    layout.search.bottom = layout.search.top + kStartSearchDip;
-    const float searchCentreY = (layout.search.top + layout.search.bottom) * 0.5f;
-    layout.searchIcon.left = layout.search.left + 18.0f;
-    layout.searchIcon.top = searchCentreY - kStartSearchIconDip * 0.5f;
-    layout.searchIcon.right = layout.searchIcon.left + kStartSearchIconDip;
-    layout.searchIcon.bottom = layout.searchIcon.top + kStartSearchIconDip;
-    layout.searchClear.right = layout.search.right - 10.0f;
-    layout.searchClear.left = layout.searchClear.right - 30.0f;
-    layout.searchClear.top = searchCentreY - 15.0f;
-    layout.searchClear.bottom = layout.searchClear.top + 30.0f;
-    layout.searchHint.left = layout.searchIcon.right + 14.0f;
-    layout.searchHint.right = layout.searchClear.left - 10.0f;
-    layout.searchHint.top = layout.search.top;
-    layout.searchHint.bottom = layout.search.bottom;
-
-    // --- the page row, under it --------------------------------------------------------------------
+    // --- the page row, pinned to the card's top edge -----------------------------------------------
     //
     // The card has one page title and one way to the full application grid. The old category tabs were
     // labels without behaviour, and the all-applications text tab duplicated the grid button.
     layout.tabRow.left = left;
     layout.tabRow.right = right;
-    layout.tabRow.top = layout.search.bottom + kStartTabsGapDip;
+    layout.tabRow.top = card.rect.top + pad;
     layout.tabRow.bottom = layout.tabRow.top + kStartTabHeightDip;
 
     layout.pinnedTab.left = layout.tabRow.left;
     layout.pinnedTab.right = layout.pinnedTab.left + kStartPinnedTabWidthDip;
     layout.pinnedTab.top = layout.tabRow.top;
     layout.pinnedTab.bottom = layout.tabRow.bottom;
-    layout.allAppsButton.right = layout.tabRow.right;
-    layout.allAppsButton.left = layout.allAppsButton.right - kStartAllAppsButtonDip;
-    layout.allAppsButton.top = layout.tabRow.top - 3.0f;
-    layout.allAppsButton.bottom = layout.tabRow.bottom + 3.0f;
+    layout.allAppsButton.left = layout.pinnedTab.right + kStartTabsGapDip;
+    layout.allAppsButton.right = layout.allAppsButton.left + kStartAllAppsButtonDip;
+    layout.allAppsButton.top = layout.tabRow.top;
+    layout.allAppsButton.bottom = layout.tabRow.bottom;
 
-    // --- the footer, pinned to the card's lower edge ----------------------------------------------
-    layout.footer.left = left;
-    layout.footer.right = right;
-    layout.footer.bottom = card.rect.bottom - pad;
-    layout.footer.top = layout.footer.bottom - kStartFooterDip;
-    const float footerCentreY = (layout.footer.top + layout.footer.bottom) * 0.5f;
-
-    layout.avatar.left = layout.footer.left;
-    layout.avatar.top = footerCentreY - kStartAvatarDip * 0.5f;
-    layout.avatar.right = layout.avatar.left + kStartAvatarDip;
-    layout.avatar.bottom = layout.avatar.top + kStartAvatarDip;
-
-    // The power group: four round buttons in a pill, against the card's right edge. The pad and the gap
-    // are the reference's p-1 / gap-1, so the buttons stand 4 DIP apart inside a 4 DIP rim.
-    const float groupWidth = kStartPowerButtons * kStartPowerDip +
-                             (kStartPowerButtons - 1) * kStartPowerGroupGapDip +
-                             kStartPowerGroupPadDip * 2.0f;
-    layout.powerGroup.right = layout.footer.right;
-    layout.powerGroup.left = layout.powerGroup.right - groupWidth;
-    layout.powerGroup.top =
-        footerCentreY - (kStartPowerDip + kStartPowerGroupPadDip * 2.0f) * 0.5f;
-    layout.powerGroup.bottom =
-        layout.powerGroup.top + kStartPowerDip + kStartPowerGroupPadDip * 2.0f;
-    for (int i = 0; i < kStartPowerButtons; ++i) {
-        RectF& button = layout.powerButtons[i];
-        button.left = layout.powerGroup.left + kStartPowerGroupPadDip +
-                      static_cast<float>(i) * (kStartPowerDip + kStartPowerGroupGapDip);
-        button.top = footerCentreY - kStartPowerDip * 0.5f;
-        button.right = button.left + kStartPowerDip;
-        button.bottom = button.top + kStartPowerDip;
-    }
-    // The account name uses everything between the picture and the power group.
-    layout.accountName.left = layout.avatar.right + 10.0f;
-    layout.accountName.right = layout.powerGroup.left - 16.0f;
-    layout.accountName.top = layout.footer.top;
-    layout.accountName.bottom = layout.footer.bottom;
-
-    // --- the grid, between the tab row and the footer ---------------------------------------------
-    // The columns are spread across the card's full inner width, centred: the cell size is fixed and the
-    // leftover is split, the same rule the tray page's cells follow.
-    layout.grid.left = card.rect.left + (cardWidth - gridWidth) * 0.5f;
-    layout.grid.right = layout.grid.left + gridWidth;
+    // --- the grid, between the page row and the lower padding -------------------------------------
+    // Sit the collection toward the rail rather than centring it in the body. The launcher reads as one
+    // block beside the navigation column; centring it left an obvious empty lane on the right while the
+    // first tile crowded the card's left edge.
+    layout.grid.right = right + 20.0f;
+    layout.grid.left = layout.grid.right - gridWidth;
     layout.grid.top = layout.tabRow.bottom + kStartGridGapDip;
-    // The band the picker scrolls in ends a gap above the footer. The pins themselves are only three rows
-    // tall and stand at the band's top; the room under them is what the picker uses.
-    layout.grid.bottom = layout.footer.top - 16.0f;
+    layout.status.bottom = card.rect.bottom - pad;
+    layout.status.top = layout.status.bottom - kStartStatusHeightDip;
+    layout.status.left = left;
+    layout.status.right = right;
+    layout.statusRule = {left, layout.status.top - 7.0f, right, layout.status.top - 6.0f};
+    layout.grid.bottom = layout.statusRule.top - 6.0f;
     if (layout.grid.bottom < layout.grid.top + gridHeight) {
         return StartPageLayout{};
     }
@@ -1344,8 +1432,8 @@ inline StartPageHit StartPageHitFor(const RoundedBox& card, int page, int pinCou
 // Like the music card, this is one CARD -- same state, same shape, same radius -- because it is the
 // same kind of thing: something that opens downward from the bar to show more than the bar has room
 // for. The compact card is 520 x 500 (Motion.h), and the bands below add up to 500.
-inline constexpr float kSystemTileHeightDip = 74.0f;
-inline constexpr float kSystemTileGapDip = 8.0f;
+inline constexpr float kSystemTileHeightDip = 96.0f;
+inline constexpr float kSystemTileGapDip = 12.0f;
 
 inline constexpr int kSystemTileColumns = 3;
 inline constexpr int kSystemTileRows = 2;
@@ -1368,7 +1456,7 @@ struct SystemPanelLayout {
     RectF sliderLabels[2];
     RectF sliderValues[2];
     RectF sliders[2];
-    // The visible row is 32 DIP high, but the mouse gets a 36 DIP target centred on it. Keeping the two
+    // The visible row is 38 DIP high, but the mouse gets a 42 DIP target centred on it. Keeping the two
     // separate preserves the larger hit target without making the compressed panel look taller.
     RectF sliderHitRows[2];
     // The complete tile band, including its gaps. The wheel uses this rectangle rather than each tile,
@@ -1387,7 +1475,7 @@ struct SystemPanelLayout {
     RectF footerSubText;
     RectF footerBattery;
     RectF footerButtons[3];
-    // The visible circles are 32 DIP while their hit regions stay 40 DIP.
+    // The visible circles are 34 DIP while their hit regions stay 42 DIP.
     RectF footerButtonHits[3];
     RectF gearButton;
     // The paging column, on the grid's right: the dots and the two arrows that page the tiles, as the shell's
@@ -1408,21 +1496,21 @@ struct SystemPanelLayout {
 // grid and the inset slider surface are one group above it -- so the grid starts at the card's top,
 // the panel sits directly under it, and only the footer answers to the card's bottom edge.
 //
-// The arithmetic is the whole of the compact card's 408 DIP, and it is written down here so a moved number
+// The arithmetic fills the unified 540 DIP card, and it is written down here so a moved number
 // cannot leave a band hanging off the edge:
 //
-//     padding top                                    18
-//     2 rows of 74 tiles + one 8 gap                156
-//     gap to the inset panel                          12
-//     inset: 8 pad + 54 row + 8 gap + 54 row + 8    132
+//     padding top                                    24
+//     2 rows of 96 tiles + one 12 gap               204
+//     gap to the inset panel                          40
+//     inset with two 64 DIP rows + 10 gap           164
 //     gap to the footer                               12
-//     footer (three 32 DIP buttons, inset plate)       60
-//     padding bottom                                  18
+//     footer (three buttons, inset plate)             72
+//     padding bottom                                  24
 //                                                   ----
-//                                                   408
+//                                                   540
 //
-// A row inside the inset panel is an 18 DIP header (glyph, name, reading) and a 32 DIP track row. The
-// visible 6 DIP track is centred in it; the hit rectangle grows to 36 DIP by extending two DIP each way.
+// A row inside the inset panel is a 20 DIP header (glyph, name, reading) and a 38 DIP track row. The
+// visible 6 DIP track is centred in it; the hit rectangle grows to 42 DIP by extending two DIP each way.
 inline SystemPanelLayout SystemPanelFor(const RoundedBox& box, int tileCount, int sliderCount,
                                         bool paging = false, int pageIndex = 0, int pageCount = 1) {
     SystemPanelLayout layout;
@@ -1434,7 +1522,7 @@ inline SystemPanelLayout SystemPanelFor(const RoundedBox& box, int tileCount, in
     layout.tileCount = tileCount;
     layout.sliderCount = sliderCount;
 
-    const float pad = 18.0f;
+    const float pad = 24.0f;
     const float left = box.rect.left + pad;
     const float right = box.rect.right - pad;
 
@@ -1445,12 +1533,12 @@ inline SystemPanelLayout SystemPanelFor(const RoundedBox& box, int tileCount, in
     const float gridRight = right;
     const float innerWidth = gridRight - left;
 
-    // THE FOOTER, pinned to the card's bottom edge: the battery plate at the left and three 32 DIP
+    // THE FOOTER, pinned to the card's bottom edge: the battery plate at the left and three 34 DIP
     // round buttons at the right. Their hit regions are wider than their visible circles.
-    const float footerButton = 32.0f;
-    const float footerButtonHit = 40.0f;
-    const float footerGap = 8.0f;
-    const float footerHeight = 60.0f;
+    const float footerButton = 34.0f;
+    const float footerButtonHit = 42.0f;
+    const float footerGap = 10.0f;
+    const float footerHeight = 72.0f;
     layout.footer.left = left;
     layout.footer.right = right;
     layout.footer.bottom = box.rect.bottom - pad;
@@ -1485,7 +1573,7 @@ inline SystemPanelLayout SystemPanelFor(const RoundedBox& box, int tileCount, in
     layout.footerSubText.top = footerCentreY + 2.0f;
     layout.footerSubText.bottom = footerCentreY + 20.0f;
 
-    // THE TILE GRID, from the card's top: two rows of 74 DIP tiles, with the name and the state INSIDE
+    // THE TILE GRID, from the card's top: two rows of 96 DIP tiles, with the name and the state INSIDE
     // each tile. The grid stops short of the paging column when there is one.
     const int rows = (tileCount + kSystemTileColumns - 1) / kSystemTileColumns;
     const float gridTop = box.rect.top + pad;
@@ -1535,13 +1623,13 @@ inline SystemPanelLayout SystemPanelFor(const RoundedBox& box, int tileCount, in
 
     // THE INSET PANEL, directly under the grid: its own rounded surface, holding the volume row and the
     // brightness row when the display answers for one.
-    const float headerHeight = 18.0f;
-    const float headerGap = 4.0f;
-    const float trackRowHeight = 32.0f;
-    const float rowGap = 8.0f;
-    const float panelInset = 20.0f;
+    const float headerHeight = 20.0f;
+    const float headerGap = 6.0f;
+    const float trackRowHeight = 38.0f;
+    const float rowGap = 10.0f;
+    const float panelInset = 24.0f;
     const float rowHeight = headerHeight + headerGap + trackRowHeight;
-    constexpr float kSliderPanelHeight = 132.0f;
+    constexpr float kSliderPanelHeight = 164.0f;
     if (sliderCount > 0) {
         layout.sliderPanel.left = left;
         layout.sliderPanel.right = right;
@@ -1706,7 +1794,7 @@ inline SystemPanelHit SystemPanelHitFor(const RoundedBox& card, int tileCount, i
         return hit;
     }
     for (int i = 0; i < layout.sliderCount; ++i) {
-        // The track row is 32 DIP high; the hit row extends two DIP beyond it without reaching the header
+        // The track row is 38 DIP high; the hit row extends two DIP beyond it without reaching the header
         // or the neighbouring row. Fraction still comes from the visible track.
         const RectF& track = layout.sliders[i];
         const RectF& hitRow = layout.sliderHitRows[i];
@@ -2211,6 +2299,352 @@ inline CardControl MusicControlAt(const RoundedBox& box, float x, float y) {
     if (inside(layout.playPause)) return CardControl::PlayPause;
     if (inside(layout.next)) return CardControl::Next;
     return CardControl::None;
+}
+
+// --- the niri-style command centre and weather detail -------------------------
+//
+// These are panel levels, not a second window: the command centre opens from
+// the island's clock, and its weather tile switches the same card to the weather
+// detail. Hit testing and drawing both consume the structures below.
+inline constexpr int kCommandCenterNotificationRows = 3;
+inline constexpr int kCommandCenterCalendarRows = 6;
+inline constexpr int kCommandCenterCalendarColumns = 7;
+inline constexpr int kWeatherHourlyColumns = 8;
+inline constexpr int kWeatherCardDayColumns = 7;
+
+inline int CommandCenterNotificationScrollLimit(int notificationCount) {
+    return notificationCount > kCommandCenterNotificationRows
+               ? notificationCount - kCommandCenterNotificationRows
+               : 0;
+}
+
+inline int CommandCenterNotificationScrollAfterWheel(int firstVisible, int notificationCount,
+                                                     int notches) {
+    firstVisible -= notches;
+    if (firstVisible < 0) firstVisible = 0;
+    const int limit = CommandCenterNotificationScrollLimit(notificationCount);
+    return firstVisible > limit ? limit : firstVisible;
+}
+
+struct CommandCenterLayout {
+    RectF clock;
+    RectF clockChip;
+    RectF weather;
+    RectF calendar;
+    RectF media;
+    RectF notifications;
+    RectF notificationsTitle;
+    RectF notificationCountChip;
+    RectF preferencesButton;
+    RectF historyButton;
+    RectF clearButton;
+    RectF calendarTitle;
+    RectF calendarPrevious;
+    RectF calendarNext;
+    RectF calendarIcon;
+    RectF calendarCells[kCommandCenterCalendarRows * kCommandCenterCalendarColumns];
+    RectF notificationRows[kCommandCenterNotificationRows];
+    RectF notificationAvatar[kCommandCenterNotificationRows];
+    RectF notificationApp[kCommandCenterNotificationRows];
+    RectF notificationTitle[kCommandCenterNotificationRows];
+    RectF notificationBody[kCommandCenterNotificationRows];
+    RectF notificationAge[kCommandCenterNotificationRows];
+    RectF notificationOpen[kCommandCenterNotificationRows];
+    RectF notificationDismiss[kCommandCenterNotificationRows];
+    RectF notificationScrollTrack;
+    RectF notificationScrollThumb;
+    bool notificationScrollVisible = false;
+    RectF mediaCover;
+    RectF mediaTitle;
+    RectF mediaSubtitle;
+    RectF mediaElapsed;
+    RectF mediaProgress;
+    RectF mediaDuration;
+    RectF mediaPrevious;
+    RectF mediaPlayPause;
+    RectF mediaNext;
+    RectF mediaWave;
+    int notificationRowsShown = 0;
+};
+
+inline CommandCenterLayout CommandCenterFor(const RoundedBox& card, int notificationCount,
+                                            int firstVisible = 0) {
+    CommandCenterLayout layout;
+    if (card.rect.right <= card.rect.left || card.rect.bottom <= card.rect.top) return layout;
+
+    constexpr float pad = 20.0f;
+    constexpr float gap = 20.0f;
+    constexpr float rightInset = 20.0f;
+    // The clock and weather are one 410 DIP group in the reference. Their
+    // internal gutter is 14 DIP while the larger 20 DIP gutter separates the
+    // group from notifications and stacks the rows below it.
+    constexpr float narrowGap = 14.0f;
+    constexpr float rightWidth = 300.0f;
+    constexpr float topHeight = 128.0f;
+    constexpr float calendarHeight = 198.0f;
+
+    const float left = card.rect.left + pad;
+    const float right = card.rect.right - rightInset;
+    const float top = card.rect.top + pad;
+    const float bottom = card.rect.bottom - rightInset;
+    const float leftRight = right - rightWidth - gap;
+
+    layout.clock = {left, top, left + 256.0f, top + topHeight};
+    layout.clockChip = {layout.clock.left + 14.0f, layout.clock.top + 96.0f,
+                        layout.clock.left + 92.0f, layout.clock.top + 124.0f};
+    layout.weather = {layout.clock.right + narrowGap, top, leftRight, top + topHeight};
+    layout.calendar = {left, layout.clock.bottom + gap, leftRight,
+                       layout.clock.bottom + gap + calendarHeight};
+    layout.media = {left, layout.calendar.bottom + gap, leftRight,
+                    bottom > layout.calendar.bottom + gap ? bottom
+                                                         : layout.calendar.bottom + gap};
+    layout.notifications = {right - rightWidth, top, right, bottom};
+    layout.notificationsTitle = {layout.notifications.left + 4.0f, layout.notifications.top,
+                                 layout.notifications.left + 44.0f,
+                                 layout.notifications.top + 30.0f};
+    layout.notificationCountChip = {layout.notificationsTitle.right + 6.0f,
+                                    layout.notifications.top + 3.0f,
+                                    layout.notificationsTitle.right + 38.0f,
+                                    layout.notifications.top + 27.0f};
+    layout.preferencesButton = {layout.notifications.right - 104.0f,
+                                layout.notifications.top,
+                                layout.notifications.right, layout.notifications.top + 30.0f};
+    layout.historyButton = {layout.notifications.left, 0.0f,
+                            layout.notifications.left + 70.0f, 0.0f};
+
+    layout.calendarTitle = {layout.calendar.left + 36.0f, layout.calendar.top + 10.0f,
+                            layout.calendar.right - 74.0f, layout.calendar.top + 36.0f};
+    layout.calendarIcon = {layout.calendar.left + 10.0f, layout.calendar.top + 9.0f,
+                           layout.calendar.left + 30.0f, layout.calendar.top + 29.0f};
+    layout.calendarPrevious = {layout.calendar.right - 66.0f, layout.calendar.top + 8.0f,
+                               layout.calendar.right - 38.0f, layout.calendar.top + 36.0f};
+    layout.calendarNext = {layout.calendar.right - 34.0f, layout.calendar.top + 8.0f,
+                           layout.calendar.right - 6.0f, layout.calendar.top + 36.0f};
+
+    const float gridLeft = layout.calendar.left + 12.0f;
+    const float gridRight = layout.calendar.right - 12.0f;
+    const float gridTop = layout.calendar.top + 48.0f;
+    const float gridBottom = layout.calendar.bottom - 12.0f;
+    const float cellWidth = (gridRight - gridLeft) / kCommandCenterCalendarColumns;
+    const float cellHeight = (gridBottom - gridTop) / kCommandCenterCalendarRows;
+    for (int row = 0; row < kCommandCenterCalendarRows; ++row) {
+        for (int column = 0; column < kCommandCenterCalendarColumns; ++column) {
+            RectF& cell = layout.calendarCells[row * kCommandCenterCalendarColumns + column];
+            cell.left = gridLeft + cellWidth * static_cast<float>(column) + 2.0f;
+            cell.right = gridLeft + cellWidth * static_cast<float>(column + 1) - 2.0f;
+            cell.top = gridTop + cellHeight * static_cast<float>(row) + 1.0f;
+            cell.bottom = gridTop + cellHeight * static_cast<float>(row + 1) - 1.0f;
+        }
+    }
+
+    int rows = notificationCount;
+    if (rows < 0) rows = 0;
+    if (rows > kCommandCenterNotificationRows) rows = kCommandCenterNotificationRows;
+    layout.notificationRowsShown = rows;
+    const float rowTop = layout.notifications.top + 42.0f;
+    const float footerTop = layout.notifications.bottom - 44.0f;
+    const float rowGap = 10.0f;
+    const float available = footerTop - rowTop - static_cast<float>(rows - 1) * rowGap;
+    const float rowHeight =
+        rows > 0 ? std::min(120.0f, available / static_cast<float>(rows)) : 0.0f;
+    if (notificationCount > kCommandCenterNotificationRows) {
+        const float trackTop = rowTop;
+        const float trackBottom = footerTop - 8.0f;
+        const float trackHeight = trackBottom - trackTop;
+        const float visibleFraction =
+            static_cast<float>(kCommandCenterNotificationRows) /
+            static_cast<float>(notificationCount);
+        const float thumbHeight = std::max(28.0f, trackHeight * visibleFraction);
+        const int scrollLimit = CommandCenterNotificationScrollLimit(notificationCount);
+        const float progress =
+            scrollLimit > 0 ? static_cast<float>(firstVisible) / static_cast<float>(scrollLimit)
+                            : 0.0f;
+        layout.notificationScrollTrack = {layout.notifications.right - 4.0f, trackTop,
+                                          layout.notifications.right - 2.0f, trackBottom};
+        const float thumbTop =
+            trackTop + (trackHeight - thumbHeight) * std::clamp(progress, 0.0f, 1.0f);
+        layout.notificationScrollThumb = {layout.notificationScrollTrack.left, thumbTop,
+                                          layout.notificationScrollTrack.right,
+                                          thumbTop + thumbHeight};
+        layout.notificationScrollVisible = true;
+    }
+    for (int i = 0; i < rows; ++i) {
+        RectF& row = layout.notificationRows[i];
+        row.left = layout.notifications.left + 8.0f;
+        row.right = layout.notifications.right - 8.0f;
+        row.top = rowTop + static_cast<float>(i) * (rowHeight + rowGap);
+        row.bottom = row.top + rowHeight;
+        layout.notificationAvatar[i] = {row.left + 12.0f, row.top + 9.0f,
+                                        row.left + 40.0f, row.top + 37.0f};
+        layout.notificationApp[i] = {row.left + 48.0f, row.top + 8.0f,
+                                     row.right - 12.0f, row.top + 26.0f};
+        layout.notificationAge[i] = {row.right - 88.0f, row.top + 8.0f,
+                                     row.right - 12.0f, row.top + 26.0f};
+        layout.notificationTitle[i] = {row.left + 12.0f, row.top + 31.0f,
+                                       row.right - 12.0f, row.top + 48.0f};
+        layout.notificationBody[i] = {row.left + 12.0f, row.top + 49.0f,
+                                      row.right - 12.0f, row.top + 81.0f};
+        layout.notificationOpen[i] = {row.left + 16.0f, row.bottom - 30.0f,
+                                      row.left + 70.0f, row.bottom - 8.0f};
+        layout.notificationDismiss[i] = {layout.notificationOpen[i].right + 8.0f,
+                                         row.bottom - 30.0f,
+                                         layout.notificationOpen[i].right + 70.0f,
+                                         row.bottom - 8.0f};
+    }
+
+    layout.clearButton = {layout.notifications.right - 224.0f, footerTop + 6.0f,
+                          layout.notifications.right, layout.notifications.bottom - 8.0f};
+    layout.historyButton.top = layout.clearButton.top;
+    layout.historyButton.bottom = layout.clearButton.bottom;
+
+    layout.mediaCover = {layout.media.left + 16.0f, layout.media.top + 16.0f,
+                         layout.media.left + 94.0f, layout.media.top + 94.0f};
+    layout.mediaTitle = {layout.mediaCover.right + 16.0f, layout.media.top + 18.0f,
+                         layout.media.right - 48.0f, layout.media.top + 40.0f};
+    layout.mediaSubtitle = {layout.mediaCover.right + 16.0f, layout.media.top + 40.0f,
+                            layout.media.right - 16.0f, layout.media.top + 62.0f};
+    layout.mediaWave = {layout.media.right - 38.0f, layout.media.top + 18.0f,
+                        layout.media.right - 14.0f, layout.media.top + 40.0f};
+    layout.mediaElapsed = {layout.mediaCover.right + 16.0f, layout.media.top + 58.0f,
+                           layout.mediaCover.right + 48.0f, layout.media.top + 76.0f};
+    layout.mediaProgress = {layout.mediaElapsed.right + 8.0f, layout.media.top + 66.0f,
+                            layout.media.right - 52.0f, layout.media.top + 72.0f};
+    layout.mediaDuration = {layout.mediaProgress.right + 8.0f, layout.media.top + 58.0f,
+                            layout.media.right - 16.0f, layout.media.top + 76.0f};
+    const float transportY = layout.media.bottom - 44.0f;
+    layout.mediaPrevious = {layout.mediaCover.right + 54.0f, transportY,
+                            layout.mediaCover.right + 90.0f, transportY + 36.0f};
+    layout.mediaPlayPause = {layout.mediaPrevious.right + 8.0f, transportY - 4.0f,
+                             layout.mediaPrevious.right + 52.0f, transportY + 40.0f};
+    layout.mediaNext = {layout.mediaPlayPause.right + 8.0f, transportY,
+                        layout.mediaPlayPause.right + 44.0f, transportY + 36.0f};
+    return layout;
+}
+
+enum class CommandCenterTarget {
+    None = 0,
+    Weather,
+    Clear,
+    History,
+    Preferences,
+    NotificationOpen,
+    NotificationDismiss,
+    TransportPrevious,
+    TransportPlayPause,
+    TransportNext,
+};
+
+struct CommandCenterHit {
+    CommandCenterTarget target = CommandCenterTarget::None;
+    int index = -1;
+};
+
+inline CommandCenterHit CommandCenterAt(const RoundedBox& card, int notificationCount,
+                                        float x, float y) {
+    const CommandCenterLayout layout = CommandCenterFor(card, notificationCount);
+    const auto inside = [x, y](const RectF& r) {
+        return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+    };
+    CommandCenterHit hit;
+    if (inside(layout.weather)) {
+        hit.target = CommandCenterTarget::Weather;
+        return hit;
+    }
+    if (inside(layout.historyButton)) {
+        hit.target = CommandCenterTarget::History;
+        return hit;
+    }
+    if (inside(layout.preferencesButton)) {
+        hit.target = CommandCenterTarget::Preferences;
+        return hit;
+    }
+    if (inside(layout.clearButton)) {
+        hit.target = CommandCenterTarget::Clear;
+        return hit;
+    }
+    if (inside(layout.mediaPrevious)) {
+        hit.target = CommandCenterTarget::TransportPrevious;
+        return hit;
+    }
+    if (inside(layout.mediaPlayPause)) {
+        hit.target = CommandCenterTarget::TransportPlayPause;
+        return hit;
+    }
+    if (inside(layout.mediaNext)) {
+        hit.target = CommandCenterTarget::TransportNext;
+        return hit;
+    }
+    for (int i = 0; i < layout.notificationRowsShown; ++i) {
+        if (inside(layout.notificationOpen[i])) {
+            hit.target = CommandCenterTarget::NotificationOpen;
+            hit.index = i;
+            return hit;
+        }
+        if (inside(layout.notificationDismiss[i])) {
+            hit.target = CommandCenterTarget::NotificationDismiss;
+            hit.index = i;
+            return hit;
+        }
+    }
+    return hit;
+}
+
+struct WeatherCardLayout {
+    RectF current;
+    RectF metrics;
+    RectF hourly;
+    RectF daily;
+    RectF hourlyCells[kWeatherHourlyColumns];
+    RectF dailyCells[kWeatherCardDayColumns];
+};
+
+inline WeatherCardLayout WeatherCardFor(const RoundedBox& card) {
+    WeatherCardLayout layout;
+    constexpr float pad = 18.0f;
+    constexpr float gap = 14.0f;
+    const float left = card.rect.left + pad;
+    const float right = card.rect.right - pad;
+    const float top = card.rect.top + pad;
+    const float bottom = card.rect.bottom - pad;
+    const float topHeight = 176.0f;
+    const float hourlyHeight = 196.0f;
+    const float currentWidth = 500.0f;
+
+    layout.current = {left, top, left + currentWidth, top + topHeight};
+    layout.metrics = {layout.current.right + gap, top, right, top + topHeight};
+    layout.hourly = {left, layout.current.bottom + gap, right,
+                     layout.current.bottom + gap + hourlyHeight};
+    layout.daily = {left, layout.hourly.bottom + gap, right,
+                    bottom > layout.hourly.bottom + gap ? bottom : layout.hourly.bottom + gap};
+
+    const float hourlyLeft = layout.hourly.left + 14.0f;
+    const float hourlyRight = layout.hourly.right - 14.0f;
+    const float hourlyGap = 8.0f;
+    const float hourlyWidth =
+        (hourlyRight - hourlyLeft - hourlyGap * (kWeatherHourlyColumns - 1)) /
+        static_cast<float>(kWeatherHourlyColumns);
+    for (int i = 0; i < kWeatherHourlyColumns; ++i) {
+        RectF& cell = layout.hourlyCells[i];
+        cell.left = hourlyLeft + static_cast<float>(i) * (hourlyWidth + hourlyGap);
+        cell.right = cell.left + hourlyWidth;
+        cell.top = layout.hourly.top + 46.0f;
+        cell.bottom = layout.hourly.bottom - 14.0f;
+    }
+
+    const float dailyLeft = layout.daily.left + 14.0f;
+    const float dailyRight = layout.daily.right - 14.0f;
+    const float dailyGap = 8.0f;
+    const float dailyWidth =
+        (dailyRight - dailyLeft - dailyGap * (kWeatherCardDayColumns - 1)) /
+        static_cast<float>(kWeatherCardDayColumns);
+    for (int i = 0; i < kWeatherCardDayColumns; ++i) {
+        RectF& cell = layout.dailyCells[i];
+        cell.left = dailyLeft + static_cast<float>(i) * (dailyWidth + dailyGap);
+        cell.right = cell.left + dailyWidth;
+        cell.top = layout.daily.top + 46.0f;
+        cell.bottom = layout.daily.bottom - 14.0f;
+    }
+    return layout;
 }
 
 } // namespace island

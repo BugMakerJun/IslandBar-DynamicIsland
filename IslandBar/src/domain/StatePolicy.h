@@ -52,6 +52,9 @@ struct PointerContext {
     // words and nothing else, so a card built on it would be a rectangle of empty rows with three dead
     // buttons. Hence the card asks THIS, not `resting`.
     bool musicPresent = false;
+    // The unified island opens its rail-navigated card on hover even when nothing is
+    // playing. Kept explicit so the legacy policy and its tests stay unchanged.
+    bool hoverOpensCard = false;
 
     // The row of application icons beside the island.
     int iconCount = 0;
@@ -166,7 +169,7 @@ inline bool ShouldPromoteToCard(const PointerContext& c) {
     // A SESSION, not merely a line on the pill: `resting == MusicStrip` is also true for a player read
     // from its window title (see PlayerWindow.h), and that source has no cover, no position and no
     // transport keys -- every field this card is made of. So the card asks for the session itself.
-    return c.musicPresent;
+    return c.hoverOpensCard || c.musicPresent;
 }
 
 // True when the pointer should make the island show its row of application icons widened.
@@ -181,6 +184,7 @@ inline bool ShouldPromoteToTaskbar(const PointerContext& c) {
     // ... and neither is a deck button. Hovering one leaves the bar at rest -- which keeps the lyric strip
     // on the pill instead of replacing it with the clock, and is what "its own control" means.
     if (c.pointerOnDeck) return false;
+    if (c.hoverOpensCard && (c.pointerOnIsland || c.pointerInCardColumn)) return false;
     // EXCEPT while there is a player: there the card is what the pointer is asking for, so pulling it down
     // to the hover shape and letting `ShouldPromoteToCard` open it again on the next frame would be a
     // visible flicker -- the card would start retracting and then turn around.
@@ -213,7 +217,8 @@ inline bool ShouldPromoteToTaskbar(const PointerContext& c) {
 // case that used to be missed, because only Expanded was handled.
 inline bool ShouldReturnToResting(const PointerContext& c) {
     if (c.notificationActive || c.pointerInside) return false;
-    return c.shape == IslandState::Expanded || c.shape == IslandState::Hover;
+    return c.shape == IslandState::Expanded || c.shape == IslandState::Hover ||
+           c.shape == IslandState::SearchStrip;
 }
 
 // True when the RESTING shape itself has changed and the island is still showing the old
@@ -227,7 +232,7 @@ inline bool ShouldAdoptNewResting(const PointerContext& c) {
     // nothing left asking for the strip, and without this the island sat widened with yesterday's message in
     // it -- found by the policy test the moment the strip was added, which is what the test is for.
     return c.shape == IslandState::Collapsed || c.shape == IslandState::MusicStrip ||
-           c.shape == IslandState::NoticeStrip;
+           c.shape == IslandState::NoticeStrip || c.shape == IslandState::SearchStrip;
 }
 
 // The shape the island should move to, or the same shape to leave it alone. One call, one answer,

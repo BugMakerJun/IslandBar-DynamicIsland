@@ -66,7 +66,24 @@ struct BarState {
     int startPickerScroll = 0;
     int startPowerConfirm = -1;
     unsigned long long startPowerConfirmUntil = 0;
+    float railPowerConfirmProgress = 0.0f;
+    bool railPowerConfirmAnimating = false;
+    int railPowerConfirmShown = -1;
     int lastStartPowerConfirm = -2;
+    float niriNotchLeftExtent = 0.0f;
+    float niriNotchRightExtent = 0.0f;
+    bool niriNotchExtentAnimating = false;
+    int niriSideVisibilityLog = -1;
+    float systemTileOnAmount[kMaxSystemPanelTiles] = {};
+    float systemTileHoverAmount[kMaxSystemPanelTiles] = {};
+    float systemTilePressAmount[kMaxSystemPanelTiles] = {};
+    bool systemTileVisualInitialized[kMaxSystemPanelTiles] = {};
+    bool systemTileOptimisticKnown[kMaxSystemPanelTiles] = {};
+    bool systemTileOptimisticOn[kMaxSystemPanelTiles] = {};
+    unsigned long long systemTileOptimisticUntil[kMaxSystemPanelTiles] = {};
+    int lastSystemTileHoveredSource = -1;
+    bool lastSystemPanelLeftDown = false;
+    bool systemTileVisualAnimating = false;
     // True while the picker was opened by the grid button: its cells LAUNCH the application instead of
     // pinning it. The empty grid still opens the same list in pin mode, which is what keeps the card
     // fillable.
@@ -131,6 +148,7 @@ struct BarState {
     int lastTrayMenuRow = -1;
     bool lastTrayMenuOpen = false;
     bool lastTrayTaskManagerHovered = false;
+    unsigned long long lastSystemLoadRevision = 0;
 
     // The application row's hovered button, remembered for the same reason: its widening is an animation,
     // and a change that does not ask for a frame is a button that widens late or not at all.
@@ -183,6 +201,27 @@ struct BarState {
     // the level it leaves with (see PanelLevel).
     // Whether the system panel is open. It is a TOGGLE, like the shell flyout it mirrors.
     bool systemPanelOpen = false;   // RunBar sets it from its own argument (see main.cpp)
+    // The two niri-style pages are levels of the same outer card. They live on
+    // the shared `systemPanelOpen` request so they get the existing transition,
+    // hit region and outside-click dismissal.
+    bool centerPageOpen = false;
+    bool weatherPageOpen = false;
+    bool notificationHistory = true;
+    int notificationScroll = 0;
+    bool notificationScrollDirty = false;
+    bool startSearchRequested = false;
+    // Search is an inline island state rather than a card level: the blue
+    // button grows across the existing pill while clock/date/status stand down.
+    bool inlineSearchOpen = false;
+    float inlineSearchProgress = 0.0f;
+    bool inlineSearchAnimating = false;
+    float inlineSearchResultsProgress = 0.0f;
+    bool inlineSearchResultsAnimating = false;
+    unsigned long long inlineSearchHoldUntil = 0;
+    int lastNiriSearchResultHovered = -2;
+    bool musicCardOpen = false;
+    bool dashboardOpen = false;
+    island::CardTab cardTab = island::CardTab::Dashboard;
     // Which level of the panel's card is showing -- the tiles, the 声音输出 page, or the tray page. Held
     // for the card's whole life, like the owner: the card is on screen for the length of its own exit, so
     // the level it was opened with is also what it leaves with (see NextPanelLevel, and the three places
@@ -416,6 +455,8 @@ int rowSlotCount = 0;
     // "还是一顿一顿的" -- for a picture the compositor already draws live.
     HWND previewPlacedTarget = nullptr;
     bool previewShown = false;
+    RECT previewAnchorPx = {};
+    bool previewKeepActive = false;
     // Reported once each, because "the preview never appeared" and "the compositor refused this window"
     // are different answers and only the log can tell them apart.
     bool previewReported = false;

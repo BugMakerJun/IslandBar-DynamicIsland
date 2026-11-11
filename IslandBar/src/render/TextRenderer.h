@@ -25,6 +25,8 @@
 #include "media/MusicSession.h"  // the now-playing field capacities
 #include "domain/CardLayout.h"    // where the card's controls go
 #include "domain/TaskStripLayout.h"  // where the tray sits, and how many icons fit
+#include "services/Notification.h"   // the command centre's notification rows
+#include "shell/Weather.h"           // the expanded weather card
 #include "shell/TrayIcons.h"     // the icons themselves
 #include "shell/StartApps.h"     // the Start card's applications
 
@@ -210,28 +212,25 @@ public:
     // SystemPanelText is. The page's fixed captions (its section labels and the two footer words) are drawn
     // where they belong, like the panel's 音量 and 显示亮度; these three come from the frame.
     //
-    // `nowTitle` is UTF-8, as every other string out of the media stack is, and empty means NO now-playing
-    // row: the page skips it rather than showing a well with a made-up track in it (the reference has the
-    // row because the reference's machine had a song up).
     struct TrayPageText {
         const wchar_t* title = nullptr;     // 系统后台托盘; empty draws no header title
-        const char* nowTitle = nullptr;     // the track the pill is showing
-        const char* nowArtist = nullptr;    // ... and its artist, when the source names one
-        bool nowPlaying = false;            // 正在播放 rather than 已暂停
         bool taskManagerHovered = false;
+        float cpuPercent = 0.0f;
+        float memoryPercent = 0.0f;
+        unsigned long long memoryUsedBytes = 0;
+        unsigned long long memoryTotalBytes = 0;
     };
 
-    // The card's tray page: the header, the section row, the icons in a five-column grid, the now-playing
+    // The card's tray page: the header, the section row, the icons in a five-column grid, the live system-load
     // well and the footer -- the reference at the shared card's size.
     //
     // `revision` is the list's own, so a decoded bitmap is kept until the icons themselves change: the bar
     // draws at the compositor's rate and a PNG decode per frame per icon would be the most expensive thing
-    // on it. `hoveredIndex` is a cell of the grid (see TrayPageFor). The row that is left out when
-    // `text.nowTitle` is empty still has a rectangle (the layout is fixed), so the footer and the grid
-    // cannot move with the music.
+    // on it. `hoveredIndex` is a cell of the grid (see TrayPageFor). The resource well has a fixed rectangle,
+    // so the footer and grid cannot move with a changing load reading.
     void DrawTrayPage(ID2D1DeviceContext2* context, const RoundedBox& card, const TrayPageText& text,
                       const TrayIcon* icons, int count, unsigned long long revision, float opacity,
-                      int hoveredIndex, bool moving = false);
+                      int hoveredIndex);
 
     // The tray's own context menu: a small raised surface with one row per entry, the row under the
     // pointer washed white. Geometry comes from `TrayMenuFor` (CardLayout.h) -- the box and the rows are
@@ -283,6 +282,73 @@ public:
     void DrawStatusLine(ID2D1DeviceContext2* context, const RoundedBox& box, float opacity,
                         const wchar_t* sky, const wchar_t* temperature,
                         int weatherCode, const D2D1_COLOR_F& fill);
+
+    // The wide resting surface from the niri reference: search at the left,
+    // time and date in the middle, notification mark and count at the right.
+    // During playback the date/notification group becomes the lyric line and the
+    // moving audio wave moves to the right-hand end.
+    // This is drawn only for the resting pill; notices and lyrics keep their
+    // existing single-line treatment.
+    void DrawNiriTopBar(ID2D1DeviceContext2* context, const RoundedBox& box, float opacity,
+                        int unreadNotifications, const char* sideLine = nullptr,
+                        bool musicPresent = false, float musicLevel = 0.0f,
+                        float musicPhase = 0.0f,
+                        D2D1_COLOR_F musicAccent = D2D1::ColorF(0.40f, 0.80f, 0.95f, 1.0f),
+                        bool callActive = false, float callLevel = 0.0f,
+                        float lyricScrollDip = 0.0f, float searchMarkOpacity = 1.0f);
+    void DrawNiriNotification(ID2D1DeviceContext2* context, const RoundedBox& box,
+                              const char* line, const uint8_t* iconPixels, int iconWidth,
+                              int iconHeight, unsigned long long iconRevision, float opacity);
+    void DrawNiriSearchField(ID2D1DeviceContext2* context, const RoundedBox& box,
+                             float progress, float opacity);
+    struct NiriSearchResultsText {
+        const StartSearchResult* results = nullptr;
+        int count = 0;
+        int selected = -1;
+        int hovered = -1;
+        bool pending = false;
+        bool filesComplete = false;
+        const uint8_t* const* listIcons = nullptr;
+        const size_t* listIconSizes = nullptr;
+    };
+    void DrawNiriSearchResults(ID2D1DeviceContext2* context, const RoundedBox& island,
+                               const NiriSearchResultsText& text, float reveal,
+                               float opacity);
+
+    void DrawNiriActiveApp(ID2D1DeviceContext2* context, const RoundedBox& box,
+                           ID2D1Bitmap1* icon, const wchar_t* title, float opacity);
+    struct CardRailText {
+        const uint8_t* avatarPng = nullptr;
+        size_t avatarPngSize = 0;
+        const wchar_t* accountName = nullptr;
+        int powerConfirmButton = -1;
+        int powerConfirmShownButton = -1;
+        float powerConfirmProgress = 0.0f;
+    };
+    void DrawCardRail(ID2D1DeviceContext2* context, const RoundedBox& card, int selectedPage,
+                      const CardRailText& text, float opacity, bool moving);
+
+    struct CommandCenterText {
+        const WeatherSnapshot* weather = nullptr;
+        const NotificationStore* notifications = nullptr;
+        int visibleIndices[kCommandCenterNotificationRows] = {-1, -1, -1};
+        int visibleCount = 0;
+        int filteredCount = 0;
+        int scrollFirst = 0;
+        int unreadCount = 0;
+        int notificationTotal = 0;
+        bool historyActive = false;
+        const MusicInfo* music = nullptr;
+        float musicLevel = 0.0f;
+        bool musicLevelKnown = false;
+        float musicWavePhase = 0.0f;
+        D2D1_COLOR_F musicAccent{0.40f, 0.80f, 0.95f, 1.0f};
+    };
+
+    void DrawCommandCenter(ID2D1DeviceContext2* context, const RoundedBox& card,
+                           const CommandCenterText& text, float opacity);
+    void DrawWeatherCard(ID2D1DeviceContext2* context, const RoundedBox& card,
+                         const WeatherSnapshot& weather, float opacity);
 
     // The date as its two pieces, because the run sets them apart with a gap and a weight change:
     // "周一" and "10月12日". Filled by Refresh; empty before the first call.
@@ -602,6 +668,10 @@ public:
         // lookup by label would also tie the two together in the one direction that cannot be tested.
         PanelAction action = PanelAction::None;
         const wchar_t* uri = nullptr;     // the settings page, for PanelAction::OpenSettings
+        int sourceIndex = -1;             // stable index across system-panel pages
+        float onAmount = 0.0f;            // animated ON appearance
+        float hoverAmount = 0.0f;
+        float pressAmount = 0.0f;
     };
 
     struct SystemPanelText {
@@ -899,6 +969,7 @@ private:
     StartBitmap startPinBitmaps_[24];   // as many as can be on screen at once, and then some
     StartBitmap startListBitmaps_[24];  // the same, for the all-applications grid
     StartBitmap startAvatarBitmap_;
+    StartBitmap commandArtworkBitmap_;
 
     IDWriteTextFormat*   dateFormat_  = nullptr;
     IDWriteTextFormat*   appFormat_   = nullptr;
@@ -912,6 +983,32 @@ private:
     IDWriteTextFormat*   statusDayFormat_     = nullptr;  // 10月12日 -- 12, regular, dim
     IDWriteTextFormat*   statusTimeFormat_    = nullptr;  // 17:49 -- 14.5, semibold, brightest
     IDWriteTextFormat*   statusWeatherFormat_ = nullptr;  // 小雨 / 17° -- 12.5, regular
+    // The wide niri-style bar and the two reference cards use a stronger
+    // typographic hierarchy than the old one-line island.
+    IDWriteTextFormat*   niriClockFormat_ = nullptr;
+    IDWriteTextFormat*   niriDateFormat_ = nullptr;
+    IDWriteTextFormat*   niriLyricFormat_ = nullptr;
+    IDWriteTextFormat*   niriHeroFormat_ = nullptr;
+    IDWriteTextFormat*   niriMetricFormat_ = nullptr;
+    IDWriteTextFormat*   niriWeatherTempFormat_ = nullptr;
+    IDWriteTextFormat*   niriNotificationHeaderFormat_ = nullptr;
+    IDWriteTextFormat*   niriNotificationAppFormat_ = nullptr;
+    IDWriteTextFormat*   niriNotificationTitleFormat_ = nullptr;
+    IDWriteTextFormat*   niriNotificationMetaFormat_ = nullptr;
+    IDWriteTextFormat*   niriNotificationBodyFormat_ = nullptr;
+    IDWriteTextFormat*   niriCommandTimeFormat_ = nullptr;
+    // The command centre follows its own type scale rather than borrowing the
+    // system-panel labels. The reference is explicit about every size: 44/800
+    // for the clock, 12/600 for its date, 11/600 for calendar and metadata,
+    // 9/600 for rail captions and media timestamps.
+    IDWriteTextFormat*   niriCommandDateFormat_ = nullptr;
+    IDWriteTextFormat*   niriCommandChipFormat_ = nullptr;
+    IDWriteTextFormat*   niriWeatherQualityFormat_ = nullptr;
+    IDWriteTextFormat*   niriWeatherWordFormat_ = nullptr;
+    IDWriteTextFormat*   niriCalendarWeekdayFormat_ = nullptr;
+    IDWriteTextFormat*   niriCalendarDayFormat_ = nullptr;
+    IDWriteTextFormat*   niriMediaSubtitleFormat_ = nullptr;
+    IDWriteTextFormat*   niriMediaTimeFormat_ = nullptr;
     // THE PILL'S OWN LINE, one weight heavier than appFormat_.
     //
     // A separate format rather than a heavier appFormat_, because appFormat_ is also what the task
@@ -953,6 +1050,7 @@ private:
 
     SYSTEMTIME time_{};
     wchar_t timeText_[16]  = {};   // L"hh:mm"
+    wchar_t niriTimeText_[16] = {};   // L"hh:mm:ss", the niri reference's clock
     wchar_t dateText_[32]  = {};   // L"<weekday>, <month> <day>"
     // The same date, in the two pieces the status line sets apart: "\u5468\u4e00" and
     // "10\u670812\u65e5". Kept beside `dateText_` rather than derived from it at every draw, because

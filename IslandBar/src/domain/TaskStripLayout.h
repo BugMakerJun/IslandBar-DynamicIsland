@@ -632,7 +632,7 @@ inline int TaskIconsThatFit(float monitorWidthDip, int wanted) {
 // first reading lands. The text is centred in the fixed box instead, and the self-test
 // measures the longest line the strip can print against that box, so a font or a wording
 // that outgrew it fails the build instead of clipping a word.
-inline constexpr float kStatusStripWidthDip  = 268.0f;
+inline constexpr float kStatusStripWidthDip  = 430.0f;
 inline constexpr float kStatusStripHeightDip = 26.0f;
 inline constexpr float kStatusStripGapDip    = 10.0f;   // between the strip and the system button
 // The run's own inset inside whichever box it is drawn in.

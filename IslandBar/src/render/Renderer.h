@@ -102,12 +102,26 @@ struct ContentStrengths {
 // directions run their progress from 0 to 1 (the shape interpolates from `from_` to `to_`, and which of
 // those is the card is the caller's knowledge, not this function's).
 //
-// The lead is a third of the movement: on the way open the card's content stays at its floor while the
-// shape takes a third of the room it needs, then fades in over the rest; on the way closed it is gone
-// before the shape has finished a third of the way back. Both ends are exact -- 0.35 at the start of an
-// opening and 1.0 at its end, and the mirror of that for a closing -- so the settled values are what the
-// rest of the renderer has always assumed.
+// The lead is a third of the movement: on the way open the card's content starts from a faint 0.35
+// preview while the shape makes room, then reaches full strength; on the way closed it fades from full
+// strength to zero in the first third, then stays zero for the rest of the retraction. A non-zero floor
+// at the closing end left the card's broad translucent background on screen after its shape had become
+// the pill -- the horizontal ghost strip reported by the user.
 inline constexpr float kCardContentLeadFraction = 0.35f;
+
+// The island's own line returns before the morph reaches the final pill. The card content is already
+// gone by this stage; this overlap is what prevents a blank pill between the two contents.
+inline constexpr float kIslandLineMorphFadeStart = 0.42f;
+inline constexpr float kIslandLineMorphFadeEnd = 0.18f;
+
+inline float IslandLineStrengthForMorph(float morphProgress) {
+    if (morphProgress <= kIslandLineMorphFadeEnd) return 1.0f;
+    if (morphProgress >= kIslandLineMorphFadeStart) return 0.0f;
+    const float visible =
+        (kIslandLineMorphFadeStart - morphProgress) /
+        (kIslandLineMorphFadeStart - kIslandLineMorphFadeEnd);
+    return visible * visible * (3.0f - 2.0f * visible);
+}
 
 inline ContentStrengths ContentStrengthsFor(bool cardUp, float easedProgress, bool opening) {
     ContentStrengths out;
@@ -122,7 +136,7 @@ inline ContentStrengths ContentStrengthsFor(bool cardUp, float easedProgress, bo
     if (sequenced < 0.0f) sequenced = 0.0f;
     if (sequenced > 1.0f) sequenced = 1.0f;
 
-    out.card = 0.35f + 0.65f * sequenced;
+    out.card = opening ? (0.35f + 0.65f * sequenced) : sequenced;
     return out;
 }
 
@@ -162,6 +176,9 @@ struct FrameState {
     // box. Feeding the taller box to those would have moved the controls up by half the difference and put
     // half of each button above the screen.
     RoundedBox restingMaterial;
+    BarShape barShape = BarShape::Capsule;
+    float niriNotchLeftExtent = 0.0f;
+    float niriNotchRightExtent = 0.0f;
 
     // Whether an outer card -- the system panel or a notification -- is on screen or on its way there.
     //
@@ -226,6 +243,13 @@ struct FrameState {
     // currently growing into: pressing the system button with music playing replaced the lyric with the
     // clock, for a panel that has nothing to do with the music. See the pill's text rule in Renderer.cpp.
     IslandState    restingState = IslandState::Collapsed;
+    // Niri search is an inline island mode, not a card: the native edit
+    // control occupies the expanded right-hand portion while the renderer
+    // keeps only the search mark on the unchanged left end.
+    bool niriInlineSearch = false;
+    float niriSearchProgress = 0.0f;
+    float niriSearchResultsProgress = 0.0f;
+    TextRenderer::NiriSearchResultsText niriSearchResults = {};
 
     ClockStyle     clock = ClockStyle::Compact;
 
@@ -261,6 +285,11 @@ struct FrameState {
     int sunriseMinutes = 6 * 60;
     int sunsetMinutes = 18 * 60;
     float          statusStripOpacity = 0.0f;
+    // The expanded reading for the weather card and the command centre. A copy
+    // per frame, because the worker may publish while the frame is being built.
+    WeatherSnapshot weather;
+    int unreadNotifications = 0;
+    TextRenderer::CommandCenterText commandCenter;
 
     // 0..1 strength of the BAR's own content: the deck, the icon row, the clock, the lyric / notice /
     // call line. 1.0 unless something deliberately holds the bar back -- see ContentStrengthsFor, which
@@ -419,6 +448,15 @@ struct FrameState {
     // given different answers.
     TextRenderer::StartCardText startCard = {};
     bool startPageOpen = false;
+    bool centerPageOpen = false;
+    bool weatherPageOpen = false;
+    int  cardTab = 0;
+    const uint8_t* accountAvatarPng = nullptr;
+    size_t accountAvatarPngSize = 0;
+    const wchar_t* accountName = nullptr;
+    int railPowerConfirmButton = -1;
+    int railPowerConfirmShownButton = -1;
+    float railPowerConfirmProgress = 0.0f;
 
     // Whether the pointer is on the Start button, which lives on the other side of the
     // island from the application icons.
@@ -709,6 +747,7 @@ private:
     // On Windows the quick-settings flyout opens BELOW the taskbar and never over its buttons; this
     // reproduces that by drawing the decks last.
     void DrawDecks(const RoundedBox& box, const FrameState& frame);
+    void PrepareTaskButtons(const FrameState& frame);
     void ReleaseTarget();
     void RenderFrame(const FrameState& frame);
     // Keeps the lens capture pointed at the window directly below the island.

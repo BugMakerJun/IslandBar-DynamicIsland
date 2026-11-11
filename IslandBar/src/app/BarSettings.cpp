@@ -62,17 +62,18 @@ std::string ReadValue(const char* text, size_t length, const char* key) {
 
 } // namespace
 
-BarShape LoadBarShape() {
+BarSettings LoadBarSettings() {
+    BarSettings settings;
     wchar_t path[MAX_PATH] = {};
     if (!DataPath(kFileName, path, MAX_PATH)) {
         LogAndPrint(L"  bar shape: capsule (no home directory to read %ls from)", kFileName);
-        return BarShape::Capsule;
+        return settings;
     }
 
     FILE* file = nullptr;
     if (_wfopen_s(&file, path, L"rb") != 0 || !file) {
         LogAndPrint(L"  bar shape: capsule (no %ls -- the default)", kFileName);
-        return BarShape::Capsule;
+        return settings;
     }
     char buffer[1024] = {};
     const size_t read = std::fread(buffer, 1, sizeof(buffer) - 1, file);
@@ -81,34 +82,51 @@ BarShape LoadBarShape() {
     const std::string value = ReadValue(buffer, read, "shape");
     if (value.empty()) {
         LogAndPrint(L"  bar shape: capsule (%ls names no shape -- the default)", kFileName);
-        return BarShape::Capsule;
-    }
-    BarShape shape = BarShape::Capsule;
-    if (!BarShapeFromText(value.c_str(), &shape)) {
+    } else if (!BarShapeFromText(value.c_str(), &settings.shape)) {
         // REFUSED rather than ignored: the file says something, and this build does not know it.
         LogAndPrint(L"  bar shape: capsule (%ls says shape=%hs, which this build does not know)", kFileName,
                     value.c_str());
-        return BarShape::Capsule;
+        settings.shape = BarShape::Capsule;
+    } else {
+        LogAndPrint(L"  bar shape: %ls (from %ls)", BarShapeName(settings.shape), kFileName);
     }
-    LogAndPrint(L"  bar shape: %ls (from %ls)", BarShapeName(shape), kFileName);
-    return shape;
+
+    const std::string tiling = ReadValue(buffer, read, "scroll_tiling");
+    if (_stricmp(tiling.c_str(), "enabled") == 0 || _stricmp(tiling.c_str(), "on") == 0) {
+        settings.scrollTilingEnabled = true;
+    } else if (!tiling.empty() && _stricmp(tiling.c_str(), "disabled") != 0 &&
+               _stricmp(tiling.c_str(), "off") != 0) {
+        LogAndPrint("  scroll tiling: disabled (bar.txt says scroll_tiling=%s, which this "
+                    "build does not know)",
+                    tiling.c_str());
+    }
+    LogAndPrint("  scroll tiling: %ls (from %ls)",
+                settings.scrollTilingEnabled ? L"enabled" : L"disabled", kFileName);
+    return settings;
 }
 
-bool SaveBarShape(BarShape shape) {
+bool SaveBarSettings(const BarSettings& settings) {
     wchar_t path[MAX_PATH] = {};
     if (!DataPath(kFileName, path, MAX_PATH)) return false;
 
     FILE* file = nullptr;
     if (_wfopen_s(&file, path, L"wb") != 0 || !file) {
-        LogAndPrint(L"  bar shape: %ls -- NOT saved (%ls could not be written)", BarShapeName(shape),
+        LogAndPrint(L"  bar settings: NOT saved (%ls could not be written)",
                     kFileName);
         return false;
     }
     std::fprintf(file, "# The bar's own settings. One key per line.\n");
     std::fprintf(file, "# shape: capsule (floating pill) or notch (hangs from the screen's top edge).\n");
-    std::fprintf(file, "shape=%s\n", BarShapeKey(shape));
+    std::fprintf(file, "shape=%s\n", BarShapeKey(settings.shape));
+    std::fprintf(file,
+                 "# scroll_tiling: disabled (default) or enabled. Enabling only permits the "
+                 "separate Enter command.\n");
+    std::fprintf(file, "scroll_tiling=%s\n",
+                 settings.scrollTilingEnabled ? "enabled" : "disabled");
     std::fclose(file);
-    LogAndPrint(L"  bar shape: %ls -- saved to %ls", BarShapeName(shape), kFileName);
+    LogAndPrint(L"  bar settings: shape=%ls scroll-tiling=%ls -- saved to %ls",
+                BarShapeName(settings.shape),
+                settings.scrollTilingEnabled ? L"enabled" : L"disabled", kFileName);
     return true;
 }
 

@@ -17,9 +17,9 @@
 //  WHAT IT COSTS, AND WHY IT IS NOT THE DEFAULT PATH. UIA only sees the tray when the native taskbar is actually
 //  ALIVE -- measured: with the bar hiding it, `Shell_TrayWnd` is not in the tree at all. So a fallback press has
 //  to make the shell's taskbar exist for the length of one press (a few hundred milliseconds), which is visible.
-//  That is a real cost on the user's screen, which is why learned cells never pay it, and why the whole path is
-//  behind a switch (see TrayPress.cpp: ISLANDBAR_NO_TRAY_UIA=1 turns it off and every cell keeps opening the
-//  bar's own menu instead).
+//  That is a real cost on the user's screen, which is why learned cells never pay it and why the whole path is
+//  now opt-in: set ISLANDBAR_TRAY_UIA=1 to enable it. By default every cell keeps opening the bar's own menu
+//  without showing the native taskbar.
 //
 //  RIGHT CLICKS ARE NOT SUPPORTED. UI Automation publishes no context-menu pattern for these elements, and the
 //  measurement agrees: this route is for the left button only. A right press on an unlearned cell keeps opening

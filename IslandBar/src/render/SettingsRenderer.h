@@ -25,6 +25,10 @@ struct SettingsViewModel {
     bool glassCaptureEnabled = true;
     bool peakMeterOnDemand = true;
     bool autoStartEnabled = false;
+    bool scrollTilingEnabled = false;
+    bool scrollTilingActive = false;
+    int scrollTilingColumns = 0;
+    int scrollTilingActiveColumn = -1;
     SettingsHit hovered;
     SettingsHit focused;
     const wchar_t* configPath = nullptr;
@@ -58,8 +62,10 @@ private:
     void DrawGeneral(const SettingsLayout& layout, const SettingsViewModel& model);
     void DrawAppearance(const SettingsLayout& layout, const SettingsViewModel& model);
     void DrawPerformance(const SettingsLayout& layout, const SettingsViewModel& model);
+    void DrawExperimental(const SettingsLayout& layout, const SettingsViewModel& model);
     void DrawAbout(const SettingsLayout& layout, const SettingsViewModel& model);
     void DrawStatusRow(const RectF& row, const wchar_t* label, const wchar_t* value);
+    void DrawSwitch(const RectF& track, bool enabled);
 
     HWND hwnd_ = nullptr;
     Microsoft::WRL::ComPtr<ID2D1Factory> factory_;

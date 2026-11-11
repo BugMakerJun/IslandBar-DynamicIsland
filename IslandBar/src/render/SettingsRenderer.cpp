@@ -156,7 +156,7 @@ void SettingsRenderer::DrawNavigation(const SettingsLayout& layout, const Settin
     Text(L"SETTINGS", {22.0f, 47.0f, 158.0f, 68.0f}, smallFormat_);
 
     static const wchar_t* labels[] = {
-        L"\u5E38\u89C4", L"\u5916\u89C2", L"\u6027\u80FD", L"\u5173\u4E8E"};
+        L"\u5E38\u89C4", L"\u5916\u89C2", L"\u6027\u80FD", L"\u5B9E\u9A8C", L"\u5173\u4E8E"};
     for (int i = 0; i < static_cast<int>(SettingsPage::Count); ++i) {
         const RectF& row = layout.navigation[i];
         const SettingsHit target{SettingsHitKind::Navigation, i};
@@ -180,11 +180,12 @@ void SettingsRenderer::DrawNavigation(const SettingsLayout& layout, const Settin
 
 void SettingsRenderer::DrawHeader(const SettingsLayout& layout, const SettingsViewModel& model) {
     static const wchar_t* titles[] = {
-        L"\u5E38\u89C4", L"\u5916\u89C2", L"\u6027\u80FD", L"\u5173\u4E8E"};
+        L"\u5E38\u89C4", L"\u5916\u89C2", L"\u6027\u80FD", L"\u5B9E\u9A8C", L"\u5173\u4E8E"};
     static const wchar_t* subtitles[] = {
         L"\u542F\u52A8\u4E0E\u8FD0\u884C\u72B6\u6001",
         L"\u8C03\u6574\u52A8\u6001\u5C9B\u7684\u5F62\u6001\u4E0E\u89C6\u89C9\u6548\u679C",
         L"\u5F53\u524D\u6293\u53D6\u4E0E\u91C7\u6837\u72B6\u6001",
+        L"\u9884\u89C8\u4E2D\u7684\u7A97\u53E3\u7BA1\u7406\u80FD\u529B",
         L"\u7248\u672C\u3001\u914D\u7F6E\u76EE\u5F55\u4E0E\u65E5\u5FD7"};
     const int page = SettingsPageIndex(model.page);
     SetInk(kText);
@@ -201,6 +202,24 @@ void SettingsRenderer::DrawStatusRow(const RectF& row, const wchar_t* label, con
     SetInk(kMuted);
     Text(value, {row.left + 190.0f, row.top, row.right - 16.0f, row.bottom}, valueFormat_,
          DWRITE_TEXT_ALIGNMENT_TRAILING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+}
+
+void SettingsRenderer::DrawSwitch(const RectF& track, bool enabled) {
+    const float switchRadius = (track.bottom - track.top) * 0.5f;
+    FillRound(track, switchRadius,
+              enabled ? Alpha(kAccent, 0.78f) : D2D1::ColorF(0.16f, 0.19f, 0.22f, 1.0f));
+    StrokeRound(track, switchRadius, enabled ? Alpha(kAccent, 0.95f) : kEdge, 1.0f);
+    const float knobSide = switchRadius * 1.55f;
+    const float knobLeft =
+        enabled ? track.right - knobSide - 3.0f : track.left + 3.0f;
+    if (target_) {
+        SetInk(kText);
+        target_->FillEllipse(
+            D2D1::Ellipse(D2D1::Point2F(knobLeft + knobSide * 0.5f,
+                                        (track.top + track.bottom) * 0.5f),
+                          knobSide * 0.5f, knobSide * 0.5f),
+            brush_.Get());
+    }
 }
 
 void SettingsRenderer::DrawGeneral(const SettingsLayout& layout, const SettingsViewModel& model) {
@@ -236,25 +255,7 @@ void SettingsRenderer::DrawGeneral(const SettingsLayout& layout, const SettingsV
          layout.autoStartValue, valueFormat_, DWRITE_TEXT_ALIGNMENT_TRAILING,
          DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 
-    const float switchRadius =
-        (layout.autoStartSwitch.bottom - layout.autoStartSwitch.top) * 0.5f;
-    FillRound(layout.autoStartSwitch, switchRadius,
-              model.autoStartEnabled ? Alpha(kAccent, 0.78f) : D2D1::ColorF(0.16f, 0.19f, 0.22f, 1.0f));
-    StrokeRound(layout.autoStartSwitch, switchRadius,
-                model.autoStartEnabled ? Alpha(kAccent, 0.95f) : kEdge, 1.0f);
-    const float knobSide = switchRadius * 1.55f;
-    const float knobLeft = model.autoStartEnabled
-                               ? layout.autoStartSwitch.right - knobSide - 3.0f
-                               : layout.autoStartSwitch.left + 3.0f;
-    if (target_) {
-        SetInk(kText);
-        target_->FillEllipse(
-            D2D1::Ellipse(D2D1::Point2F(knobLeft + knobSide * 0.5f,
-                                        (layout.autoStartSwitch.top +
-                                         layout.autoStartSwitch.bottom) * 0.5f),
-                          knobSide * 0.5f, knobSide * 0.5f),
-            brush_.Get());
-    }
+    DrawSwitch(layout.autoStartSwitch, model.autoStartEnabled);
 
     const SettingsHit quit{SettingsHitKind::Quit, -1};
     const bool quitHot = model.hovered == quit;
@@ -327,6 +328,75 @@ void SettingsRenderer::DrawPerformance(const SettingsLayout& layout, const Setti
                                              : L"\u7B49\u5F85\u5168\u5C4F\u5E94\u7528");
 }
 
+void SettingsRenderer::DrawExperimental(const SettingsLayout& layout,
+                                        const SettingsViewModel& model) {
+    SetInk(kText);
+    Text(L"\u6EDA\u52A8\u5E73\u94FA", layout.experimentalLabel, sectionFormat_);
+    SetInk(kMuted);
+    Text(L"\u6309\u4F4F Win+Alt \u663E\u793A\u624B\u5F62\uFF0C"
+         L"\u6309\u4F4F\u5DE6\u952E\u5DE6\u53F3\u62D6\u52A8",
+         layout.experimentalSubtitle, smallFormat_);
+
+    FillRound(layout.experimentalWarning, 10.0f, Alpha(kDanger, 0.075f));
+    StrokeRound(layout.experimentalWarning, 10.0f, Alpha(kDanger, 0.34f), 1.0f);
+    SetInk(Alpha(kDanger, 0.92f));
+    Text(L"\u5B9E\u9A8C\u6027\u529F\u80FD\uFF1A\u4EC5\u7BA1\u7406\u5F53\u524D\u663E\u793A\u5668"
+         L"\u4E0A\u7684\u666E\u901A\u9876\u5C42\u7A97\u53E3\u3002",
+         {layout.experimentalWarning.left + 14.0f, layout.experimentalWarning.top + 4.0f,
+          layout.experimentalWarning.right - 14.0f, layout.experimentalWarning.top + 28.0f},
+         smallFormat_);
+    SetInk(kMuted);
+    Text(L"\u65B0\u7A97\u53E3\u4F1A\u81EA\u52A8\u63D2\u5165\u5F53\u524D\u5217\u53F3\u4FA7\uFF1B"
+         L"\u5168\u5C4F\u4E0E\u7BA1\u7406\u5458\u7A97\u53E3\u9664\u5916\u3002",
+         {layout.experimentalWarning.left + 14.0f, layout.experimentalWarning.top + 24.0f,
+          layout.experimentalWarning.right - 14.0f, layout.experimentalWarning.bottom - 4.0f},
+         smallFormat_);
+
+    const SettingsHit toggle{SettingsHitKind::ToggleScrollTiling, -1};
+    FillRound(layout.tilingToggleRow, 10.0f,
+              model.hovered == toggle ? kPanelHover : kPanel);
+    StrokeRound(layout.tilingToggleRow, 10.0f,
+                model.focused == toggle ? kAccent : kEdge, 1.0f);
+    SetInk(kText);
+    Text(L"\u542F\u7528 Niri \u5F0F\u6EDA\u52A8\u5E73\u94FA",
+         {layout.tilingToggleRow.left + 16.0f, layout.tilingToggleRow.top + 2.0f,
+          layout.tilingSwitch.left - 12.0f, layout.tilingToggleRow.top + 26.0f},
+         rowFormat_);
+    SetInk(kMuted);
+    Text(L"\u5F00\u542F\u540E\u4ECD\u9700\u8981\u4E0B\u65B9\u786E\u8BA4\u8FDB\u5165",
+         {layout.tilingToggleRow.left + 16.0f, layout.tilingToggleRow.top + 24.0f,
+          layout.tilingSwitch.left - 12.0f, layout.tilingToggleRow.bottom - 2.0f},
+         smallFormat_);
+    DrawSwitch(layout.tilingSwitch, model.scrollTilingEnabled);
+
+    const SettingsHit action{SettingsHitKind::ScrollTilingAction, -1};
+    const bool actionEnabled = model.scrollTilingEnabled;
+    FillRound(layout.tilingActionRow, 10.0f,
+              actionEnabled
+                  ? (model.hovered == action ? kSelected : Alpha(kSelected, 0.76f))
+                  : kPanel);
+    StrokeRound(layout.tilingActionRow, 10.0f,
+                model.focused == action ? kAccent : kEdge, 1.0f);
+    SetInk(actionEnabled ? kText : kMuted);
+    Text(model.scrollTilingActive ? L"\u9000\u51FA\u5E76\u6062\u590D\u7A97\u53E3"
+                                  : L"\u8FDB\u5165\u6EDA\u52A8\u5E73\u94FA",
+         {layout.tilingActionRow.left + 16.0f, layout.tilingActionRow.top,
+          layout.tilingActionRow.right - 16.0f, layout.tilingActionRow.bottom},
+         rowFormat_, DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+
+    wchar_t status[96] = {};
+    if (model.scrollTilingActive) {
+        std::swprintf(status, 96, L"\u5F53\u524D %d \u5217\uFF0C\u805A\u7126\u7B2C %d \u5217",
+                      model.scrollTilingColumns,
+                      model.scrollTilingActiveColumn + 1);
+    } else {
+        std::swprintf(status, 96, L"\u5F53\u524D\u672A\u8FDB\u5165\u6EDA\u52A8\u5E73\u94FA");
+    }
+    SetInk(kMuted);
+    Text(status, layout.tilingStatus, smallFormat_, DWRITE_TEXT_ALIGNMENT_CENTER,
+         DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+}
+
 void SettingsRenderer::DrawAbout(const SettingsLayout& layout, const SettingsViewModel& model) {
     const auto pathRow = [&](const RectF& row, const wchar_t* label, const wchar_t* path,
                              SettingsHitKind kind) {
@@ -375,6 +445,9 @@ HRESULT SettingsRenderer::Render(const SettingsViewModel& model) {
             break;
         case SettingsPage::Performance:
             DrawPerformance(layout, model);
+            break;
+        case SettingsPage::Experimental:
+            DrawExperimental(layout, model);
             break;
         case SettingsPage::About:
             DrawAbout(layout, model);

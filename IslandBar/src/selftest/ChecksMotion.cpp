@@ -61,6 +61,7 @@
 #include "render/GlassMaterial.h"
 #include "shell/Weather.h"   // SkyMarkForCode: the word and the mark come from the same WMO code
 #include "domain/Motion.h"
+#include "domain/NiriBarLayout.h"
 #include "render/Renderer.h"
 #include "render/TextRenderer.h"
 #include "shell/TrayIcons.h"
@@ -95,6 +96,150 @@ void TestMotion(float originX, float originY, float monitorWidthDip) {
           Nearly(heightOf(expanded), kExpandedHeightDip),
           L"expanded is the width and height it declares");
 
+    // Search lives inside the resting pill: the island never grows when the
+    // search field takes over its contents.
+    {
+        const RoundedBox search = BoxForState(IslandState::SearchStrip, anchor);
+        wchar_t detail[192];
+        std::swprintf(detail, 192,
+                      L"pill [%.0f..%.0f], search [%.0f..%.0f]",
+                      collapsed.rect.left, collapsed.rect.right,
+                      search.rect.left, search.rect.right);
+        Check(Nearly(search.rect.left, collapsed.rect.left, 0.01f) &&
+                  Nearly(search.rect.right, collapsed.rect.right, 0.01f) &&
+                  Nearly(heightOf(search), heightOf(collapsed), 0.01f),
+              L"search keeps the resting pill geometry", detail);
+
+        const NiriSearchLayout field = NiriSearchLayoutFor(search, 1.0f);
+        const NiriSearchLayout start = NiriSearchLayoutFor(search, 0.0f);
+        const float leftInset = field.field.left - search.rect.left;
+        const float topInset = field.field.top - search.rect.top;
+        const float rightInset = search.rect.right - field.field.right;
+        const float bottomInset = search.rect.bottom - field.field.bottom;
+        std::swprintf(detail, 192,
+                      L"insets l/t/r/b=%.1f/%.1f/%.1f/%.1f, editor %.1f..%.1f",
+                      leftInset, topInset, rightInset, bottomInset,
+                      field.editor.left, field.editor.right);
+        Check(field.valid &&
+                  Nearly(leftInset, kNiriSearchInsetDip, 0.01f) &&
+                  Nearly(topInset, kNiriSearchInsetDip, 0.01f) &&
+                  Nearly(rightInset, kNiriSearchInsetDip, 0.01f) &&
+                  Nearly(bottomInset, kNiriSearchInsetDip, 0.01f) &&
+                  Nearly(field.editor.left - field.field.left,
+                         field.field.right - field.editor.right, 0.01f),
+              L"the inline search field and its editor have symmetric insets", detail);
+
+        const NiriSearchMotion rest = NiriSearchMotionFor(0.0f);
+        const NiriSearchMotion middle = NiriSearchMotionFor(0.5f);
+        const NiriSearchMotion open = NiriSearchMotionFor(1.0f);
+        std::swprintf(detail, 192,
+                      L"field %.1f -> %.1f, content shift %.1f -> %.1f -> %.1f, "
+                      L"opacity %.2f -> %.2f",
+                      start.field.right - start.field.left, field.field.right - field.field.left,
+                      rest.contentShiftDip, middle.contentShiftDip, open.contentShiftDip,
+                      rest.contentOpacity, open.contentOpacity);
+        Check(start.valid && field.valid &&
+                  Nearly(start.field.left, field.field.left, 0.01f) &&
+                  field.field.right - field.field.left >
+                      start.field.right - start.field.left + 100.0f &&
+                  Nearly(rest.contentShiftDip, 0.0f, 0.01f) &&
+                  Nearly(rest.contentOpacity, 1.0f, 0.01f) &&
+                  middle.contentShiftDip > rest.contentShiftDip &&
+                  middle.contentShiftDip < open.contentShiftDip &&
+                  middle.contentOpacity > 0.0f && middle.contentOpacity < 1.0f &&
+                  Nearly(open.contentShiftDip, kNiriSearchContentTravelDip, 0.01f) &&
+                  Nearly(open.contentOpacity, 0.0f, 0.01f),
+              L"search grows to the right while its old content slides away", detail);
+
+        const NiriSearchResultsLayout results =
+            NiriSearchResultsLayoutFor(search, 3, false, 1.0f);
+        const NiriSearchResultsLayout resultsMid =
+            NiriSearchResultsLayoutFor(search, 3, false, 0.5f);
+        const int firstHit =
+            NiriSearchResultAt(results, (results.rows[0].left + results.rows[0].right) * 0.5f,
+                               (results.rows[0].top + results.rows[0].bottom) * 0.5f);
+        const int belowHit =
+            NiriSearchResultAt(results, (results.rows[0].left + results.rows[0].right) * 0.5f,
+                               results.panel.rect.bottom + 2.0f);
+        std::swprintf(detail, 192,
+                      L"search panel y[%.1f..%.1f], row 0 hit=%d, below hit=%d",
+                      results.panel.rect.top, results.panel.rect.bottom, firstHit, belowHit);
+        Check(results.valid && results.count == 3 &&
+                  resultsMid.valid &&
+                  Nearly(resultsMid.panel.rect.bottom - resultsMid.panel.rect.top,
+                         (results.panel.rect.bottom - results.panel.rect.top) * 0.5f,
+                         0.01f) &&
+                  Nearly(results.panel.rect.left, search.rect.left, 0.01f) &&
+                  Nearly(results.panel.rect.right, search.rect.right, 0.01f) &&
+                  Nearly(results.panel.rect.top,
+                         search.rect.bottom + kNiriSearchResultsGapDip, 0.01f) &&
+                  firstHit == 0 && belowHit == -1,
+              L"search results hang below the island and share one row geometry", detail);
+
+        const RectF wave = NiriMusicWaveButtonFor(search);
+        std::swprintf(detail, 192, L"wave x[%.1f..%.1f] y[%.1f..%.1f]",
+                      wave.left, wave.right, wave.top, wave.bottom);
+        Check(Nearly((wave.left + wave.right) * 0.5f,
+                     search.rect.right - kNiriMusicWaveCentreFromRightDip, 0.01f) &&
+                  Nearly(wave.right - wave.left, kNiriMusicWaveHitDip, 0.01f) &&
+                  Nearly((wave.top + wave.bottom) * 0.5f,
+                         (search.rect.top + search.rect.bottom) * 0.5f, 0.01f),
+              L"the music wave keeps one fixed hit rectangle at the right end", detail);
+
+        float notchExtent = 0.0f;
+        const bool notchStarted = NiriNotchExtentStep(&notchExtent, 1.0f, 0.06f);
+        const float notchQuarter = notchExtent;
+        const bool notchContinues = NiriNotchExtentStep(&notchExtent, 1.0f, 0.06f);
+        const bool notchSettles = NiriNotchExtentStep(&notchExtent, 1.0f, 1.0f);
+        std::swprintf(detail, 192, L"notch extent %.2f -> %.2f -> %.2f",
+                      notchQuarter, notchExtent, notchExtent);
+        Check(notchStarted && notchContinues && notchSettles &&
+                  notchQuarter > 0.0f && notchQuarter < 1.0f &&
+                  Nearly(notchExtent, 1.0f, 0.01f),
+              L"the Niri notch side panels expand over multiple frames", detail);
+
+        const float sideGroupsShown = NiriSideGroupTarget(false, true);
+        const float sideGroupsHidden = NiriSideGroupTarget(true, true);
+        const float noSideContent = NiriSideGroupTarget(false, false);
+        float retreat = 1.0f;
+        const bool retreatStarted =
+            NiriNotchExtentStep(&retreat, sideGroupsHidden, 0.06f);
+        const float retreatMid = retreat;
+        const bool retreatContinues =
+            NiriNotchExtentStep(&retreat, sideGroupsHidden, 0.06f);
+        const bool retreatSettles =
+            NiriNotchExtentStep(&retreat, sideGroupsHidden, 1.0f);
+        std::swprintf(detail, 192,
+                      L"Niri sides shown %.0f hidden %.0f absent %.0f; retreat %.2f -> %.2f",
+                      sideGroupsShown, sideGroupsHidden, noSideContent, retreatMid, retreat);
+        Check(Nearly(sideGroupsShown, 1.0f, 0.001f) &&
+                  Nearly(sideGroupsHidden, 0.0f, 0.001f) &&
+                  Nearly(noSideContent, 0.0f, 0.001f) && retreatStarted &&
+                  retreatContinues && retreatSettles && retreatMid > 0.0f &&
+                  retreatMid < 1.0f && Nearly(retreat, 0.0f, 0.01f),
+              L"Niri sides show in both shapes and disappear over multiple frames for a card",
+              detail);
+
+        constexpr float halfExtent = 0.5f;
+        const NiriBarLayout taskLayout = NiriBarLayoutFor(monitorWidthDip, search, 2);
+        const float visualOffset = NiriSideGroupVisualOffsetDip(halfExtent);
+        const float taskCentreY =
+            (taskLayout.taskButtons[0].top + taskLayout.taskButtons[0].bottom) * 0.5f;
+        const float restingProbe = taskLayout.taskButtons[0].left + 0.25f;
+        const int shiftedHit = NiriTaskAtVisual(
+            taskLayout, taskLayout.taskButtons[0].left + visualOffset,
+            taskCentreY, halfExtent);
+        const int staleHit = NiriTaskAtVisual(taskLayout, restingProbe, taskCentreY, halfExtent);
+        std::swprintf(detail, 192,
+                      L"Niri task slide %.1f DIP; shifted hit=%d stale hit=%d",
+                      visualOffset, shiftedHit, staleHit);
+        Check(taskLayout.taskCount == 2 && visualOffset > 0.0f &&
+                  visualOffset < kNiriSideGroupSlideDip &&
+                  Nearly(NiriSideGroupVisualOffsetDip(1.0f), 0.0f, 0.001f) &&
+                  shiftedHit == 0 && staleHit == -1,
+              L"Niri task hit testing follows the side group's rendered slide", detail);
+    }
+
     // OPENING MUST NOT GET NARROWER ANYWHERE.
     //
     // The card was 400 DIP while the lyric strip is 520, so the first ~100 ms of "opening"
@@ -125,8 +270,8 @@ void TestMotion(float originX, float originY, float monitorWidthDip) {
     // its usable width; the card uses a small fixed radius instead.
     Check(Nearly(expanded.radiusX, kCardRadiusDip, 0.01f),
           L"the card uses the card radius, not half its height");
-    Check(Nearly(kCardRadiusDip, 24.0f, 0.01f),
-          L"the three Stitch cards share a 24 DIP outer radius");
+    Check(Nearly(kCardRadiusDip, 32.0f, 0.01f),
+          L"the three Stitch cards share a 32 DIP outer radius");
     Check(expanded.radiusX < heightOf(expanded) * 0.5f,
           L"the card is not a lozenge");
 
@@ -395,6 +540,23 @@ void TestMotion(float originX, float originY, float monitorWidthDip) {
                             MotionTiming{}) >
           TransitionSeconds(IslandState::Collapsed, IslandState::Hover, MotionTiming{}),
           L"the card takes longer than a spread");
+
+    {
+        Motion staged;
+        staged.SetAnchor(anchor);
+        staged.SetStagedExpansion(true);
+        staged.SnapTo(IslandState::Collapsed);
+        staged.SetTarget(IslandState::Expanded);
+        staged.Tick(0.04f);
+        const RoundedBox early = staged.Current();
+        staged.Tick(0.16f);
+        const RoundedBox later = staged.Current();
+        Check(early.rect.right - early.rect.left > kCollapsedWidthDip + 20.0f &&
+                  Nearly(early.rect.bottom - early.rect.top, kCollapsedHeightDip, 0.1f),
+              L"the unified card expands sideways first and leaves the height alone");
+        Check(later.rect.bottom - later.rect.top > kCollapsedHeightDip,
+              L"... then the height follows after the width");
+    }
 }
 
 void TestClock() {

@@ -38,6 +38,7 @@ const char* PageLogName(SettingsPage page) {
         case SettingsPage::General: return "general";
         case SettingsPage::Appearance: return "appearance";
         case SettingsPage::Performance: return "performance";
+        case SettingsPage::Experimental: return "experimental";
         case SettingsPage::About: return "about";
         case SettingsPage::Count: break;
     }
@@ -139,7 +140,11 @@ void SettingsWindow::SetStatus(const SettingsRuntimeStatus& status) {
                          status.fullscreenSuppressed != status_.fullscreenSuppressed ||
                          status.glassCaptureEnabled != status_.glassCaptureEnabled ||
                          status.peakMeterOnDemand != status_.peakMeterOnDemand ||
-                         status.autoStartEnabled != status_.autoStartEnabled;
+                         status.autoStartEnabled != status_.autoStartEnabled ||
+                         status.scrollTilingEnabled != status_.scrollTilingEnabled ||
+                         status.scrollTilingActive != status_.scrollTilingActive ||
+                         status.scrollTilingColumns != status_.scrollTilingColumns ||
+                         status.scrollTilingActiveColumn != status_.scrollTilingActiveColumn;
     status_ = status;
     if (changed) Invalidate();
 }
@@ -160,6 +165,20 @@ bool SettingsWindow::TakeThemeCommand(int* themeIndex) {
     if (!pendingTheme_ || !themeIndex) return false;
     pendingTheme_ = false;
     *themeIndex = requestedTheme_;
+    return true;
+}
+
+bool SettingsWindow::TakeScrollTilingPreference(bool* enabled) {
+    if (!pendingScrollTilingPreference_ || !enabled) return false;
+    pendingScrollTilingPreference_ = false;
+    *enabled = requestedScrollTilingEnabled_;
+    return true;
+}
+
+bool SettingsWindow::TakeScrollTilingCommand(ScrollTilingCommand* command) {
+    if (pendingScrollTilingCommand_ == ScrollTilingCommand::None || !command) return false;
+    *command = pendingScrollTilingCommand_;
+    pendingScrollTilingCommand_ = ScrollTilingCommand::None;
     return true;
 }
 
@@ -258,6 +277,29 @@ void SettingsWindow::Activate(const SettingsHit& hit) {
                         wanted ? L"on" : L"off", saved ? L"success" : L"FAILED");
             break;
         }
+        case SettingsHitKind::ToggleScrollTiling:
+            requestedScrollTilingEnabled_ = !status_.scrollTilingEnabled;
+            pendingScrollTilingPreference_ = true;
+            status_.scrollTilingEnabled = requestedScrollTilingEnabled_;
+            if (!requestedScrollTilingEnabled_) {
+                pendingScrollTilingCommand_ = ScrollTilingCommand::Exit;
+            }
+            focused_ = hit;
+            Invalidate();
+            LogAndPrint("  settings: scroll-tiling-enabled=%ls",
+                        requestedScrollTilingEnabled_ ? L"on" : L"off");
+            break;
+        case SettingsHitKind::ScrollTilingAction:
+            if (status_.scrollTilingEnabled) {
+                pendingScrollTilingCommand_ =
+                    status_.scrollTilingActive ? ScrollTilingCommand::Exit
+                                               : ScrollTilingCommand::Enter;
+                focused_ = hit;
+                Invalidate();
+                LogAndPrint("  settings: scroll-tiling-action=%ls",
+                            status_.scrollTilingActive ? L"exit" : L"enter");
+            }
+            break;
         case SettingsHitKind::Quit:
             LogAndPrint("  settings: full exit requested");
             PostQuitMessage(0);
@@ -295,6 +337,10 @@ void SettingsWindow::Draw() {
     model.glassCaptureEnabled = status_.glassCaptureEnabled;
     model.peakMeterOnDemand = status_.peakMeterOnDemand;
     model.autoStartEnabled = status_.autoStartEnabled;
+    model.scrollTilingEnabled = status_.scrollTilingEnabled;
+    model.scrollTilingActive = status_.scrollTilingActive;
+    model.scrollTilingColumns = status_.scrollTilingColumns;
+    model.scrollTilingActiveColumn = status_.scrollTilingActiveColumn;
     model.hovered = hovered_;
     model.focused = focused_;
     model.configPath = configPath_.c_str();
