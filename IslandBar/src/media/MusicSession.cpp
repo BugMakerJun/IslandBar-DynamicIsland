@@ -693,8 +693,20 @@ void MusicSession::Run() {
     // here keeps the UI thread out of it entirely.
     const HRESULT apartment = RoInitialize(RO_INIT_MULTITHREADED);
     const bool haveApartment = SUCCEEDED(apartment);
+    using MediaSessionManager =
+        winrt::Windows::Media::Control::GlobalSystemMediaTransportControlsSessionManager;
+    MediaSessionManager manager{nullptr};
+    DWORD nextManagerRefreshAt = 0;
+    unsigned managerRefreshAttempts = 0;
 
     MusicInfo previous;
+    // The epoch and the last timeline update that belonged to it. A track
+    // change makes the newly read Position unusable until the timeline says it
+    // has updated again; the UI counts that new epoch locally in the meantime.
+    unsigned long long timelineEpoch = 0;
+    long long epochTimelineUpdatedAt = 0;
+    long long epochTimelinePosition = -1;
+    bool epochHasFreshManager = false;
     DWORD lastPoll = 0;
     // When the user last skipped a track, for the shorter poll interval that follows one. See
     // NextPollIntervalMs.
@@ -741,8 +753,22 @@ void MusicSession::Run() {
         try {
             using namespace winrt::Windows::Media::Control;
 
-            auto manager = GlobalSystemMediaTransportControlsSessionManager::RequestAsync().get();
-            if (!manager) continue;
+            bool managerRebuiltThisPoll = false;
+            if (!manager) {
+                manager = MediaSessionManager::RequestAsync().get();
+                if (!manager) continue;
+                LogLine(L"  music: session manager acquired");
+            } else if (nextManagerRefreshAt != 0 &&
+                       GetTickCount() - nextManagerRefreshAt < 0x80000000u &&
+                       managerRefreshAttempts < 3) {
+                auto refreshed = MediaSessionManager::RequestAsync().get();
+                if (!refreshed) continue;
+                manager = refreshed;
+                managerRebuiltThisPoll = true;
+                ++managerRefreshAttempts;
+                nextManagerRefreshAt =
+                    managerRefreshAttempts < 3 ? GetTickCount() + 1000 : 0;
+            }
 
             // --- a transport action, if one was asked for ---
             if (toggleRequested) {
@@ -830,6 +856,7 @@ void MusicSession::Run() {
 
             MusicInfo fresh;
             auto session = ChooseSession(manager);
+            bool trackChanged = false;
             if (session) {
                 fresh.present = true;
 
@@ -854,15 +881,15 @@ void MusicSession::Run() {
                         // track -- throttled to one try per kArtworkRetryMs, because each ask opens a stream
                         // and re-encodes a PNG. Once a cover arrives the asking stops, so a track that
                         // genuinely has none costs a few tries at the start and then nothing at all.
-                        const bool trackChanged =
-                            std::strcmp(fresh.title, previous.title) != 0 ||
-                            std::strcmp(fresh.album, previous.album) != 0 ||
-                            std::strcmp(fresh.artist, previous.artist) != 0;
+                        trackChanged =
+                            island::MusicTrackChanged(previous, fresh);
                         const DWORD now = GetTickCount();
                         // A NEW TRACK STARTS A CHASE, wherever the skip came from: the chase is what makes the
                         // cover, the lyrics and the position catch up in a fraction of a second instead of
                         // waiting out a poll. See NextPollIntervalMs.
-                        if (trackChanged) lastTrackChange = now;
+                        if (trackChanged) {
+                            lastTrackChange = now;
+                        }
                         const bool wantArtwork = ShouldFetchArtwork(
                             trackChanged, previous.artworkSize == 0, now - lastArtworkTry,
                             lastTrackChange != 0 ? now - lastTrackChange : kArtworkRetryWindowMs);
@@ -961,6 +988,8 @@ void MusicSession::Run() {
                 } catch (const winrt::hresult_error&) {
                 }
 
+                trackChanged = island::MusicTrackChanged(previous, fresh);
+
                 try {
                     auto info = session.GetPlaybackInfo();
                     if (info) {
@@ -970,16 +999,58 @@ void MusicSession::Run() {
                     fresh.state = PlaybackState::Unknown;
                 }
 
+                long long timelineUpdatedAt = 0;
+                bool timelineRangeValid = false;
                 try {
                     auto timeline = session.GetTimelineProperties();
                     if (timeline) {
                         // WinRT durations are in 100-nanosecond ticks.
                         fresh.positionMs = timeline.Position().count() / 10000;
                         fresh.durationMs = timeline.EndTime().count() / 10000;
+                        timelineUpdatedAt = timeline.LastUpdatedTime().time_since_epoch().count();
+                        timelineRangeValid =
+                            fresh.durationMs > 0 && fresh.positionMs >= 0 &&
+                            fresh.positionMs <= fresh.durationMs;
                     }
                 } catch (const winrt::hresult_error&) {
                 }
+
+                fresh.timelineTrusted = TimelineTrustedForEpoch(
+                    trackChanged, previous.present, timelineRangeValid, previous.timelineTrusted,
+                    epochHasFreshManager, timelineUpdatedAt, epochTimelineUpdatedAt,
+                    fresh.positionMs, epochTimelinePosition);
+                if (trackChanged) {
+                    ++timelineEpoch;
+                    epochTimelineUpdatedAt = timelineUpdatedAt;
+                    epochTimelinePosition = fresh.positionMs;
+                    epochHasFreshManager = false;
+                    managerRefreshAttempts = 0;
+                    nextManagerRefreshAt = previous.present ? GetTickCount() + 1000 : 0;
+                    LogLine(L"  music: track epoch=%llu timeline=%ls "
+                            L"sessionPosition=%lldms cover=%ls",
+                            timelineEpoch, fresh.timelineTrusted ? L"TRUSTED" : L"UNTRUSTED",
+                            fresh.positionMs,
+                            fresh.artworkSize > 0 ? L"present" : L"NONE");
+                } else if (managerRebuiltThisPoll && !fresh.timelineTrusted) {
+                    epochTimelineUpdatedAt = timelineUpdatedAt;
+                    epochTimelinePosition = fresh.positionMs;
+                    epochHasFreshManager = timelineRangeValid;
+                    LogLine(L"  music: timeline epoch=%llu rebased after session refresh "
+                            L"attempt=%u position=%lldms trusted=0",
+                            timelineEpoch, managerRefreshAttempts, fresh.positionMs);
+                }
+                if (fresh.timelineTrusted) {
+                    nextManagerRefreshAt = 0;
+                    if (!previous.timelineTrusted) {
+                        LogLine(L"  music: timeline epoch=%llu TRUSTED "
+                                L"position=%lldms duration=%lldms",
+                                timelineEpoch, fresh.positionMs, fresh.durationMs);
+                    }
+                    epochTimelineUpdatedAt = timelineUpdatedAt;
+                }
             }
+
+            fresh.timelineEpoch = timelineEpoch;
 
             InterlockedIncrement(&pollCount_);
 
@@ -990,6 +1061,8 @@ void MusicSession::Run() {
                 fresh.state != previous.state ||
                 fresh.positionMs / 1000 != previous.positionMs / 1000 ||
                 fresh.artworkRevision != previous.artworkRevision ||
+                fresh.timelineEpoch != previous.timelineEpoch ||
+                fresh.timelineTrusted != previous.timelineTrusted ||
                 std::strcmp(fresh.title, previous.title) != 0 ||
                 std::strcmp(fresh.artist, previous.artist) != 0 ||
                 std::strcmp(fresh.album, previous.album) != 0 ||

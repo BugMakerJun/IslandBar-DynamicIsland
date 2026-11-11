@@ -1612,14 +1612,15 @@ static void UpdateTrackPosition(island::BarState& bar, const island::MusicInfo& 
     {
         const bool sessionTimeline =
             bar.activeFromSession &&
-            island::SessionReportsTimeline(nowPlaying.positionMs, nowPlaying.durationMs);
+            nowPlaying.timelineTrusted;
         if (bar.activePresent && !sessionTimeline && bar.activePlaying) {
             bar.trackPlayedMs += static_cast<double>(dt) * 1000.0;
         }
         bar.track = island::TrackPositionFor(
             nowPlaying.positionMs, nowPlaying.durationMs,
             static_cast<long long>(GetTickCount64() - musicPositionAt),
-            static_cast<long long>(bar.trackPlayedMs), bar.activePlaying);
+            static_cast<long long>(bar.trackPlayedMs), bar.activePlaying,
+            bar.activeFromSession && nowPlaying.timelineTrusted);
         // A session with a timeline but nothing playing yet: keep the caller's other sources out
         // of it -- `TrackPositionFor` already answered, and `bar.activePresent` says whether there is
         // anything on the pill at all.
@@ -1805,7 +1806,11 @@ static void ReadWhatIsPlaying(BarRuntime& runtime, island::BarState& bar, island
 
         const bool trackChanged = std::strcmp(bar.drawnTrackTitle, bar.activeTitle) != 0 ||
                                   std::strcmp(bar.drawnTrackArtist, bar.activeArtist) != 0;
-        if (trackChanged) {
+        const bool timelineEpochChanged =
+            bar.activeFromSession &&
+            runtime.nowPlaying.timelineEpoch != bar.trackTimelineEpoch;
+        if (bar.activeFromSession) bar.trackTimelineEpoch = runtime.nowPlaying.timelineEpoch;
+        if (trackChanged || timelineEpochChanged) {
             strncpy_s(bar.drawnTrackTitle, sizeof(bar.drawnTrackTitle), bar.activeTitle, _TRUNCATE);
             strncpy_s(bar.drawnTrackArtist, sizeof(bar.drawnTrackArtist), bar.activeArtist, _TRUNCATE);
             // A bar.track change invalidates the lyrics and their scroll position.

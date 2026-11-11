@@ -1827,21 +1827,65 @@ void TestRenderer(IslandWindow& window) {
                                          island::SessionReportsTimeline(0, 240000);
                 const bool reportsNothing = !island::SessionReportsTimeline(0, 0);
 
-                const island::TrackPosition counted = island::TrackPositionFor(0, 0, 5000, 42000, true);
+                const island::TrackPosition counted =
+                    island::TrackPositionFor(0, 0, 5000, 42000, true, true);
                 const island::TrackPosition projected =
-                    island::TrackPositionFor(30000, 240000, 2000, 0, true);
-                const island::TrackPosition none = island::TrackPositionFor(0, 0, 0, 0, false);
+                    island::TrackPositionFor(30000, 240000, 2000, 0, true, true);
+                const island::TrackPosition none =
+                    island::TrackPositionFor(0, 0, 0, 0, false, false);
+                const island::TrackPosition rejectedOldTimeline =
+                    island::TrackPositionFor(186187, 282844, 300, 800, true, false);
+                const bool firstSessionTrusted =
+                    island::TimelineTrustedForEpoch(true, false, true, false, false, 1000, 0, 0,
+                                                    -1);
+                const bool changedTrackRejected =
+                    !island::TimelineTrustedForEpoch(true, true, true, true, true, 1000, 0, 0,
+                                                     -1);
+                const bool unchangedTimelineRejected =
+                    !island::TimelineTrustedForEpoch(false, true, true, false, true, 1000, 1000,
+                                                     0, 0);
+                const bool advancedTimelineTrusted =
+                    island::TimelineTrustedForEpoch(false, true, true, false, true, 2000, 1000,
+                                                     0, 0);
+                const bool advancedPositionTrusted =
+                    island::TimelineTrustedForEpoch(false, true, true, false, true, 0, 0, 5000,
+                                                     0);
+                const bool invalidTimelineRejected =
+                    !island::TimelineTrustedForEpoch(false, true, false, true, true, 2000, 1000,
+                                                     0, 0);
+
+                island::MusicInfo oldTrack;
+                oldTrack.present = true;
+                strncpy_s(oldTrack.title, "First", _TRUNCATE);
+                strncpy_s(oldTrack.artist, "Artist", _TRUNCATE);
+                oldTrack.timelineEpoch = 4;
+                island::MusicInfo nextTrack = oldTrack;
+                strncpy_s(nextTrack.title, "Second", _TRUNCATE);
+                nextTrack.timelineEpoch = 5;
+                island::MusicInfo emptyMetadata = oldTrack;
+                emptyMetadata.artist[0] = '\0';
+                emptyMetadata.album[0] = '\0';
+                island::MusicInfo sameTrack = oldTrack;
 
                 wchar_t timelineText[224];
                 std::swprintf(timelineText, 224,
                               L"no timeline -> %lld (session? %d); a reading -> %lld (session? %d); "
-                              L"nothing -> %lld",
+                              L"nothing -> %lld; old epoch rejected -> %lld (session? %d)",
                               counted.ms, counted.fromSession ? 1 : 0, projected.ms,
-                              projected.fromSession ? 1 : 0, none.ms);
+                              projected.fromSession ? 1 : 0, none.ms, rejectedOldTimeline.ms,
+                              rejectedOldTimeline.fromSession ? 1 : 0);
                 Check(reportsWhenPlaying && reportsHalf && reportsNothing && counted.ms == 42000 &&
                           !counted.fromSession && projected.ms == 32000 && projected.fromSession &&
-                          none.ms == 0 && !none.fromSession,
-                      L"a session with no timeline is counted by the bar, and one with a reading is not",
+                          none.ms == 0 && !none.fromSession && rejectedOldTimeline.ms == 800 &&
+                          !rejectedOldTimeline.fromSession &&
+                          firstSessionTrusted && changedTrackRejected &&
+                          unchangedTimelineRejected && advancedTimelineTrusted &&
+                          advancedPositionTrusted &&
+                          invalidTimelineRejected &&
+                          island::MusicTrackChanged(oldTrack, nextTrack) &&
+                          !island::MusicTrackChanged(oldTrack, emptyMetadata) &&
+                          !island::MusicTrackChanged(oldTrack, sameTrack),
+                      L"only a timeline trusted for this epoch is used; an old timeline leaves the count running",
                       timelineText);
             }
 

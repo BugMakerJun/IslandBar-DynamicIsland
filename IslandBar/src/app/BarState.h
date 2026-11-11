@@ -340,6 +340,9 @@ struct BarState {
     // The stopwatch for a track whose position nobody reports: it runs only while the song plays, and
     // it is reset when the track changes. Advanced in the frame loop (see TrackPositionFor).
     double trackPlayedMs = 0.0;
+    // The media epoch the stopwatch above belongs to. A session swap can change
+    // this even when two players happen to report the same title.
+    unsigned long long trackTimelineEpoch = 0;
     // This frame's distance into the track, and whether the session supplied it. ONE answer, decided
     // once per frame and read by the lyric line, the card's printed time and its bar, and the
     // once-a-second redraw -- so none of them can disagree about where the song is.

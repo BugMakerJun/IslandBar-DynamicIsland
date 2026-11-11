@@ -18,6 +18,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 
 #include "platform/CriticalSection.h"
 #include "platform/WorkerThread.h"
@@ -76,9 +77,10 @@ struct TrackPosition {
 };
 
 inline TrackPosition TrackPositionFor(long long positionMs, long long durationMs,
-                                      long long sinceReadingMs, long long stopwatchMs, bool playing) {
+                                      long long sinceReadingMs, long long stopwatchMs, bool playing,
+                                      bool timelineTrusted) {
     TrackPosition out;
-    if (SessionReportsTimeline(positionMs, durationMs)) {
+    if (timelineTrusted && SessionReportsTimeline(positionMs, durationMs)) {
         out.ms = ProjectedPositionMs(positionMs, durationMs, sinceReadingMs, playing);
         out.fromSession = true;
         return out;
@@ -129,6 +131,14 @@ struct MusicInfo {
     // live stream reports.
     long long positionMs = 0;
     long long durationMs = 0;
+    // The player publishes media properties and timeline properties separately,
+    // and they are not an atomic pair. On a track change the timeline can still
+    // belong to the previous song, so positionMs is usable only while this is
+    // true. `timelineEpoch` changes with the track or session identity; the UI
+    // uses that epoch's own stopwatch until the media reader can prove that a
+    // later timeline reading belongs to it.
+    unsigned long long timelineEpoch = 0;
+    bool timelineTrusted = false;
 
     // Album art as a small PNG.
     //
@@ -158,6 +168,40 @@ struct MusicInfo {
     size_t  iconSize = 0;
     unsigned long long iconRevision = 0;
 };
+
+// Whether a fresh reading describes a different track or media session. An
+// empty metadata field is not a track change: players can return an empty
+// artist or album on one poll without having changed what is playing. This is
+// pure so the same rule can be asserted without a real media provider.
+inline bool MusicTrackChanged(const MusicInfo& previous, const MusicInfo& fresh) {
+    if (previous.present != fresh.present) return true;
+    if (!fresh.present) return false;
+    const auto changed = [](const char* before, const char* after) {
+        return after[0] != '\0' && std::strcmp(before, after) != 0;
+    };
+    return changed(previous.title, fresh.title) || changed(previous.artist, fresh.artist) ||
+           changed(previous.album, fresh.album) || changed(previous.app, fresh.app);
+}
+
+// Whether a timeline reading may be used for the current track epoch. A track
+// change never trusts the reading that carried the new title: chronology is not
+// atomic across the two GSMTC properties. It becomes trustworthy only after the
+// timeline reports another update within the same epoch. A first session has no
+// older song to contaminate and may use its reading immediately.
+inline bool TimelineTrustedForEpoch(bool trackChanged, bool hadPreviousSession,
+                                    bool timelineRangeValid, bool previousTrusted,
+                                    bool timelineRebased, long long timelineUpdatedAt,
+                                    long long epochTimelineUpdatedAt, long long positionMs,
+                                    long long epochPositionMs) {
+    if (!timelineRangeValid) return false;
+    if (trackChanged) return !hadPreviousSession;
+    if (previousTrusted) return true;
+    if (!timelineRebased) return false;
+    const bool timeAdvanced =
+        timelineUpdatedAt > 0 && timelineUpdatedAt > epochTimelineUpdatedAt;
+    const bool positionAdvanced = epochPositionMs >= 0 && positionMs != epochPositionMs;
+    return timeAdvanced || positionAdvanced;
+}
 
 class MusicSession {
 public:
