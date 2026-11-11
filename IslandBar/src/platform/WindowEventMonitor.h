@@ -1,9 +1,10 @@
 // =====================================================================
-//  WindowEventMonitor.h -- OUTOFCONTEXT WinEvent queue for tiling.
+//  WindowEventMonitor.h -- OUTOFCONTEXT WinEvent queue for desktop state.
 //
-//  The callback does no layout, file I/O or SetWindowPos. It only records a
-//  compact event and wakes the IslandBar message loop. The frame loop drains
-//  the queue, coalesces it and gives the result to the tiling controller.
+//  The callback does no layout, window enumeration, file I/O or SetWindowPos.
+//  It only records a compact event and wakes the IslandBar message loop. The
+//  frame loop drains the queue and coalesces the result for tiling, task-row,
+//  WeChat and full-screen reconciliation.
 // =====================================================================
 #pragma once
 
@@ -22,6 +23,7 @@ enum class WindowEventKind {
     Shown,
     Hidden,
     Destroyed,
+    NameChanged,
 };
 
 struct WindowEvent {
@@ -39,7 +41,7 @@ public:
     bool Start(HWND wakeWindow);
     void Stop();
     bool Running() const {
-        return foregroundHook_ != nullptr && objectHook_ != nullptr;
+        return foregroundHook_ != nullptr && objectHook_ != nullptr && nameHook_ != nullptr;
     }
     void Poll(std::vector<WindowEvent>* events);
 
@@ -51,6 +53,7 @@ private:
 
     HWINEVENTHOOK foregroundHook_ = nullptr;
     HWINEVENTHOOK objectHook_ = nullptr;
+    HWINEVENTHOOK nameHook_ = nullptr;
     static constexpr size_t kMaxQueuedEvents = 256;
     std::atomic<HWND> wakeWindow_ = nullptr;
     std::atomic<bool> wakePosted_ = false;

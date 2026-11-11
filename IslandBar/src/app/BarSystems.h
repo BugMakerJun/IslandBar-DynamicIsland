@@ -12,7 +12,7 @@
 //  CONSTRUCTION ORDER IS THE SOURCE ORDER, and it did not change when these moved: the members below are
 //  declared in exactly the order the locals were, so they are built in the same order and destroyed in the
 //  same reverse order. What did NOT move are the calls that bring each one up -- `window.Create(...)`,
-//  `statusReader.Open()`, `music.Start()`, `preview.Create(window.Handle())`, `startApps.RefreshList()` on a worker
+//  `statusReader.Start(...)`, `music.Start()`, `preview.Create(window.Handle())`, `startApps.RefreshList()` on a worker
 //  thread -- because those are a SEQUENCE with logging, early returns and fallbacks between them, and a
 //  sequence belongs in RunBar where it can be read from top to bottom. A member is alive from the moment the
 //  struct is built; the bar's startup code says when each of them is asked to start.

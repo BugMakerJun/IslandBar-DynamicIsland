@@ -300,11 +300,16 @@ struct BarState {
     //
     // Moved 2026-10-15, comments and all. TWO KINDS OF THING ARE IN HERE and it is worth knowing which is
     // which: the MEDIA state (what the pill is showing, and the strings the renderer is given) and the
-    // POLL CLOCKS for the three channels that have no event to listen to (the toast database, WeChat, and
-    // the sound of a call). The objects that own those channels -- MusicSession, ToastReader, the lyric
-    // provider -- stay in RunBar for now: building them is a sequence, and they get their own slice.
-    unsigned long long lastToastPoll = 0;
+    // Poll clocks for the channels that still need a bounded fallback (WeChat
+    // window discovery and the sound of a call). The toast database now polls on
+    // its own worker and wakes the UI through UiWake.
     unsigned long long lastWeChatPoll = 0;
+    // Set by the tray ring/registry wake source. TickTray consumes it and
+    // performs an immediate refresh instead of waiting for the 5 s fallback.
+    bool trayWakePending = false;
+    bool statusWakePending = false;
+    bool taskRefreshWakePending = false;
+    bool wechatWakePending = false;
     // When the call strip's meter was last redrawn. See the redraw reasons below.
     unsigned long long lastCallMeterMs = 0;
     // The WeChat sound channel's own clock: 200 ms, because the edge it looks for lasts about a second.

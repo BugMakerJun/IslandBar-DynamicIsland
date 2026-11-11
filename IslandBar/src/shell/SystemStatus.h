@@ -23,7 +23,12 @@
 #pragma once
 
 #include <windows.h>
+
+#include <atomic>
 #include <cstdint>
+
+#include "platform/CriticalSection.h"
+#include "platform/WorkerThread.h"
 
 namespace island {
 
@@ -171,27 +176,53 @@ bool ShouldDrawInputMethod(const SystemStatus& status, int installedLayoutCount)
 // identical on screen and only one of them is worth showing.
 class SystemStatusReader {
 public:
-    // Opens the handles it needs. Safe to call more than once.
-    bool Open();
+    SystemStatusReader() = default;
+    ~SystemStatusReader();
 
-    // Releases them.
-    void Close();
+    SystemStatusReader(const SystemStatusReader&) = delete;
+    SystemStatusReader& operator=(const SystemStatusReader&) = delete;
 
-    // Samples everything into `out`. Values that could not be read are left as they were.
-    void Sample(SystemStatus* out);
+    // Opens the machine handles on its own worker and takes the first reading.
+    // The worker then samples every pollMs and wakes the UI after publishing.
+    bool Start(HWND wakeWindow, unsigned long pollMs = 2000);
+    void Stop();
+
+    // Asks the worker to take a reading now, used after a user changes a radio.
+    void RequestSample();
+
+    // Copies the latest complete reading. This is a small struct and is the
+    // only method the UI thread calls.
+    void Snapshot(SystemStatus* out) const;
 
     // How many keyboard layouts are installed.
     //
     // Counted once at Open, because the indicator is only worth drawing when there is more than
     // one and the installed set does not change while the bar runs. Exposed rather than folded
     // into the status because it is a fact about the machine, not a reading.
-    int InstalledLayoutCount() const { return installedLayoutCount_; }
+    int InstalledLayoutCount() const {
+        return installedLayoutCount_.load(std::memory_order_acquire);
+    }
 
 private:
+    static unsigned long __stdcall ThreadEntry(void* self);
+    void Run();
+    void Open();
+    void Close();
+    void Sample(SystemStatus* out);
+    bool Publish(const SystemStatus& status);
+
+    WorkerThread worker_;
+    HANDLE requestEvent_ = nullptr;
+    HWND wakeWindow_ = nullptr;
+    unsigned long pollMs_ = 2000;
+    std::atomic<bool> running_{false};
+    std::atomic<bool> haveSample_{false};
+    std::atomic<int> installedLayoutCount_{0};
+    mutable CriticalSection lock_;
+    SystemStatus reading_{};
+
     void* wlanClient_ = nullptr;
     bool wlanOpen_ = false;
-
-    int  installedLayoutCount_ = 0;
 
     // Cached so the enumeration is not repeated per frame: the radio set does not change while
     // the bar runs, and BluetoothFindFirstRadio walks a device tree.

@@ -65,6 +65,7 @@
 #include "shell/WallpaperTint.h"
 #include "platform/DisplayBrightness.h"   // the brightness row: DDC/CI, the only interface this machine has
 #include "platform/AutoStart.h"
+#include "platform/UiWake.h"
 #include "shell/SystemToggles.h"       // Bluetooth / night light / live captions: the tiles that switch
 #include "render/Theme.h"               // the material: colours and edges, switchable, plus themes\*.txt
 #include "services/WeChatWatch.h"
@@ -724,15 +725,16 @@ static void StartNotificationChannels(bool& listening, bool& toastsAvailable, is
                         island::kPipeName);
 
     // The SECOND notification channel: Windows' own toasts, read out of the database the notification centre
-    // uses. Polled on the frame loop's slow timer rather than by a thread of its own -- one indexed SELECT
-    // every couple of seconds costs less than a thread would -- and a failure to read it leaves the bar exactly
-    // as it was, because the push channel does not depend on it.
+    // uses. SQLite runs on a worker; the frame loop only drains its bounded decoded queue.
     toastsAvailable = systems.toasts.Start();
     if (!toastsAvailable) {
         island::LogAndPrint("  notifications: system toasts are NOT being read (see above)");
     } else {
         const int seeded = systems.toasts.SeedHistory(&systems.notifications, 16);
         island::LogAndPrint("  notifications: %d history item(s) available at startup", seeded);
+        if (!systems.toasts.StartPolling(systems.window.Handle())) {
+            island::LogAndPrint("  notifications: toast worker could not start; system toasts are paused");
+        }
     }
 }
 
@@ -1120,6 +1122,11 @@ static void ReadTrayAndStartLearning(island::BarSystems& systems) {
             }).detach();
         }
         std::fflush(stdout);
+    }
+    if (island::StartTrayWake(systems.window.Handle())) {
+        island::LogAndPrint("  tray: wake source running (ring event + registry notification)");
+    } else {
+        island::LogAndPrint("  tray: wake source unavailable; the 5 s refresh remains active");
     }
 }
 
@@ -2121,24 +2128,11 @@ static void PollNotificationChannels(bool listening, bool toastsAvailable, bool 
         }
     }
 
-    // ... and the same for the OTHER channel, on a slow timer.
-    //
-    // Two seconds rather than every frame because it is a database query, and the delay is invisible:
-    // the shell's own toast appears at the same moment and the bar's card follows it. Nothing here
-    // depends on the push channel and nothing in the push channel depends on this.
-    if (toastsAvailable && GetTickCount64() - bar.lastToastPoll >= 2000) {
-        bar.lastToastPoll = GetTickCount64();
+    // ... and the same for the other channel. SQLite already ran on its
+    // worker; this consumes an in-memory fixed-capacity batch only.
+    if (toastsAvailable && systems.toasts.HasPending()) {
         frameWork |= toastPollBit;
-        const unsigned long long pollStartedAt = GetTickCount64();
-        const int arrived = systems.toasts.Poll(&systems.notifications);
-        // Said out loud when it is slow, because this is a database query on the frame loop: the one
-        // thing that must not happen here is silently costing a frame. Measured 2026-10-18: a normal
-        // poll is under a millisecond, and the slow one that was seen took 57 ms.
-        const unsigned long long pollTook = GetTickCount64() - pollStartedAt;
-        if (pollTook >= 10) {
-            island::LogAndPrint("  toasts: the poll took %llu ms", pollTook);
-            std::fflush(stdout);
-        }
+        const int arrived = systems.toasts.Drain(&systems.notifications);
         if (arrived > 0) {
             island::LogAndPrint("  toasts: %d new system toast(s), %d taken in total", arrived,
                                 systems.toasts.Taken());
@@ -2150,7 +2144,8 @@ static void PollNotificationChannels(bool listening, bool toastsAvailable, bool 
     }
 
     // ... and WeChat, which has no channel of its own and is recognised by its popup appearing.
-    if (GetTickCount64() - bar.lastWeChatPoll >= 500) {
+    if (bar.wechatWakePending || GetTickCount64() - bar.lastWeChatPoll >= 2000) {
+        bar.wechatWakePending = false;
         bar.lastWeChatPoll = GetTickCount64();
         frameWork |= wechatScanBit;
         const unsigned long long scanStartedAt = GetTickCount64();
@@ -2499,10 +2494,6 @@ static void UpdateScrollTilingGrab(island::BarSystems& systems,
     island::ScrollTilingController& tiling = systems.scrollTiling;
     island::ScrollTilingGrabLayer& layer = systems.scrollTilingGrabLayer;
     if (!tiling.Active()) {
-        if (systems.windowEvents.Running()) {
-            systems.windowEvents.Stop();
-            island::LogAndPrint("tiling: event=events state=stopped hooks=0");
-        }
         layer.Destroy();
         return;
     }
@@ -4027,13 +4018,13 @@ static bool DecideNeedDraw(BarRuntime& runtime, island::BarState& bar, island::B
     if (callMeterDue) bar.lastCallMeterMs = GetTickCount64();
 
     // The pill's background meter is the other thing here that moves without an event, and it
-    // asks for frames at 30 Hz: the rate the reading behind it is refreshed at (see
+    // asks for frames at 20 Hz: the rate the reading behind it is refreshed at (see
     // AudioVolume::Peak), and what a drifting shape needs to look continuous rather than stepped.
     // Only while music is what the bar is showing: a wave nobody can see is a redraw nobody
     // asked for.
     if (musicVisible) {
         runtime.musicMeterSeconds += std::clamp(dt, 0.0f, 0.1f);
-        constexpr float kMusicMeterSeconds = 1.0f / 30.0f;
+        constexpr float kMusicMeterSeconds = 1.0f / 20.0f;
         if (runtime.musicMeterSeconds >= kMusicMeterSeconds) {
             musicMeterDue = true;
             runtime.musicMeterSeconds -= kMusicMeterSeconds;
@@ -4152,7 +4143,8 @@ static bool DecideNeedDraw(BarRuntime& runtime, island::BarState& bar, island::B
         bar.lastTaskHovered = taskHovered;
     }
 
-    return animating || clockChanged || notificationChanged ||
+    return bar.trayWakePending || bar.statusWakePending || bar.taskRefreshWakePending ||
+           animating || clockChanged || notificationChanged ||
            musicChanged || lyricsScrolling || lyricLineChanged ||
            lyricLineAnimating || progressChanged || musicMeterDue ||
            bar.iconAnimating || bar.rowAppearAnimating || soundPageChanged ||
@@ -4294,16 +4286,17 @@ static bool LoadNotificationIconPixels(const wchar_t* source, std::vector<uint8_
 }
 
 static void PickRestingLyricLine(BarRuntime& runtime, island::BarState& bar, island::BarSystems& systems,
-                                  bool musicResting, float lyricScrollDipPerSec, float dt,
+                                  bool musicResting, bool musicPlaying, float lyricScrollDipPerSec, float dt,
                                   const char*& lyricLine, const char*& fallbackLine, bool& lyricsScrolling,
                                   bool& lyricLineAnimating, bool& lyricLineChanged, float& musicWavePhase) {
     if (musicResting) {
         bar.lyricLineAge += static_cast<float>(dt > 0.1 ? 0.1 : dt);
         // The wave drifts even while the level sits still, which is what keeps it looking
-        // alive between the beats. Wrapped, so a session that runs for hours cannot lose
-        // precision in the sine's argument.
-        musicWavePhase += static_cast<float>(dt > 0.1 ? 0.1 : dt) * 1.15f;
-        if (musicWavePhase > 6.2831853f * 64.0f) musicWavePhase -= 6.2831853f * 64.0f;
+        // alive between the beats. A paused session does not request animation frames.
+        if (musicPlaying) {
+            musicWavePhase += static_cast<float>(dt > 0.1 ? 0.1 : dt) * 1.15f;
+            if (musicWavePhase > 6.2831853f * 64.0f) musicWavePhase -= 6.2831853f * 64.0f;
+        }
         if (runtime.currentLyrics && !runtime.currentLyrics->Empty()) {
             // The position is what selects the line, so it advances within a bar.track without the
             // bar.track itself changing -- and it has to be the PROJECTED one, not the raw reading:
@@ -5332,7 +5325,7 @@ static void PaceTheLoop(island::BarSystems& systems, bool clockDriven,
     //
     // While animating, wait for the next compositor tick (or a short
     // message wait as a fallback). When idle, block on input instead of
-    // spinning: the clock only needs a wake-up once a second, so a 100 ms
+    // spinning: the clock only needs a wake-up once a second, so a 250 ms
     // cap is plenty and costs nothing on an idle desktop.
     if (frameRequested) {
         // Continuous redraw reasons must not turn the loop into an uncapped
@@ -5362,7 +5355,7 @@ static void PaceTheLoop(island::BarSystems& systems, bool clockDriven,
                                       MWMO_INPUTAVAILABLE);
         runtime.frameWaits += 1;
     } else {
-        ::MsgWaitForMultipleObjectsEx(0, nullptr, 100, QS_ALLINPUT,
+        ::MsgWaitForMultipleObjectsEx(0, nullptr, 250, QS_ALLINPUT,
                                       MWMO_INPUTAVAILABLE);
     }
 }
@@ -5807,7 +5800,7 @@ static void FillHoverPreview(BarRuntime& runtime, island::FrameState& frame, isl
                       ? &nowPlaying
                       : nullptr;
     // The output's peak, for the pill's background meter. This is the reader's CACHED
-    // sample -- its worker refreshes it about thirty times a second (see
+    // sample -- its worker refreshes it about twenty times a second (see
     // AudioVolume::Peak) -- so this is a load rather than a trip to the audio engine.
     frame.musicLevelKnown = systems.volume.Peak(&frame.musicLevel);
     frame.musicWavePhase = musicWavePhase;
@@ -6182,7 +6175,8 @@ static void TickTray(island::BarState& bar, island::BarSystems& systems,
     //
     // Refreshed here and not at the top of the loop so the count the frame draws, the count the
     // row's sizing spent room on and the count the window hit-tests are all the same number.
-    if (GetTickCount64() - bar.lastTrayRefresh >= refreshMs) {
+    if (bar.trayWakePending || GetTickCount64() - bar.lastTrayRefresh >= refreshMs) {
+        bar.trayWakePending = false;
         bar.lastTrayRefresh = GetTickCount64();
         frameWork |= refreshBit;
         // The other half of "is the shell holding this one": a registration whose window has
@@ -6420,13 +6414,11 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
     // app/BarState.h (resources, and a construction order) -- and note that the calls that START each
     // one stay below, in the order they always were: this line only says they exist.
     island::BarSystems systems;
-    systems.statusReader.Open();
 
-    // How long between samples. Most of these values come from APIs that open a COM object or walk
-    // a device tree, and they do not change quickly enough to justify paying that every frame.
-    // Two seconds is short enough that plugging in a network cable looks immediate.
-    constexpr unsigned long long kStatusSampleMs = 2000;
-    unsigned long long lastStatusSampleMs = 0;
+    // Brightness remains a request/worker exchange on this cadence. System
+    // status has its own sampler so these slow APIs never run on the UI thread.
+    constexpr unsigned long long kAuxPollMs = 2000;
+    unsigned long long lastAuxPollMs = 0;
 
     // How long the pointer must REST on an icon before its live thumbnail appears.
     //
@@ -6506,6 +6498,16 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
         // that way because startup failed.
         systems.taskbar.Restore();
         return 1;
+    }
+    if (!systems.statusReader.Start(systems.window.Handle(), 2000)) {
+        island::LogAndPrint("  system status: worker could not produce its first reading\n");
+    } else {
+        systems.statusReader.Snapshot(&systems.systemStatus);
+    }
+    if (!systems.windowEvents.Start(systems.window.Handle())) {
+        island::LogAndPrint("  window events: unavailable; the 2 s reconciliation remains active");
+    } else {
+        island::LogAndPrint("  window events: running (create/show/hide/destroy/name/foreground)");
     }
     // The strip the shell's taskbar reserved, and the composition surface. Both phases live above RunBar;
     // the order is unchanged.
@@ -6907,7 +6909,7 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
         // measured is the gap since the previous pass, so the flags that describe it are the previous
         // pass's. The names travel in the log line rather than in a debugger, because the interesting
         // hitches are one or two per twenty seconds and only happen on the machine being used.
-        constexpr unsigned long long kWorkStatusSample = 1ull << 0;
+        constexpr unsigned long long kWorkAuxPoll = 1ull << 0;
         constexpr unsigned long long kWorkTrayRefresh = 1ull << 1;
         constexpr unsigned long long kWorkToastPoll = 1ull << 2;
         constexpr unsigned long long kWorkWeChatScan = 1ull << 3;
@@ -6928,6 +6930,12 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
 
         while (true) {
             if (!systems.window.PumpMessages()) break;
+            const unsigned wakeBits = island::TakeUiWakeBits();
+            if ((wakeBits & island::kUiWakeTray) != 0) bar.trayWakePending = true;
+            if ((wakeBits & island::kUiWakeStatus) != 0) {
+                systems.statusReader.Snapshot(&systems.systemStatus);
+                bar.statusWakePending = true;
+            }
             LARGE_INTEGER frameStartedCounter = {};
             QueryPerformanceCounter(&frameStartedCounter);
             const unsigned long long frameStartedTicks =
@@ -6937,6 +6945,10 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                 systems.windowEvents.Poll(&windowEvents);
             } else {
                 windowEvents.clear();
+            }
+            if (!windowEvents.empty()) {
+                bar.taskRefreshWakePending = true;
+                bar.wechatWakePending = true;
             }
             const int tilingTopInsetPx =
                 island::DipToPixels(systems.window.BandHeightDip(), monitor.dpi);
@@ -7369,9 +7381,10 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
             // Renderer.cpp), so the line has to be kept up to date then too. Keyed on the state, the
             // lyric vanished the moment the system button opened a panel, with the music still playing:
             // "我现在正在播放音乐 但是点击系统按钮的时候 灵动岛就不显示歌词了".
-            PickRestingLyricLine(runtime, bar, systems, musicVisible, kLyricScrollDipPerSec, dt, lyricLine,
-                                 fallbackLine, lyricsScrolling, lyricLineAnimating, lyricLineChanged,
-                                 musicWavePhase);
+            PickRestingLyricLine(runtime, bar, systems, musicVisible,
+                                 island::MusicWaveNeedsFrames(musicVisible, bar.activePlaying),
+                                 kLyricScrollDipPerSec, dt, lyricLine, fallbackLine, lyricsScrolling,
+                                 lyricLineAnimating, lyricLineChanged, musicWavePhase);
 
             // The native EDIT host is a separate top-level window and does not always receive
             // WM_KILLFOCUS when the user clicks the desktop. The card flags are therefore the source of
@@ -7422,7 +7435,10 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
             bool trayPageChanged = false;
             const bool needDraw = DecideNeedDraw(runtime, bar, systems, motionFrame, clockChanged,
                                                  notificationChanged, musicChanged, lyricsScrolling,
-                                                 lyricLineChanged, lyricLineAnimating, musicVisible, dt,
+                                                 lyricLineChanged, lyricLineAnimating,
+                                                 island::MusicWaveNeedsFrames(musicVisible,
+                                                                              bar.activePlaying),
+                                                 dt,
                                                  volumeAvailable, soundOutputStarted, haveDrawn,
                                                  progressChanged, weatherChanged, musicMeterDue,
                                                  startHoverChanged, startSearchChanged, startPowerChanged,
@@ -7431,6 +7447,7 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                 settledFrame || runtime.lastDrawAtTicks == 0 ||
                 frameStartedTicks - runtime.lastDrawAtTicks >= minimumDrawTicks;
             if (needDraw && drawDue) {
+                bar.statusWakePending = false;
                 runtime.lastDrawAtTicks = frameStartedTicks;
                 // Which condition forced this redraw, counted per report interval.
                 //
@@ -7618,7 +7635,9 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                     frame.pointerOnIsland = systems.window.IsPointerInside();
                 }
 
-                if (GetTickCount64() - bar.lastTaskRefresh >= 500) {
+                if (bar.taskRefreshWakePending ||
+                    GetTickCount64() - bar.lastTaskRefresh >= 2000) {
+                    bar.taskRefreshWakePending = false;
                     bar.lastTaskRefresh = GetTickCount64();
                     systems.taskWindows.Refresh();
                     const int topInsetPx = island::DipToPixels(
@@ -7819,10 +7838,9 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                     // and shadowing the outer one was a warning, not a bug -- but a reader should not have to
                     // work out which clock a line is on.
                     const unsigned long long statusNowMs = GetTickCount64();
-                    if (statusNowMs - lastStatusSampleMs >= kStatusSampleMs) {
-                        lastStatusSampleMs = statusNowMs;
-                        frameWork |= kWorkStatusSample;
-                        systems.statusReader.Sample(&systems.systemStatus);
+                    if (statusNowMs - lastAuxPollMs >= kAuxPollMs) {
+                        lastAuxPollMs = statusNowMs;
+                        frameWork |= kWorkAuxPoll;
 
                         // The brightness, on the same clock. It is a DDC/CI read -- an I2C transaction over
                         // the video cable -- and it is ASKED FOR here and collected below: measured on this
@@ -7890,8 +7908,8 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                             island::LogAndPrint("  radios: Bluetooth %s -- %s%s\n",
                                                 bluetoothNow ? "on" : "off", verdict, refused);
                         }
-                        systems.statusReader.Sample(&systems.systemStatus);
-                        lastStatusSampleMs = GetTickCount64();
+                        systems.statusReader.RequestSample();
+                        lastAuxPollMs = GetTickCount64();
                         std::fflush(stdout);
                     }
                     bool on = false;
@@ -8018,7 +8036,7 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                     if (work[0]) strcat_s(work, sizeof(work), " ");
                     strcat_s(work, sizeof(work), name);
                 };
-                if (lastWork & kWorkStatusSample) add("status-sample");
+                if (lastWork & kWorkAuxPoll) add("brightness-request");
                 if (lastWork & kWorkTrayRefresh) add("tray-refresh");
                 if (lastWork & kWorkToastPoll) add("toast-poll");
                 if (lastWork & kWorkWeChatScan) add("wechat-scan");
@@ -8073,6 +8091,9 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
     // Stop the listener before tearing the window down: a client mid-send should be
     // finished with, not left holding a pipe that is about to disappear.
     systems.notificationServer.Stop();
+    systems.toasts.Stop();
+    island::StopTrayWake();
+    systems.statusReader.Stop();
     systems.lyrics.Stop();
     systems.weather.Stop();
     systems.volume.Stop();
@@ -8112,7 +8133,6 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
     // Its handles, on the same path. Closing the WLAN client here rather than leaving it to process
     // teardown matters because the shell's wireless service keeps a per-client context, and a bar
     // that is started and stopped repeatedly would accumulate them.
-    systems.statusReader.Close();
     return 0;
 }
 

@@ -695,9 +695,15 @@ void MusicSession::Run() {
     const bool haveApartment = SUCCEEDED(apartment);
     using MediaSessionManager =
         winrt::Windows::Media::Control::GlobalSystemMediaTransportControlsSessionManager;
+    using MediaSession =
+        winrt::Windows::Media::Control::GlobalSystemMediaTransportControlsSession;
     MediaSessionManager manager{nullptr};
     DWORD nextManagerRefreshAt = 0;
+    DWORD nextPlaybackRefreshAt = GetTickCount() + 2000;
     unsigned managerRefreshAttempts = 0;
+    HANDLE playbackChangedEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    MediaSession watchedSession{nullptr};
+    winrt::event_token playbackChangedToken{};
 
     MusicInfo previous;
     // The epoch and the last timeline update that belonged to it. A track
@@ -736,12 +742,13 @@ void MusicSession::Run() {
         // Wake for either a toggle request or the next scheduled poll, whichever
         // comes first. Waiting on both is what makes the button responsive without
         // polling faster for everything else.
-        HANDLE waits[2] = { worker_.StopEvent(), toggleEvent_ };
+        HANDLE waits[3] = { worker_.StopEvent(), toggleEvent_, playbackChangedEvent };
+        const DWORD waitCount = playbackChangedEvent ? 3 : 2;
         const DWORD interval =
             static_cast<DWORD>(NextPollIntervalMs(GetTickCount(), lastSkip, lastTrackChange));
         const DWORD elapsed = GetTickCount() - lastPoll;
         const DWORD remaining = (elapsed >= interval) ? 0 : (interval - elapsed);
-        const DWORD signalled = WaitForMultipleObjects(2, waits, FALSE, remaining);
+        const DWORD signalled = WaitForMultipleObjects(waitCount, waits, FALSE, remaining);
 
         if (signalled == WAIT_OBJECT_0) break;   // stop requested
 
@@ -749,6 +756,7 @@ void MusicSession::Run() {
 
         const bool toggleRequested =
             (signalled == WAIT_OBJECT_0 + 1) || InterlockedCompareExchange(&togglePending_, 0, 1) == 1;
+        const bool playbackChanged = playbackChangedEvent && signalled == WAIT_OBJECT_0 + 2;
 
         try {
             using namespace winrt::Windows::Media::Control;
@@ -758,6 +766,18 @@ void MusicSession::Run() {
                 manager = MediaSessionManager::RequestAsync().get();
                 if (!manager) continue;
                 LogLine(L"  music: session manager acquired");
+            } else if (playbackChanged ||
+                       GetTickCount() - nextPlaybackRefreshAt < 0x80000000u) {
+                // QQ Music can keep serving the previous PlaybackStatus from a cached manager,
+                // and this build does not reliably raise PlaybackInfoChanged for it. Reacquire
+                // on the event and on a two-second fallback, so the worker's one-second polls
+                // cannot remain stuck on stale state for as long as the track stays loaded.
+                auto refreshed = MediaSessionManager::RequestAsync().get();
+                if (refreshed) {
+                    manager = refreshed;
+                    managerRebuiltThisPoll = true;
+                }
+                nextPlaybackRefreshAt = GetTickCount() + 2000;
             } else if (nextManagerRefreshAt != 0 &&
                        GetTickCount() - nextManagerRefreshAt < 0x80000000u &&
                        managerRefreshAttempts < 3) {
@@ -849,13 +869,34 @@ void MusicSession::Run() {
             }
 
             // --- the regular poll ---
-            if (GetTickCount() - lastPoll < interval && !toggleRequested) {
+            if (GetTickCount() - lastPoll < interval && !toggleRequested && !playbackChanged) {
                 continue;
             }
             lastPoll = GetTickCount();
 
             MusicInfo fresh;
             auto session = ChooseSession(manager);
+            if (session != watchedSession) {
+                if (watchedSession) {
+                    try {
+                        watchedSession.PlaybackInfoChanged(playbackChangedToken);
+                    } catch (const winrt::hresult_error&) {
+                    }
+                }
+                watchedSession = session;
+                if (watchedSession && playbackChangedEvent) {
+                    try {
+                        playbackChangedToken = watchedSession.PlaybackInfoChanged(
+                            [playbackChangedEvent](
+                                const MediaSession&,
+                                const winrt::Windows::Media::Control::
+                                    PlaybackInfoChangedEventArgs&) {
+                                SetEvent(playbackChangedEvent);
+                            });
+                    } catch (const winrt::hresult_error&) {
+                    }
+                }
+            }
             bool trackChanged = false;
             if (session) {
                 fresh.present = true;
@@ -1082,6 +1123,13 @@ void MusicSession::Run() {
         }
     }
 
+    if (watchedSession) {
+        try {
+            watchedSession.PlaybackInfoChanged(playbackChangedToken);
+        } catch (const winrt::hresult_error&) {
+        }
+    }
+    if (playbackChangedEvent) CloseHandle(playbackChangedEvent);
     if (haveApartment) RoUninitialize();
     running_ = false;
 }

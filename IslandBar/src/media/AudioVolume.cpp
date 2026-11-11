@@ -7,6 +7,7 @@
 #include <endpointvolume.h>
 
 #include <cmath>
+#include <new>
 
 #include "core/Log.h"
 
@@ -15,17 +16,16 @@
 namespace island {
 namespace {
 
-// How long to wait between re-reads of the device volume.
+// How long to wait between fallback re-reads of the device volume.
 //
-// The device pushes notifications, but a COM callback into a worker thread needs the
-// interface to be created there and the notifications to be pumped, and a missed notification
-// would freeze the displayed level. A slow poll is simpler and cannot get stuck: half a second
-// is invisible to a user who just pressed a volume key.
-constexpr DWORD kPollIntervalMs = 500;
+// The endpoint callback below is the fast path. This five-second read is only
+// the reconciliation that catches a missed notification or a default-device
+// swap.
+constexpr DWORD kPollIntervalMs = 5000;
 
 // How often the PEAK is read while the worker is awake. The meter the call strip draws has to move with a
-// voice, and 500 ms would not: 30 Hz is a meter, 2 Hz is a slideshow.
-constexpr DWORD kPeakIntervalMs = 33;
+// voice, and 500 ms would not: 20 Hz is a meter, 2 Hz is a slideshow.
+constexpr DWORD kPeakIntervalMs = 50;
 
 // A quiet step, matching one notch of the shell's own volume slider.
 constexpr float kMinStep = 0.02f;
@@ -35,6 +35,42 @@ float Clamp01(float value) {
     if (value > 1.0f) return 1.0f;
     return value;
 }
+
+class EndpointVolumeCallback final : public IAudioEndpointVolumeCallback {
+public:
+    explicit EndpointVolumeCallback(HANDLE changed) : changed_(changed) {}
+
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** object) override {
+        if (!object) return E_POINTER;
+        *object = nullptr;
+        if (iid == __uuidof(IUnknown) || iid == __uuidof(IAudioEndpointVolumeCallback)) {
+            *object = static_cast<IAudioEndpointVolumeCallback*>(this);
+            AddRef();
+            return S_OK;
+        }
+        return E_NOINTERFACE;
+    }
+
+    ULONG STDMETHODCALLTYPE AddRef() override {
+        return static_cast<ULONG>(InterlockedIncrement(&references_));
+    }
+
+    ULONG STDMETHODCALLTYPE Release() override {
+        const LONG remaining = InterlockedDecrement(&references_);
+        if (remaining == 0) delete this;
+        return static_cast<ULONG>(remaining);
+    }
+
+    HRESULT STDMETHODCALLTYPE OnNotify(PAUDIO_VOLUME_NOTIFICATION_DATA) override {
+        if (changed_) SetEvent(changed_);
+        return S_OK;
+    }
+
+private:
+    ~EndpointVolumeCallback() = default;
+    volatile LONG references_ = 1;
+    HANDLE changed_ = nullptr;
+};
 
 } // namespace
 
@@ -47,10 +83,11 @@ bool AudioVolume::Start() {
 
     writeEvent_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);   // auto-reset
     peakEvent_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);    // auto-reset
+    volumeEvent_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);  // auto-reset
     // Stop() rather than a bare return: it is the one place that ends whatever exists, whether that is
     // nothing, one event, or a thread that is already running. The copies this class used to have each
     // unwound a different part of this by hand (see platform/WorkerThread.h).
-    if (!worker_.Prepare() || !writeEvent_ || !peakEvent_) {
+    if (!worker_.Prepare() || !writeEvent_ || !peakEvent_ || !volumeEvent_) {
         Stop();
         return false;
     }
@@ -87,6 +124,10 @@ void AudioVolume::Stop() {
     if (peakEvent_) {
         CloseHandle(peakEvent_);
         peakEvent_ = nullptr;
+    }
+    if (volumeEvent_) {
+        CloseHandle(volumeEvent_);
+        volumeEvent_ = nullptr;
     }
     peakMeterActive_.store(false, std::memory_order_relaxed);
     running_ = false;
@@ -171,7 +212,7 @@ void AudioVolume::ToggleMute() {
 // The meter, and the endpoint it belongs to, kept between ticks.
 //
 // Acquired once and re-acquired only when it fails: the call strip's bars are drawn from this reading, and
-// re-opening the endpoint thirty times a second to move four pixels would be the most expensive thing in the
+// re-opening the endpoint twenty times a second to move four pixels would be the most expensive thing in the
 // frame loop. The interfaces belong to this worker's apartment, so they are created and released here.
 bool AudioVolume::ReadPeakFromDevice() {
     if (!meter_ || !meterDevice_) {
@@ -220,26 +261,31 @@ bool AudioVolume::ReadPeakFromDevice() {
     return true;
 }
 
-bool AudioVolume::ReadFromDevice() {
-    // Enumeration and activation on every read would be wasteful, but the endpoint can change
-    // under us (a headset plugged in, the default device switched), so it is re-acquired rather
-    // than cached forever. This runs on the worker, never the frame loop.
-    IMMDeviceEnumerator* enumerator = nullptr;
-    HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
-                                  __uuidof(IMMDeviceEnumerator),
-                                  reinterpret_cast<void**>(&enumerator));
-    if (FAILED(hr) || !enumerator) return false;
+bool AudioVolume::ReadFromDevice(void* callback) {
+    IAudioEndpointVolume* volume = static_cast<IAudioEndpointVolume*>(endpointVolume_);
+    if (!volume) {
+        IMMDeviceEnumerator* enumerator = nullptr;
+        HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
+                                      __uuidof(IMMDeviceEnumerator),
+                                      reinterpret_cast<void**>(&enumerator));
+        if (FAILED(hr) || !enumerator) return false;
 
-    IMMDevice* device = nullptr;
-    hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device);
-    enumerator->Release();
-    if (FAILED(hr) || !device) return false;
+        IMMDevice* device = nullptr;
+        hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device);
+        enumerator->Release();
+        if (FAILED(hr) || !device) return false;
 
-    IAudioEndpointVolume* volume = nullptr;
-    hr = device->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_ALL, nullptr,
-                          reinterpret_cast<void**>(&volume));
-    device->Release();
-    if (FAILED(hr) || !volume) return false;
+        hr = device->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_ALL, nullptr,
+                              reinterpret_cast<void**>(&volume));
+        device->Release();
+        if (FAILED(hr) || !volume) return false;
+        endpointVolume_ = volume;
+        endpointCallback_ = callback;
+        if (callback) {
+            volume->RegisterControlChangeNotify(
+                static_cast<IAudioEndpointVolumeCallback*>(callback));
+        }
+    }
 
     float level = 0.0f;
     BOOL muted = FALSE;
@@ -259,8 +305,19 @@ bool AudioVolume::ReadFromDevice() {
         lock_.Leave();
     }
 
-    volume->Release();
     return ok;
+}
+
+void AudioVolume::ReleaseEndpointVolume() {
+    IAudioEndpointVolume* volume = static_cast<IAudioEndpointVolume*>(endpointVolume_);
+    if (!volume) return;
+    if (endpointCallback_) {
+        volume->UnregisterControlChangeNotify(
+            static_cast<IAudioEndpointVolumeCallback*>(endpointCallback_));
+        endpointCallback_ = nullptr;
+    }
+    volume->Release();
+    endpointVolume_ = nullptr;
 }
 
 unsigned long __stdcall AudioVolume::ThreadEntry(void* self) {
@@ -274,22 +331,27 @@ void AudioVolume::Run() {
     const HRESULT apartment = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     const bool haveApartment = SUCCEEDED(apartment) || apartment == RPC_E_CHANGED_MODE;
 
+    EndpointVolumeCallback* callback = nullptr;
+    if (haveApartment && volumeEvent_) {
+        callback = new (std::nothrow) EndpointVolumeCallback(volumeEvent_);
+    }
     unsigned long long lastVolumeRead_ = GetTickCount64();
-    if (haveApartment) ReadFromDevice();
+    if (haveApartment) ReadFromDevice(callback);
 
     while (true) {
-        HANDLE waits[3] = {worker_.StopEvent(), writeEvent_, peakEvent_};
+        HANDLE waits[4] = {worker_.StopEvent(), writeEvent_, peakEvent_, volumeEvent_};
         // A visible meter needs the fast interval; otherwise the worker sleeps until the next volume read.
         // The volume re-read (which opens the device) stays on its own slower clock in either mode.
         const bool peakDemand = peakMeterActive_.load(std::memory_order_relaxed);
         const DWORD signalled =
-            WaitForMultipleObjects(3, waits, FALSE, peakDemand ? kPeakIntervalMs : kPollIntervalMs);
+            WaitForMultipleObjects(4, waits, FALSE, peakDemand ? kPeakIntervalMs : kPollIntervalMs);
         if (signalled == WAIT_OBJECT_0) break;   // stop
         if (signalled == WAIT_FAILED) break;
 
         if (!haveApartment) break;
 
         const bool writeRequested = (signalled == WAIT_OBJECT_0 + 1);
+        const bool volumeChanged = signalled == WAIT_OBJECT_0 + 3;
 
         if (writeRequested) {
             float wanted = 0.0f;
@@ -342,21 +404,26 @@ void AudioVolume::Run() {
         }
 
         // The PEAK every fast tick, but only while a meter is on screen. The VOLUME keeps its own slower
-        // clock, because that one opens the device and walking it thirty times a second to catch a volume-key
+        // clock, because that one opens the device and walking it twenty times a second to catch a volume-key
         // change would be work for nothing.
         if (peakMeterActive_.load(std::memory_order_relaxed)) {
             ReadPeakFromDevice();
         }
-        if (GetTickCount64() - lastVolumeRead_ >= kPollIntervalMs) {
+        if (volumeChanged) {
+            if (ReadFromDevice(nullptr)) InterlockedIncrement(&revision_);
+        } else if (GetTickCount64() - lastVolumeRead_ >= kPollIntervalMs) {
             lastVolumeRead_ = GetTickCount64();
             // Re-read afterwards, so a change made elsewhere (the keyboard, the shell flyout) still shows up.
             // The read is skipped while a write is pending, to avoid fighting the user.
-            if (ReadFromDevice()) {
+            ReleaseEndpointVolume();
+            if (ReadFromDevice(callback)) {
                 InterlockedIncrement(&revision_);
             }
         }
     }
 
+    ReleaseEndpointVolume();
+    if (callback) callback->Release();
     if (haveApartment) CoUninitialize();
     running_ = false;
 }

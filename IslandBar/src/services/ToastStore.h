@@ -26,9 +26,15 @@
 // =====================================================================
 #pragma once
 
+#include <windows.h>
+
+#include <atomic>
 #include <cstddef>
 #include <cwchar>
+#include <deque>
 
+#include "platform/CriticalSection.h"
+#include "platform/WorkerThread.h"
 #include "services/Notification.h"
 
 namespace island {
@@ -66,10 +72,24 @@ public:
     void Stop();
     bool Available() const { return database_ != nullptr; }
 
+    // Starts the background poller used by the bar. The first client read is
+    // still SeedHistory(), but every later SQLite query happens on this worker.
+    bool StartPolling(HWND wakeWindow, unsigned long pollMs = 2000);
+
     // Reads everything that arrived since the last call and pushes it into `store`. Returns how many were
     // added. The FIRST call only records where the database currently ends: an empty bar that suddenly
     // replays the last three days of toasts is not what "show me my notifications" means.
+    //
+    // The UI must use Drain() when polling is running; Poll() remains the
+    // synchronous path for diagnostics and tests.
     int Poll(NotificationStore* store);
+
+    // Moves notifications found by the background worker into the UI-owned
+    // store. This never touches SQLite or the disk.
+    int Drain(NotificationStore* store);
+    bool HasPending() const {
+        return pendingCount_.load(std::memory_order_acquire) > 0;
+    }
 
     // Seeds the notification centre with recent records that already existed
     // before this process started. These are marked read so they appear in
@@ -77,21 +97,33 @@ public:
     int SeedHistory(NotificationStore* store, int limit);
 
     // How many toasts have been taken from the database since Start. For the log.
-    int Taken() const { return taken_; }
+    int Taken() const { return taken_.load(std::memory_order_relaxed); }
 
     // Reads the newest `limit` toasts WITHOUT the store, for `--toast-dump`: the reader has to be checkable
     // from a shell, and a channel whose only evidence is a card on screen is a channel nobody can debug.
     int Dump(int limit, wchar_t* out, size_t capacity) const;
 
 private:
+    static unsigned long __stdcall ThreadEntry(void* self);
+    void Run();
+    void PublishBatch(const NotificationStore& batch);
+
     struct Sqlite;
     Sqlite* sqlite_ = nullptr;
     void* database_ = nullptr;      // sqlite3*
     long long lastId_ = 0;
-    int taken_ = 0;
+    std::atomic<int> taken_{0};
     bool primed_ = false;
     wchar_t openedPath_[260] = {};
     wchar_t copyPath_[260] = {};
+
+    WorkerThread worker_;
+    HWND wakeWindow_ = nullptr;
+    unsigned long pollMs_ = 2000;
+    std::atomic<bool> running_{false};
+    std::atomic<int> pendingCount_{0};
+    mutable CriticalSection pendingLock_;
+    std::deque<Notification> pending_;
 };
 
 } // namespace island

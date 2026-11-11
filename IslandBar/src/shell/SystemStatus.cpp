@@ -4,6 +4,7 @@
 #include "shell/SystemStatus.h"
 
 #include "core/Log.h"
+#include "platform/UiWake.h"
 #include "shell/SystemToggles.h"   // NightLightOn / LiveCaptionsRunning: the two switches that are not radios
 
 #include <wlanapi.h>
@@ -170,12 +171,128 @@ bool ProbeBluetooth(bool* present, bool* on, wchar_t* name, size_t nameCapacity)
 
 } // namespace
 
-bool SystemStatusReader::Open() {
+SystemStatusReader::~SystemStatusReader() {
+    Stop();
+}
+
+bool SystemStatusReader::Start(HWND wakeWindow, unsigned long pollMs) {
+    if (!wakeWindow) return false;
+    if (running_.load(std::memory_order_acquire)) return true;
+
+    requestEvent_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    if (!requestEvent_ || !worker_.Prepare()) {
+        Stop();
+        return false;
+    }
+    wakeWindow_ = wakeWindow;
+    pollMs_ = pollMs == 0 ? 2000 : pollMs;
+    running_.store(true, std::memory_order_release);
+
+    DWORD threadId = 0;
+    HANDLE thread = CreateThread(nullptr, 0, &SystemStatusReader::ThreadEntry, this, 0, &threadId);
+    if (!thread) {
+        Stop();
+        return false;
+    }
+    worker_.Attach(thread);
+
+    // One initial reading keeps the first panel frame complete. It is paid only
+    // at startup; steady-state sampling is off the UI thread.
+    for (int i = 0; i < 400 && !haveSample_.load(std::memory_order_acquire); ++i) {
+        Sleep(5);
+    }
+    return haveSample_.load(std::memory_order_acquire);
+}
+
+void SystemStatusReader::Stop() {
+    running_.store(false, std::memory_order_release);
+    worker_.Stop();
+    if (requestEvent_) {
+        CloseHandle(requestEvent_);
+        requestEvent_ = nullptr;
+    }
+    wakeWindow_ = nullptr;
+    haveSample_.store(false, std::memory_order_release);
+}
+
+void SystemStatusReader::RequestSample() {
+    if (requestEvent_) SetEvent(requestEvent_);
+}
+
+void SystemStatusReader::Snapshot(SystemStatus* out) const {
+    if (!out) return;
+    CriticalSection::Guard guard(lock_);
+    *out = reading_;
+}
+
+unsigned long __stdcall SystemStatusReader::ThreadEntry(void* self) {
+    static_cast<SystemStatusReader*>(self)->Run();
+    return 0;
+}
+
+void SystemStatusReader::Run() {
+    const HRESULT apartment = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    const bool haveApartment = SUCCEEDED(apartment) || apartment == RPC_E_CHANGED_MODE;
+
+    Open();
+    SystemStatus current{};
+    Sample(&current);
+    if (Publish(current)) PostUiWake(wakeWindow_, kUiWakeStatus);
+
+    while (running_.load(std::memory_order_acquire)) {
+        HANDLE waits[2] = {worker_.StopEvent(), requestEvent_};
+        const DWORD signalled = WaitForMultipleObjects(2, waits, FALSE, pollMs_);
+        if (signalled == WAIT_OBJECT_0) break;
+        if (signalled == WAIT_FAILED) break;
+
+        SystemStatus next = current;
+        Sample(&next);
+        if (Publish(next)) {
+            current = next;
+            PostUiWake(wakeWindow_, kUiWakeStatus);
+        }
+    }
+
+    Close();
+    if (haveApartment) CoUninitialize();
+    running_.store(false, std::memory_order_release);
+}
+
+bool SystemStatusReader::Publish(const SystemStatus& status) {
+    CriticalSection::Guard guard(lock_);
+    const SystemStatus& before = reading_;
+    const bool same =
+        haveSample_.load(std::memory_order_relaxed) &&
+        before.network == status.network && before.signal == status.signal &&
+        before.signalPercent == status.signalPercent &&
+        std::wcscmp(before.ssid, status.ssid) == 0 &&
+        before.wirelessRadioOn == status.wirelessRadioOn &&
+        before.bluetoothPresent == status.bluetoothPresent &&
+        before.bluetoothOn == status.bluetoothOn &&
+        std::wcscmp(before.bluetoothName, status.bluetoothName) == 0 &&
+        before.nightLightOn == status.nightLightOn &&
+        before.liveCaptionsOn == status.liveCaptionsOn &&
+        before.muted == status.muted && before.volumePercent == status.volumePercent &&
+        before.wifiRadioOn == status.wifiRadioOn &&
+        before.batteryPresent == status.batteryPresent &&
+        before.onAcPower == status.onAcPower &&
+        before.batteryPercent == status.batteryPercent &&
+        before.batterySaverOn == status.batterySaverOn &&
+        before.inputLanguageId == status.inputLanguageId;
+    if (same) return false;
+
+    reading_ = status;
+    haveSample_.store(true, std::memory_order_release);
+    return true;
+}
+
+void SystemStatusReader::Open() {
     // The installed layouts, counted once. This is what decides whether the input-method indicator
     // is drawn at all, so it is read here rather than per sample.
-    installedLayoutCount_ = GetKeyboardLayoutList(0, nullptr);
-    if (installedLayoutCount_ < 0) installedLayoutCount_ = 0;
-    LogLine(L"  system status: %d keyboard layout(s) installed", installedLayoutCount_);
+    int layouts = GetKeyboardLayoutList(0, nullptr);
+    if (layouts < 0) layouts = 0;
+    installedLayoutCount_.store(layouts, std::memory_order_release);
+    LogLine(L"  system status: %d keyboard layout(s) installed", layouts);
 
     if (!wlanOpen_) {
         DWORD negotiated = 0;
@@ -192,7 +309,6 @@ bool SystemStatusReader::Open() {
             LogLine(L"  system status: WlanOpenHandle -> %lu, no wireless readings", result);
         }
     }
-    return true;
 }
 
 void SystemStatusReader::Close() {

@@ -11,6 +11,7 @@
 #include <cwchar>
 
 #include "core/Log.h"
+#include "platform/UiWake.h"
 
 namespace island {
 namespace {
@@ -48,6 +49,7 @@ struct SqliteApi {
 // The maximum payload taken from the database. A toast is text; anything larger is an attachment or a
 // template this reader has no business decoding, and the store's own fields are smaller than this anyway.
 constexpr int kMaxPayloadBytes = 64 * 1024;
+constexpr size_t kToastQueueCapacity = 64;
 
 // Appends `text` to `out`, returning the new length. Never overflows and always terminates.
 size_t Append(wchar_t* out, size_t capacity, size_t used, const wchar_t* text) {
@@ -310,6 +312,8 @@ bool ToastReader::Start(const wchar_t* databasePath) {
 }
 
 void ToastReader::Stop() {
+    running_.store(false, std::memory_order_release);
+    worker_.Stop();
     if (database_ && sqlite_ && sqlite_->api.close) {
         sqlite_->api.close(reinterpret_cast<sqlite3*>(database_));
     }
@@ -319,6 +323,75 @@ void ToastReader::Stop() {
         delete sqlite_;
         sqlite_ = nullptr;
     }
+}
+
+bool ToastReader::StartPolling(HWND wakeWindow, unsigned long pollMs) {
+    if (!database_ || !sqlite_ || running_.load(std::memory_order_acquire)) return false;
+    if (!worker_.Prepare()) return false;
+
+    wakeWindow_ = wakeWindow;
+    pollMs_ = pollMs == 0 ? 2000 : pollMs;
+    running_.store(true, std::memory_order_release);
+    DWORD threadId = 0;
+    HANDLE thread = CreateThread(nullptr, 0, &ToastReader::ThreadEntry, this, 0, &threadId);
+    if (!thread) {
+        running_.store(false, std::memory_order_release);
+        worker_.Stop();
+        return false;
+    }
+    worker_.Attach(thread);
+    LogLine(L"  toasts: background reader started (fallback cadence=%lu ms)", pollMs_);
+    return true;
+}
+
+unsigned long __stdcall ToastReader::ThreadEntry(void* self) {
+    static_cast<ToastReader*>(self)->Run();
+    return 0;
+}
+
+void ToastReader::Run() {
+    while (running_.load(std::memory_order_acquire)) {
+        if (WaitForSingleObject(worker_.StopEvent(), pollMs_) != WAIT_TIMEOUT) break;
+
+        NotificationStore batch;
+        const int added = Poll(&batch);
+        if (added <= 0) continue;
+
+        PublishBatch(batch);
+        PostUiWake(wakeWindow_, kUiWakeToast);
+    }
+    running_.store(false, std::memory_order_release);
+}
+
+void ToastReader::PublishBatch(const NotificationStore& batch) {
+    const int count = batch.Count();
+    CriticalSection::Guard guard(pendingLock_);
+    // At(0) is newest and the SQLite query is oldest-first. Reverse it so the
+    // UI sees the same order the database did.
+    for (int i = count - 1; i >= 0; --i) {
+        const Notification* item = batch.At(i);
+        if (!item) continue;
+        if (pending_.size() >= kToastQueueCapacity) pending_.pop_front();
+        pending_.push_back(*item);
+    }
+    pendingCount_.store(static_cast<int>(pending_.size()), std::memory_order_release);
+}
+
+int ToastReader::Drain(NotificationStore* store) {
+    if (!store || pendingCount_.load(std::memory_order_acquire) == 0) return 0;
+
+    std::deque<Notification> batch;
+    {
+        CriticalSection::Guard guard(pendingLock_);
+        batch.swap(pending_);
+        pendingCount_.store(0, std::memory_order_release);
+    }
+
+    int added = 0;
+    for (const Notification& notification : batch) {
+        if (store->Push(notification)) ++added;
+    }
+    return added;
 }
 
 int ToastReader::Poll(NotificationStore* store) {
@@ -393,7 +466,7 @@ int ToastReader::Poll(NotificationStore* store) {
                 if (notification.title[0] != '\0' || notification.body[0] != '\0') {
                     store->Push(notification);
                     ++added;
-                    ++taken_;
+                    taken_.fetch_add(1, std::memory_order_relaxed);
                 }
             }
         }

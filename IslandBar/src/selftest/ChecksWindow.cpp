@@ -1657,6 +1657,9 @@ void TestRenderer(IslandWindow& window) {
                   AudioPeakMeterNeedsSampling(false, true) &&
                   AudioPeakMeterNeedsSampling(true, true),
               L"the audio peak worker samples for either visible meter");
+        Check(!MusicWaveNeedsFrames(false, true) && !MusicWaveNeedsFrames(true, false) &&
+                  MusicWaveNeedsFrames(true, true),
+              L"the moving wave asks for frames only while visible and playing");
 
         // The transport controls must be hit-tested where the card is DRAWN.
         //

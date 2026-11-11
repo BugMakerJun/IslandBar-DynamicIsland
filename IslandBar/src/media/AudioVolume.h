@@ -34,6 +34,13 @@ inline bool AudioPeakMeterNeedsSampling(bool musicMeterVisible, bool callMeterVi
     return musicMeterVisible || callMeterVisible;
 }
 
+// The moving music wave is useful only while its media session is actually
+// playing. A paused session keeps the static lyric strip, but no longer asks
+// the compositor for animation frames.
+inline bool MusicWaveNeedsFrames(bool musicVisible, bool playing) noexcept {
+    return musicVisible && playing;
+}
+
 class AudioVolume {
 public:
     AudioVolume() = default;
@@ -71,11 +78,11 @@ public:
     // slider is, the peak is how loud the sound coming out is right now. The call strip's bars are drawn from
     // this, which is why they move when someone talks and sit still when nobody does.
     //
-    // Polled fast (about 30 Hz) on the worker, because a meter sampled once a frame at 60 Hz would be wasted
-    // work and one sampled at the volume's 500 ms would not move at all.
+    // Polled fast (about 20 Hz) on the worker, because a meter sampled once a frame at 60 Hz would be wasted
+    // work and one sampled at the volume's five-second reconciliation would not move at all.
     bool Peak(float* level) const;
-    // Enables the 30 Hz peak cadence only while a meter is visible. The worker still reads the master
-    // volume at its normal 500 ms cadence when this is false.
+    // Enables the 20 Hz peak cadence only while a meter is visible. The master
+    // volume is event-driven, with a five-second reconciliation cadence.
     void SetPeakMeterActive(bool active);
 
     void ToggleMute();
@@ -87,8 +94,10 @@ private:
     static unsigned long __stdcall ThreadEntry(void* self);
     void Run();
 
-    // Reads the device's current level into the shared state.
-    bool ReadFromDevice();
+    // Reads through the bound endpoint. `callback` is registered when the
+    // endpoint is first opened or rebound; null leaves an existing binding alone.
+    bool ReadFromDevice(void* callback);
+    void ReleaseEndpointVolume();
     // Reads the meter's peak, acquiring the meter once and keeping it: a meter that re-opened the endpoint
     // thirty times a second would cost more than everything else this class does put together.
     bool ReadPeakFromDevice();
@@ -99,6 +108,8 @@ private:
     HANDLE        writeEvent_ = nullptr;
     // Auto-reset: a meter-demand change wakes the worker so the first visible value is fresh.
     HANDLE        peakEvent_ = nullptr;
+    // Auto-reset: IAudioEndpointVolumeCallback reports a change made outside the bar.
+    HANDLE        volumeEvent_ = nullptr;
     std::atomic<bool> peakMeterActive_{false};
     volatile bool running_ = false;
 
@@ -122,6 +133,8 @@ private:
     // the same arrangement the WLAN handle uses in SystemStatus.
     void*          meterDevice_ = nullptr;   // IMMDevice*
     void*          meter_ = nullptr;         // IAudioMeterInformation*
+    void*          endpointVolume_ = nullptr; // IAudioEndpointVolume*
+    void*          endpointCallback_ = nullptr; // IAudioEndpointVolumeCallback*
 };
 
 } // namespace island

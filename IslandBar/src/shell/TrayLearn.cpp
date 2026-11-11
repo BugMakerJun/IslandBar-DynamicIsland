@@ -23,6 +23,8 @@
 #include "domain/TrayRegistration.h"
 #include "domain/TrayLedger.h"
 #include "platform/TrayRing.h"
+#include "platform/UiWake.h"
+#include "platform/WorkerThread.h"
 
 #include <psapi.h>   // GetProcessMemoryInfo: which of an application's processes carries its tray icon
 #include <tlhelp32.h>
@@ -38,6 +40,86 @@
 #pragma comment(lib, "psapi.lib")
 
 namespace island {
+
+namespace {
+
+struct TrayWakePump {
+    WorkerThread worker;
+    std::atomic<HWND> window{nullptr};
+    std::atomic<bool> running{false};
+};
+
+TrayWakePump g_trayWakePump;
+
+unsigned long __stdcall TrayWakeThreadEntry(void*) {
+    HANDLE ring = OpenEventW(SYNCHRONIZE, FALSE, kTrayRingEventName);
+    if (!ring) ring = CreateEventW(nullptr, FALSE, FALSE, kTrayRingEventName);
+
+    HANDLE registry = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    HKEY key = nullptr;
+    const wchar_t* settings = L"Control Panel\\NotifyIconSettings";
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, settings, 0, KEY_NOTIFY, &key) != ERROR_SUCCESS) {
+        key = nullptr;
+    }
+    auto armRegistry = [&]() {
+        if (!key || !registry) return;
+        ResetEvent(registry);
+        RegNotifyChangeKeyValue(key, TRUE, REG_NOTIFY_CHANGE_NAME | REG_NOTIFY_CHANGE_LAST_SET,
+                                registry, TRUE);
+    };
+    armRegistry();
+
+    HANDLE waits[3] = {g_trayWakePump.worker.StopEvent(), nullptr, nullptr};
+    DWORD count = 1;
+    DWORD registryIndex = 0;
+    if (ring) waits[count++] = ring;
+    if (registry) {
+        registryIndex = count;
+        waits[count++] = registry;
+    }
+
+    while (g_trayWakePump.running.load(std::memory_order_acquire)) {
+        const DWORD signalled = WaitForMultipleObjects(count, waits, FALSE, INFINITE);
+        if (signalled == WAIT_OBJECT_0) break;
+        if (signalled == WAIT_FAILED) break;
+
+        if (registryIndex != 0 && signalled == WAIT_OBJECT_0 + registryIndex) {
+            armRegistry();
+        }
+        PostUiWake(g_trayWakePump.window.load(std::memory_order_acquire), kUiWakeTray);
+    }
+
+    if (key) RegCloseKey(key);
+    if (registry) CloseHandle(registry);
+    if (ring) CloseHandle(ring);
+    return 0;
+}
+
+} // namespace
+
+bool StartTrayWake(HWND wakeWindow) {
+    if (!wakeWindow) return false;
+    if (g_trayWakePump.running.exchange(true, std::memory_order_acq_rel)) return true;
+    g_trayWakePump.window.store(wakeWindow, std::memory_order_release);
+    if (!g_trayWakePump.worker.Prepare()) {
+        g_trayWakePump.running.store(false, std::memory_order_release);
+        return false;
+    }
+    HANDLE thread = CreateThread(nullptr, 0, &TrayWakeThreadEntry, nullptr, 0, nullptr);
+    if (!thread) {
+        g_trayWakePump.running.store(false, std::memory_order_release);
+        g_trayWakePump.worker.Stop();
+        return false;
+    }
+    g_trayWakePump.worker.Attach(thread);
+    return true;
+}
+
+void StopTrayWake() {
+    g_trayWakePump.running.store(false, std::memory_order_release);
+    g_trayWakePump.worker.Stop();
+    g_trayWakePump.window.store(nullptr, std::memory_order_release);
+}
 
 // Drains the shared-memory ring the module publishes on, writes the records it finds as report lines, and
 // returns how many it took. Declared here (and not inside the anonymous namespace below, which is where its

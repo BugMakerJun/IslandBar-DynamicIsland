@@ -33,7 +33,11 @@ bool WindowEventMonitor::Start(HWND wakeWindow) {
         EVENT_OBJECT_CREATE, EVENT_OBJECT_HIDE, nullptr,
         &WindowEventMonitor::EventProc, 0, 0,
         WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
-    if (!foregroundHook_ || !objectHook_) {
+    nameHook_ = SetWinEventHook(
+        EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_NAMECHANGE, nullptr,
+        &WindowEventMonitor::EventProc, 0, 0,
+        WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
+    if (!foregroundHook_ || !objectHook_ || !nameHook_) {
         Stop();
         return false;
     }
@@ -49,6 +53,10 @@ void WindowEventMonitor::Stop() {
     if (objectHook_) {
         UnhookWinEvent(objectHook_);
         objectHook_ = nullptr;
+    }
+    if (nameHook_) {
+        UnhookWinEvent(nameHook_);
+        nameHook_ = nullptr;
     }
     wakeWindow_.store(nullptr, std::memory_order_release);
     {
@@ -91,6 +99,7 @@ void CALLBACK WindowEventMonitor::EventProc(
             case EVENT_OBJECT_SHOW: kind = WindowEventKind::Shown; break;
             case EVENT_OBJECT_HIDE: kind = WindowEventKind::Hidden; break;
             case EVENT_OBJECT_DESTROY: kind = WindowEventKind::Destroyed; break;
+            case EVENT_OBJECT_NAMECHANGE: kind = WindowEventKind::NameChanged; break;
             default: return;
         }
     }

@@ -123,6 +123,13 @@ std::wstring ObserverClause(const TrayLearnResult& learned);
 // A failure is reported in the log and is not fatal: without the module a press uses whatever the cache holds.
 bool InstallTrayHook();
 
+// Waits on the tray ring's existing named event and on changes to the
+// NotifyIconSettings registry subtree. Every signal only posts a coalesced UI
+// wake; the normal tray tick still performs the refresh. The five-second tick
+// remains the fallback when either notification source is unavailable.
+bool StartTrayWake(HWND wakeWindow);
+void StopTrayWake();
+
 // Learns what every running tray application's callback is, and writes the cache.
 //
 // `broadcast` sends TaskbarCreated first, which is what makes applications register again: without it, one
