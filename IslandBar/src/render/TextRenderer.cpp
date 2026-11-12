@@ -2591,35 +2591,24 @@ void TextRenderer::DrawWeatherCard(ID2D1DeviceContext2* context, const RoundedBo
     wchar_t temperature[32] = {};
     std::swprintf(temperature, 32, L"%d°",
                   static_cast<int>(std::lround(weather.temperatureC)));
-    DrawTextIn(context, niriHeroFormat_, temperature,
-               {layout.current.left + 22.0f, layout.current.top + 4.0f,
-                layout.current.left + 214.0f, layout.current.top + 88.0f},
+    DrawTextIn(context, niriHeroFormat_, temperature, layout.currentTemperature,
                ink, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     const wchar_t* word = WeatherWordForCode(weather.code);
-    DrawTextIn(context, niriMetricFormat_, word ? word : L"未知",
-               {layout.current.left + 24.0f, layout.current.top + 92.0f,
-                layout.current.left + 220.0f, layout.current.top + 116.0f},
+    DrawTextIn(context, niriMetricFormat_, word ? word : L"未知", layout.currentCondition,
                ink, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     wchar_t apparent[96] = {};
     std::swprintf(apparent, 96, L"体感 %d°", static_cast<int>(std::lround(weather.apparentTemperatureC)));
-    DrawTextIn(context, niriMetricFormat_, apparent,
-               {layout.current.left + 24.0f, layout.current.top + 118.0f,
-                layout.current.left + 250.0f, layout.current.top + 142.0f},
+    DrawTextIn(context, niriMetricFormat_, apparent, layout.currentApparent,
                muted ? muted : ink, DWRITE_TEXT_ALIGNMENT_LEADING,
                DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     wchar_t sun[96] = {};
     std::swprintf(sun, 96, L"日出 %02d:%02d   日落 %02d:%02d", weather.sunriseMinutes / 60,
                   weather.sunriseMinutes % 60, weather.sunsetMinutes / 60,
                   weather.sunsetMinutes % 60);
-    DrawTextIn(context, niriMetricFormat_, sun,
-               {layout.current.left + 24.0f, layout.current.bottom - 34.0f,
-                layout.current.right - 130.0f, layout.current.bottom - 10.0f},
+    DrawTextIn(context, niriMetricFormat_, sun, layout.currentSun,
                muted ? muted : ink, DWRITE_TEXT_ALIGNMENT_LEADING,
                DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-    DrawWeatherMarkLarge(context,
-                         {layout.current.right - 118.0f, layout.current.top + 18.0f,
-                          layout.current.right - 22.0f, layout.current.bottom - 18.0f},
-                         weather.code, opacity);
+    DrawWeatherMarkLarge(context, layout.currentMark, weather.code, opacity);
 
     struct Metric {
         const wchar_t* label;
@@ -2656,9 +2645,7 @@ void TextRenderer::DrawWeatherCard(ID2D1DeviceContext2* context, const RoundedBo
                    DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
     }
 
-    DrawTextIn(context, niriMetricFormat_, L"每小时",
-               {layout.hourly.left + 16.0f, layout.hourly.top + 8.0f,
-                layout.hourly.right - 16.0f, layout.hourly.top + 36.0f},
+    DrawTextIn(context, niriMetricFormat_, L"每小时", layout.hourlyTitle,
                ink, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     for (int i = 0; i < kWeatherHourlyColumns && i < weather.hourCount; ++i) {
         const RectF& cell = layout.hourlyCells[i];
@@ -2666,52 +2653,38 @@ void TextRenderer::DrawWeatherCard(ID2D1DeviceContext2* context, const RoundedBo
                                                                     0.78f * opacity));
         wchar_t hour[16] = {};
         std::swprintf(hour, 16, L"%02d:00", weather.hours[i].hour);
-        DrawTextIn(context, niriMetricFormat_, hour,
-                   {cell.left, cell.top + 6.0f, cell.right, cell.top + 28.0f},
+        DrawTextIn(context, niriMetricFormat_, hour, layout.hourlyTime[i],
                    i == 0 && muted ? muted : ink, DWRITE_TEXT_ALIGNMENT_CENTER,
                    DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-        DrawWeatherMarkLarge(
-            context, {cell.left + 18.0f, cell.top + 34.0f, cell.right - 18.0f,
-                      cell.top + 86.0f},
-            weather.hours[i].code, opacity);
+        DrawWeatherMarkLarge(context, layout.hourlyMark[i], weather.hours[i].code, opacity);
         wchar_t value[48] = {};
         std::swprintf(value, 48, L"%d°", static_cast<int>(std::lround(weather.hours[i].temperatureC)));
-        DrawTextIn(context, niriMetricFormat_, value,
-                   {cell.left, cell.top + 88.0f, cell.right, cell.top + 112.0f},
+        DrawTextIn(context, niriMetricFormat_, value, layout.hourlyTemperature[i],
                    ink, DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         std::swprintf(value, 48, L"%d%%", weather.hours[i].precipitationPercent);
-        DrawTextIn(context, niriMetricFormat_, value,
-                   {cell.left, cell.bottom - 25.0f, cell.right, cell.bottom - 5.0f},
+        DrawTextIn(context, niriMetricFormat_, value, layout.hourlyPrecipitation[i],
                    muted ? muted : ink, DWRITE_TEXT_ALIGNMENT_CENTER,
                    DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     }
 
-    DrawTextIn(context, niriMetricFormat_, L"每日",
-               {layout.daily.left + 16.0f, layout.daily.top + 8.0f,
-                layout.daily.right - 16.0f, layout.daily.top + 36.0f},
+    DrawTextIn(context, niriMetricFormat_, L"每日", layout.dailyTitle,
                ink, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     for (int i = 0; i < weather.dayCount && i < kWeatherDayCount; ++i) {
-        const RectF& cell = layout.dailyCells[i];
         const int weekday = DayOfWeekMondayFirst(weather.days[i].year, weather.days[i].month,
                                                  weather.days[i].day);
         DrawTextIn(context, niriMetricFormat_, kWeekdays[(weekday + 1) % 7],
-                   {cell.left, cell.top + 4.0f, cell.right, cell.top + 28.0f},
+                   layout.dailyWeekday[i],
                    ink, DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-        DrawWeatherMarkLarge(context,
-                             {cell.left + 20.0f, cell.top + 34.0f, cell.right - 20.0f,
-                              cell.top + 88.0f},
-                             weather.days[i].code, opacity);
+        DrawWeatherMarkLarge(context, layout.dailyMark[i], weather.days[i].code, opacity);
         wchar_t maximum[32] = {};
         std::swprintf(maximum, 32, L"%d°",
                       static_cast<int>(std::lround(weather.days[i].temperatureMaxC)));
-        DrawTextIn(context, niriMetricFormat_, maximum,
-                   {cell.left, cell.top + 94.0f, cell.right, cell.top + 116.0f},
+        DrawTextIn(context, niriMetricFormat_, maximum, layout.dailyHigh[i],
                    ink, DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         wchar_t minimum[32] = {};
         std::swprintf(minimum, 32, L"%d°",
                       static_cast<int>(std::lround(weather.days[i].temperatureMinC)));
-        DrawTextIn(context, niriMetricFormat_, minimum,
-                   {cell.left, cell.top + 118.0f, cell.right, cell.top + 140.0f},
+        DrawTextIn(context, niriMetricFormat_, minimum, layout.dailyLow[i],
                    muted ? muted : ink, DWRITE_TEXT_ALIGNMENT_CENTER,
                    DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     }

@@ -3349,6 +3349,14 @@ static void ApplyPressesAndClicks(island::BarState& bar, island::BarSystems& sys
                 bar.centerPageOpen = false;
                 bar.weatherPageOpen = true;
                 bar.systemPanelOpen = true;
+                const island::RoundedBox card = systems.window.PlacedCard();
+                const island::WeatherCardLayout layout = island::WeatherCardFor(card);
+                island::LogAndPrint(
+                    "  weather: layout=%.0fx%.0f daily=%.0f cell=%.0f overflow=%.0f\n",
+                    card.rect.right - card.rect.left, card.rect.bottom - card.rect.top,
+                    layout.daily.bottom - layout.daily.top,
+                    layout.dailyCells[0].bottom - layout.dailyCells[0].top,
+                    island::WeatherCardBottomOverflowDip(card, layout));
                 island::LogAndPrint("  topbar: weather detail open\n");
                 std::fflush(stdout);
             } else if (centerHit.target == island::CommandCenterTarget::Clear) {

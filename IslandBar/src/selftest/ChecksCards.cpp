@@ -1135,10 +1135,67 @@ void TestMusicCardLayout() {
             {0.0f, 0.0f, kSystemPanelWidthDip, kSystemPanelHeightDip},
             kCardRadiusDip, kCardRadiusDip};
         const WeatherCardLayout weather = WeatherCardFor(weatherCard);
+        const auto insideRect = [](const RectF& outer, const RectF& inner) {
+            return inner.left >= outer.left - 0.01f && inner.right <= outer.right + 0.01f &&
+                   inner.top >= outer.top - 0.01f && inner.bottom <= outer.bottom + 0.01f;
+        };
         Check(weather.hourlyCells[kWeatherHourlyColumns - 1].right <= weather.hourly.right &&
                   weather.dailyCells[kWeatherCardDayColumns - 1].right <= weather.daily.right &&
                   weather.metrics.left > weather.current.right,
               L"the weather card's current, hourly and daily bands stay inside the card");
+        bool weatherContentInside = true;
+        bool weatherContentOrdered = true;
+        bool hourlyElementsInside = true;
+        bool dailyElementsInside = true;
+        for (int i = 0; i < kWeatherHourlyColumns; ++i) {
+            const RectF& cell = weather.hourlyCells[i];
+            hourlyElementsInside =
+                hourlyElementsInside && insideRect(weather.hourly, cell) &&
+                insideRect(cell, weather.hourlyTime[i]) &&
+                insideRect(cell, weather.hourlyMark[i]) &&
+                insideRect(cell, weather.hourlyTemperature[i]) &&
+                insideRect(cell, weather.hourlyPrecipitation[i]) &&
+                weather.hourlyTime[i].bottom <= weather.hourlyMark[i].top + 0.01f &&
+                weather.hourlyMark[i].bottom <= weather.hourlyTemperature[i].top + 0.01f &&
+                weather.hourlyTemperature[i].bottom <=
+                    weather.hourlyPrecipitation[i].top + 0.01f;
+        }
+        for (int i = 0; i < kWeatherCardDayColumns; ++i) {
+            const RectF& cell = weather.dailyCells[i];
+            dailyElementsInside =
+                dailyElementsInside && insideRect(weather.daily, cell) &&
+                insideRect(cell, weather.dailyWeekday[i]) &&
+                insideRect(cell, weather.dailyMark[i]) &&
+                insideRect(cell, weather.dailyHigh[i]) &&
+                insideRect(cell, weather.dailyLow[i]) &&
+                weather.dailyWeekday[i].bottom <= weather.dailyMark[i].top + 0.01f &&
+                weather.dailyMark[i].bottom <= weather.dailyHigh[i].top + 0.01f &&
+                weather.dailyHigh[i].bottom <= weather.dailyLow[i].top + 0.01f;
+        }
+        weatherContentInside =
+            insideRect(weatherCard.rect, weather.current) &&
+            insideRect(weatherCard.rect, weather.metrics) &&
+            insideRect(weatherCard.rect, weather.hourly) &&
+            insideRect(weatherCard.rect, weather.daily) &&
+            insideRect(weather.hourly, weather.hourlyTitle) &&
+            insideRect(weather.daily, weather.dailyTitle) &&
+            insideRect(weather.current, weather.currentTemperature) &&
+            insideRect(weather.current, weather.currentCondition) &&
+            insideRect(weather.current, weather.currentApparent) &&
+            insideRect(weather.current, weather.currentSun) &&
+            insideRect(weather.current, weather.currentMark);
+        weatherContentOrdered =
+            weather.current.bottom <= weather.hourly.top + 0.01f &&
+            weather.hourly.bottom <= weather.daily.top + 0.01f &&
+            weather.currentTemperature.bottom <= weather.currentCondition.top + 0.01f &&
+            weather.currentCondition.bottom <= weather.currentApparent.top + 0.01f &&
+            weather.currentApparent.bottom <= weather.currentSun.top + 0.01f;
+        Check(weatherContentInside && weatherContentOrdered && hourlyElementsInside &&
+                  dailyElementsInside &&
+                  weather.daily.bottom - weather.daily.top >= 200.0f &&
+                  weather.dailyCells[0].bottom - weather.dailyCells[0].top >= 155.0f &&
+                  WeatherCardBottomOverflowDip(weatherCard, weather) == 0.0f,
+              L"every weather element fits vertically inside its band, cell and the card");
         Check(AirQualityWord(38) && std::wcscmp(AirQualityWord(38), L"\u826F") == 0 &&
                   AirQualityWord(-1) == nullptr,
               L"the weather card labels a real AQI and omits one that is unavailable");

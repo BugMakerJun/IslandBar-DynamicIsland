@@ -2596,18 +2596,33 @@ struct WeatherCardLayout {
     RectF daily;
     RectF hourlyCells[kWeatherHourlyColumns];
     RectF dailyCells[kWeatherCardDayColumns];
+    RectF currentTemperature;
+    RectF currentCondition;
+    RectF currentApparent;
+    RectF currentSun;
+    RectF currentMark;
+    RectF hourlyTitle;
+    RectF hourlyTime[kWeatherHourlyColumns];
+    RectF hourlyMark[kWeatherHourlyColumns];
+    RectF hourlyTemperature[kWeatherHourlyColumns];
+    RectF hourlyPrecipitation[kWeatherHourlyColumns];
+    RectF dailyTitle;
+    RectF dailyWeekday[kWeatherCardDayColumns];
+    RectF dailyMark[kWeatherCardDayColumns];
+    RectF dailyHigh[kWeatherCardDayColumns];
+    RectF dailyLow[kWeatherCardDayColumns];
 };
 
 inline WeatherCardLayout WeatherCardFor(const RoundedBox& card) {
     WeatherCardLayout layout;
     constexpr float pad = 18.0f;
-    constexpr float gap = 14.0f;
+    constexpr float gap = 10.0f;
     const float left = card.rect.left + pad;
     const float right = card.rect.right - pad;
     const float top = card.rect.top + pad;
     const float bottom = card.rect.bottom - pad;
-    const float topHeight = 176.0f;
-    const float hourlyHeight = 196.0f;
+    const float topHeight = 150.0f;
+    const float hourlyHeight = 130.0f;
     const float currentWidth = 500.0f;
 
     layout.current = {left, top, left + currentWidth, top + topHeight};
@@ -2617,6 +2632,19 @@ inline WeatherCardLayout WeatherCardFor(const RoundedBox& card) {
     layout.daily = {left, layout.hourly.bottom + gap, right,
                     bottom > layout.hourly.bottom + gap ? bottom : layout.hourly.bottom + gap};
 
+    layout.currentTemperature = {layout.current.left + 22.0f, layout.current.top,
+                                 layout.current.left + 214.0f, layout.current.top + 60.0f};
+    layout.currentCondition = {layout.current.left + 24.0f, layout.current.top + 60.0f,
+                               layout.current.left + 220.0f, layout.current.top + 84.0f};
+    layout.currentApparent = {layout.current.left + 24.0f, layout.current.top + 84.0f,
+                              layout.current.left + 250.0f, layout.current.top + 108.0f};
+    layout.currentSun = {layout.current.left + 24.0f, layout.current.bottom - 30.0f,
+                         layout.current.right - 120.0f, layout.current.bottom - 8.0f};
+    layout.currentMark = {layout.current.right - 104.0f, layout.current.top + 18.0f,
+                          layout.current.right - 18.0f, layout.current.bottom - 18.0f};
+
+    layout.hourlyTitle = {layout.hourly.left + 16.0f, layout.hourly.top + 6.0f,
+                          layout.hourly.right - 16.0f, layout.hourly.top + 30.0f};
     const float hourlyLeft = layout.hourly.left + 14.0f;
     const float hourlyRight = layout.hourly.right - 14.0f;
     const float hourlyGap = 8.0f;
@@ -2627,10 +2655,19 @@ inline WeatherCardLayout WeatherCardFor(const RoundedBox& card) {
         RectF& cell = layout.hourlyCells[i];
         cell.left = hourlyLeft + static_cast<float>(i) * (hourlyWidth + hourlyGap);
         cell.right = cell.left + hourlyWidth;
-        cell.top = layout.hourly.top + 46.0f;
-        cell.bottom = layout.hourly.bottom - 14.0f;
+        cell.top = layout.hourly.top + 32.0f;
+        cell.bottom = layout.hourly.bottom - 8.0f;
+        layout.hourlyTime[i] = {cell.left, cell.top + 2.0f, cell.right, cell.top + 18.0f};
+        layout.hourlyMark[i] = {cell.left + 18.0f, cell.top + 20.0f,
+                                cell.right - 18.0f, cell.top + 50.0f};
+        layout.hourlyTemperature[i] = {cell.left, cell.top + 52.0f,
+                                       cell.right, cell.top + 70.0f};
+        layout.hourlyPrecipitation[i] = {cell.left, cell.top + 72.0f,
+                                         cell.right, cell.top + 88.0f};
     }
 
+    layout.dailyTitle = {layout.daily.left + 16.0f, layout.daily.top + 6.0f,
+                         layout.daily.right - 16.0f, layout.daily.top + 30.0f};
     const float dailyLeft = layout.daily.left + 14.0f;
     const float dailyRight = layout.daily.right - 14.0f;
     const float dailyGap = 8.0f;
@@ -2641,10 +2678,49 @@ inline WeatherCardLayout WeatherCardFor(const RoundedBox& card) {
         RectF& cell = layout.dailyCells[i];
         cell.left = dailyLeft + static_cast<float>(i) * (dailyWidth + dailyGap);
         cell.right = cell.left + dailyWidth;
-        cell.top = layout.daily.top + 46.0f;
-        cell.bottom = layout.daily.bottom - 14.0f;
+        cell.top = layout.daily.top + 34.0f;
+        cell.bottom = layout.daily.bottom - 10.0f;
+        layout.dailyWeekday[i] = {cell.left, cell.top + 4.0f, cell.right, cell.top + 24.0f};
+        layout.dailyMark[i] = {cell.left + 20.0f, cell.top + 28.0f,
+                               cell.right - 20.0f, cell.top + 76.0f};
+        layout.dailyHigh[i] = {cell.left, cell.top + 80.0f, cell.right, cell.top + 100.0f};
+        layout.dailyLow[i] = {cell.left, cell.top + 104.0f, cell.right, cell.top + 124.0f};
     }
     return layout;
+}
+
+inline float WeatherCardBottomOverflowDip(const RoundedBox& card,
+                                          const WeatherCardLayout& layout) {
+    float contentBottom = layout.current.bottom;
+    const auto include = [&contentBottom](const RectF& rect) {
+        if (rect.bottom > contentBottom) contentBottom = rect.bottom;
+    };
+    include(layout.metrics);
+    include(layout.hourly);
+    include(layout.daily);
+    include(layout.currentTemperature);
+    include(layout.currentCondition);
+    include(layout.currentApparent);
+    include(layout.currentSun);
+    include(layout.currentMark);
+    include(layout.hourlyTitle);
+    include(layout.dailyTitle);
+    for (int i = 0; i < kWeatherHourlyColumns; ++i) {
+        include(layout.hourlyCells[i]);
+        include(layout.hourlyTime[i]);
+        include(layout.hourlyMark[i]);
+        include(layout.hourlyTemperature[i]);
+        include(layout.hourlyPrecipitation[i]);
+    }
+    for (int i = 0; i < kWeatherCardDayColumns; ++i) {
+        include(layout.dailyCells[i]);
+        include(layout.dailyWeekday[i]);
+        include(layout.dailyMark[i]);
+        include(layout.dailyHigh[i]);
+        include(layout.dailyLow[i]);
+    }
+    const float bodyBottom = card.rect.bottom - 18.0f;
+    return contentBottom > bodyBottom ? contentBottom - bodyBottom : 0.0f;
 }
 
 } // namespace island
