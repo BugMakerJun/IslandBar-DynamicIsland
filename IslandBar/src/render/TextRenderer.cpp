@@ -71,6 +71,22 @@ D2D1_COLOR_F VisibleWaveAccent(D2D1_COLOR_F accent) {
     return accent;
 }
 
+D2D1_COLOR_F HudWaveAccent(D2D1_COLOR_F accent) {
+    // The full-screen capsule is usually a light surface. An album colour that looks vivid in the
+    // cover can still be almost white once it is composited here, so give the background wave a
+    // stable mid-tone luminance while keeping the cover's hue.
+    const float luma =
+        0.2126f * accent.r + 0.7152f * accent.g + 0.0722f * accent.b;
+    const float target = luma < 0.20f ? 0.32f : 0.38f;
+    if (luma > 0.001f) {
+        const float scale = target / luma;
+        accent.r = std::min(1.0f, accent.r * scale);
+        accent.g = std::min(1.0f, accent.g * scale);
+        accent.b = std::min(1.0f, accent.b * scale);
+    }
+    return accent;
+}
+
 void DrawMusicWaveBadge(ID2D1DeviceContext2* context, float centreX, float centreY,
                         float phaseSeconds, float level, D2D1_COLOR_F accent, float opacity) {
     if (!context || opacity <= 0.01f) return;
@@ -121,8 +137,9 @@ void DrawMusicWaveBackground(ID2D1DeviceContext2* context, const RectF& box,
         return;
     }
 
-    D2D1_COLOR_F waveColour = VisibleWaveAccent(accent);
-    waveColour.a = opacity * (0.12f + 0.08f * std::min(1.0f, level));
+    const float shownLevel = 0.25f + 0.75f * std::min(1.0f, level);
+    D2D1_COLOR_F waveColour = HudWaveAccent(accent);
+    waveColour.a = opacity * (0.28f + 0.12f * shownLevel);
     ID2D1SolidColorBrush* brush = nullptr;
     if (FAILED(context->CreateSolidColorBrush(waveColour, &brush)) || !brush) return;
 
@@ -130,14 +147,13 @@ void DrawMusicWaveBackground(ID2D1DeviceContext2* context, const RectF& box,
     const float barStep = (box.right - box.left) / static_cast<float>(kBarCount);
     const float centreY = (box.top + box.bottom) * 0.5f;
     const float maxHalf = (box.bottom - box.top) * 0.45f;
-    const float shownLevel = 0.25f + 0.75f * std::min(1.0f, level);
     for (int i = 0; i < kBarCount; ++i) {
         const float phase = phaseSeconds * 5.0f + static_cast<float>(i) * 0.73f;
         const float envelope = 0.22f + 0.78f * (0.5f + 0.5f * std::sin(phase));
         const float half = 0.75f + maxHalf * envelope * shownLevel;
         const float x = box.left + (static_cast<float>(i) + 0.5f) * barStep;
         context->DrawLine(D2D1::Point2F(x, centreY - half),
-                          D2D1::Point2F(x, centreY + half), brush, 2.2f);
+                          D2D1::Point2F(x, centreY + half), brush, 2.4f);
     }
     brush->Release();
 }
