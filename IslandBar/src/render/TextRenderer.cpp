@@ -139,21 +139,33 @@ void DrawMusicWaveBackground(ID2D1DeviceContext2* context, const RectF& box,
 
     const float shownLevel = 0.25f + 0.75f * std::min(1.0f, level);
     D2D1_COLOR_F waveColour = HudWaveAccent(accent);
-    waveColour.a = opacity * (0.28f + 0.12f * shownLevel);
+    waveColour.a = opacity * (0.22f + 0.06f * shownLevel);
     ID2D1SolidColorBrush* brush = nullptr;
     if (FAILED(context->CreateSolidColorBrush(waveColour, &brush)) || !brush) return;
 
-    constexpr int kBarCount = 28;
-    const float barStep = (box.right - box.left) / static_cast<float>(kBarCount);
+    constexpr int kBarCount = 16;
+    constexpr float kBarWidth = 3.0f;
+    constexpr float kBarGap = 3.5f;
+    const float clusterWidth =
+        kBarWidth * static_cast<float>(kBarCount) + kBarGap * static_cast<float>(kBarCount - 1);
+    const float clusterLeft = (box.left + box.right - clusterWidth) * 0.5f;
     const float centreY = (box.top + box.bottom) * 0.5f;
-    const float maxHalf = (box.bottom - box.top) * 0.45f;
+    const float maxHalf = (box.bottom - box.top) * 0.18f;
     for (int i = 0; i < kBarCount; ++i) {
-        const float phase = phaseSeconds * 5.0f + static_cast<float>(i) * 0.73f;
-        const float envelope = 0.22f + 0.78f * (0.5f + 0.5f * std::sin(phase));
-        const float half = 0.75f + maxHalf * envelope * shownLevel;
-        const float x = box.left + (static_cast<float>(i) + 0.5f) * barStep;
-        context->DrawLine(D2D1::Point2F(x, centreY - half),
-                          D2D1::Point2F(x, centreY + half), brush, 2.4f);
+        const float across =
+            (static_cast<float>(i) + 0.5f) / static_cast<float>(kBarCount);
+        const float centreWeight = std::sin(across * 3.14159265f);
+        const float phase = phaseSeconds * 3.1f + static_cast<float>(i) * 0.62f;
+        const float motion =
+            0.52f + 0.32f * std::sin(phase) + 0.16f * std::sin(phase * 0.53f + 1.7f);
+        const float intensity = 0.20f + 0.80f * centreWeight * motion;
+        const float half = 1.5f + maxHalf * shownLevel * intensity;
+        const float left = clusterLeft + static_cast<float>(i) * (kBarWidth + kBarGap);
+        const D2D1_ROUNDED_RECT bar =
+            D2D1::RoundedRect(D2D1::RectF(left, centreY - half, left + kBarWidth,
+                                          centreY + half),
+                              kBarWidth * 0.5f, kBarWidth * 0.5f);
+        context->FillRoundedRectangle(bar, brush);
     }
     brush->Release();
 }
