@@ -113,31 +113,31 @@ void DrawMusicWaveBadge(ID2D1DeviceContext2* context, float centreX, float centr
     }
 }
 
-void DrawMusicWaveUnderLyrics(ID2D1DeviceContext2* context, const RectF& box,
-                              float phaseSeconds, float level, D2D1_COLOR_F accent,
-                              float opacity) {
+void DrawMusicWaveBackground(ID2D1DeviceContext2* context, const RectF& box,
+                             float phaseSeconds, float level, D2D1_COLOR_F accent,
+                             float opacity) {
     if (!context || opacity <= 0.01f || box.right <= box.left ||
         box.bottom <= box.top) {
         return;
     }
 
     D2D1_COLOR_F waveColour = VisibleWaveAccent(accent);
-    waveColour.a = opacity * (0.45f + 0.20f * std::min(1.0f, level));
+    waveColour.a = opacity * (0.12f + 0.08f * std::min(1.0f, level));
     ID2D1SolidColorBrush* brush = nullptr;
     if (FAILED(context->CreateSolidColorBrush(waveColour, &brush)) || !brush) return;
 
-    constexpr int kBarCount = 20;
+    constexpr int kBarCount = 28;
     const float barStep = (box.right - box.left) / static_cast<float>(kBarCount);
     const float centreY = (box.top + box.bottom) * 0.5f;
-    const float maxHalf = (box.bottom - box.top) * 0.42f;
+    const float maxHalf = (box.bottom - box.top) * 0.45f;
     const float shownLevel = 0.25f + 0.75f * std::min(1.0f, level);
     for (int i = 0; i < kBarCount; ++i) {
         const float phase = phaseSeconds * 5.0f + static_cast<float>(i) * 0.73f;
         const float envelope = 0.22f + 0.78f * (0.5f + 0.5f * std::sin(phase));
-        const float half = 0.55f + maxHalf * envelope * shownLevel;
+        const float half = 0.75f + maxHalf * envelope * shownLevel;
         const float x = box.left + (static_cast<float>(i) + 0.5f) * barStep;
         context->DrawLine(D2D1::Point2F(x, centreY - half),
-                          D2D1::Point2F(x, centreY + half), brush, 2.0f);
+                          D2D1::Point2F(x, centreY + half), brush, 2.2f);
     }
     brush->Release();
 }
@@ -2143,7 +2143,7 @@ void TextRenderer::DrawFullscreenMusicNotch(ID2D1DeviceContext2* context,
     if (MultiByteToWideChar(CP_UTF8, 0, line, -1, lyric, 512) <= 0) return;
     ID2D1SolidColorBrush* ink = nullptr;
     if (FAILED(context->CreateSolidColorBrush(PillInk(0.92f * opacity), &ink)) || !ink) return;
-    DrawMusicWaveUnderLyrics(context, layout.wave, musicPhase, musicLevel, musicAccent, opacity);
+    DrawMusicWaveBackground(context, layout.wave, musicPhase, musicLevel, musicAccent, opacity);
     DrawNiriLyricLine(context, layout.lyric, lyric, scrollDip, ink, 0.0f);
     ink->Release();
 }

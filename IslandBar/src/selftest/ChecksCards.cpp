@@ -3041,16 +3041,14 @@ void TestMusicCardLayout() {
                           Nearly(music.box.rect.right, 1430.0f, 0.01f) &&
                           Nearly(music.box.rect.top, screen.top, 0.01f) &&
                           Nearly(music.box.rect.bottom - music.box.rect.top,
-                                 23.7f, 0.01f) &&
-                          Nearly(music.material.rect.top, -11.85f, 0.01f) &&
+                                 20.7f, 0.01f) &&
+                          Nearly(music.material.rect.top, -10.35f, 0.01f) &&
                           Nearly(music.lyric.right - music.lyric.left,
                                  kFullscreenMusicTextWidthDip, 0.01f) &&
                           Nearly(music.wave.left, music.lyric.left, 0.01f) &&
                           Nearly(music.wave.right, music.lyric.right, 0.01f) &&
-                          Nearly(music.wave.top - music.lyric.bottom,
-                                 kFullscreenMusicWaveGapDip, 0.01f) &&
-                          Nearly(music.wave.bottom - music.wave.top,
-                                 kFullscreenHudWaveHeightDip, 0.01f) &&
+                          Nearly(music.wave.top, music.lyric.top, 0.01f) &&
+                          Nearly(music.wave.bottom, music.lyric.bottom, 0.01f) &&
                           Nearly(shortMusic.box.rect.right - shortMusic.box.rect.left,
                                  kFullscreenMusicWidthDip, 0.01f) &&
                           Nearly(longMusic.box.rect.right - longMusic.box.rect.left,
@@ -3067,7 +3065,7 @@ void TestMusicCardLayout() {
                                  kFullscreenCallVisualDip, 0.01f) &&
                           Nearly(call.material.rect.bottom - call.material.rect.top,
                                  kFullscreenCallVisualDip, 0.01f),
-                      L"the full-screen music HUD keeps a fixed width with a separate wave band",
+                      L"the full-screen music HUD keeps a fixed width with the wave behind the lyric",
                       hudDetail);
             }
 

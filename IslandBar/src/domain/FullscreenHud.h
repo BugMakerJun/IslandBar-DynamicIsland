@@ -40,10 +40,7 @@ inline const wchar_t* FullscreenHudModeName(FullscreenHudMode mode) {
 inline constexpr float kFullscreenMusicWidthDip = 300.0f;
 inline constexpr float kFullscreenMusicDefaultLineHeightDip = 14.0f;
 inline constexpr float kFullscreenHudSidePadDip = 12.0f;
-inline constexpr float kFullscreenMusicTopPadDip = 2.0f;
-inline constexpr float kFullscreenMusicWaveGapDip = 1.0f;
-inline constexpr float kFullscreenHudWaveHeightDip = 5.0f;
-inline constexpr float kFullscreenMusicBottomPadDip = 1.0f;
+inline constexpr float kFullscreenMusicVerticalPadDip = 3.0f;
 inline constexpr float kFullscreenCallLayoutDip = 30.0f;
 inline constexpr float kFullscreenCallVisualDip = 26.0f;
 
@@ -87,9 +84,7 @@ inline FullscreenHudLayout FullscreenHudLayoutFor(FullscreenHudMode mode,
         const float measuredLineHeight = musicLineHeightDip > 0.0f
                                              ? musicLineHeightDip
                                              : kFullscreenMusicDefaultLineHeightDip;
-        const float height = measuredLineHeight + kFullscreenMusicTopPadDip +
-                             kFullscreenMusicWaveGapDip + kFullscreenHudWaveHeightDip +
-                             kFullscreenMusicBottomPadDip;
+        const float height = measuredLineHeight + 2.0f * kFullscreenMusicVerticalPadDip;
         layout.box.rect = {centreX - kFullscreenMusicWidthDip * 0.5f, screen.top,
                            centreX + kFullscreenMusicWidthDip * 0.5f,
                            screen.top + height};
@@ -97,14 +92,11 @@ inline FullscreenHudLayout FullscreenHudLayoutFor(FullscreenHudMode mode,
         layout.box.radiusY = layout.box.radiusX;
         layout.shape = BarShape::Notch;
         layout.lyric = {layout.box.rect.left + kFullscreenHudSidePadDip,
-                        layout.box.rect.top + kFullscreenMusicTopPadDip,
+                        layout.box.rect.top + kFullscreenMusicVerticalPadDip,
                         layout.box.rect.right - kFullscreenHudSidePadDip,
-                        layout.box.rect.top + kFullscreenMusicTopPadDip + measuredLineHeight};
-        layout.wave = {layout.lyric.left,
-                       layout.lyric.bottom + kFullscreenMusicWaveGapDip,
-                       layout.lyric.right,
-                       layout.lyric.bottom + kFullscreenMusicWaveGapDip +
-                           kFullscreenHudWaveHeightDip};
+                        layout.box.rect.bottom - kFullscreenMusicVerticalPadDip};
+        // The wave is the lyric's backdrop, not a second row of content.
+        layout.wave = layout.lyric;
         layout.material = BarMaterialBoxFor(layout.box, layout.shape);
     }
     layout.valid = layout.box.rect.right > layout.box.rect.left;
