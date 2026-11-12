@@ -1274,6 +1274,10 @@ struct BarRuntime {
     float lastNiriLyricSlotWidth = -1.0f;
     float lastNiriLyricTextWidth = -1.0f;
     bool lastNiriLyricNeedsScroll = false;
+    // The full-screen music notch changes width with the words. The text and its metrics are cached so a
+    // marquee redraw does not remeasure the same line or resize the window region.
+    char fullscreenMusicMetricsText[512] = {};
+    island::FullscreenMusicTextMetrics fullscreenMusicMetrics;
     // --- what the loop last saw, so it can tell a CHANGE from a reading ---
     //
     // Every one of these is a comparison against the previous pass, and every one of them used to be a local
@@ -1947,9 +1951,7 @@ static void UpdateFullscreenStandDown(island::BarState& bar, island::BarSystems&
 // The game-facing HUD is a separate three-state product mode, not another point in the ordinary
 // pointer-driven shape machine. It reuses the existing full-screen detector and media/call readings but
 // never draws a normal pill, card or notification.
-static void UpdateFullscreenHud(island::BarState& bar, island::BarSystems& systems,
-                                const island::Notification* active,
-                                const island::MonitorGeometry& monitor) {
+static void UpdateFullscreenHudState(island::BarState& bar, island::BarSystems& systems) {
     using island::FullscreenHudMode;
     const unsigned long long now = GetTickCount64();
     if (bar.activePlaying) bar.musicHudHoldUntil = now + 1000;
@@ -1957,23 +1959,9 @@ static void UpdateFullscreenHud(island::BarState& bar, island::BarSystems& syste
     const bool callActive = systems.wechat.CallNotificationId() != 0;
     const FullscreenHudMode mode =
         island::FullscreenHudModeFor(bar.fullscreenAppInFront, callActive, musicForHud);
-
-    island::FullscreenHudLayout layout;
-    if (mode == FullscreenHudMode::MusicNotch || mode == FullscreenHudMode::CallOrb) {
-        const float scale = static_cast<float>(monitor.dpi) / 96.0f;
-        const island::RectF screen = {
-            static_cast<float>(monitor.screen.left) / scale,
-            static_cast<float>(monitor.screen.top) / scale,
-            static_cast<float>(monitor.screen.right) / scale,
-            static_cast<float>(monitor.screen.bottom) / scale,
-        };
-        layout = island::FullscreenHudLayoutFor(mode, screen);
-    }
     if (!bar.fullscreenAppInFront) bar.musicHudHoldUntil = 0;
 
     bar.fullscreenHudMode = mode;
-    bar.fullscreenHudLayout = layout;
-    systems.window.SetFullscreenHud(mode, layout);
 
     if (mode != FullscreenHudMode::None) {
         // A card cannot survive into the dedicated HUD. Input is already click-through in full screen,
@@ -1993,23 +1981,94 @@ static void UpdateFullscreenHud(island::BarState& bar, island::BarSystems& syste
         bar.niriNotchRightExtent = 0.0f;
         systems.window.CloseTrayMenu();
     }
+}
 
-    if (mode != bar.lastReportedFullscreenHud) {
+static island::FullscreenMusicTextMetrics FullscreenMusicMetricsForLine(
+    BarRuntime& runtime, island::BarSystems& systems, const char* line) {
+    island::FullscreenMusicTextMetrics metrics;
+    if (!line || line[0] == '\0') {
+        runtime.fullscreenMusicMetricsText[0] = '\0';
+        runtime.fullscreenMusicMetrics = {};
+        return metrics;
+    }
+    if (std::strcmp(line, runtime.fullscreenMusicMetricsText) == 0) {
+        return runtime.fullscreenMusicMetrics;
+    }
+
+    wchar_t wide[512] = {};
+    if (MultiByteToWideChar(CP_UTF8, 0, line, -1, wide, 512) > 0) {
+        const island::TextRenderer::NiriLyricMetrics measured =
+            systems.text.MeasureNiriLyric(wide);
+        metrics.widthDip = measured.widthDip;
+        metrics.lineHeightDip = measured.lineHeightDip;
+    }
+    strncpy_s(runtime.fullscreenMusicMetricsText,
+              sizeof(runtime.fullscreenMusicMetricsText), line, _TRUNCATE);
+    runtime.fullscreenMusicMetrics = metrics;
+    return metrics;
+}
+
+static void UpdateFullscreenHudLayout(BarRuntime& runtime, island::BarState& bar,
+                                      island::BarSystems& systems,
+                                      const island::Notification* active,
+                                      const island::MonitorGeometry& monitor,
+                                      const char* lyricLine, const char* fallbackLine) {
+    using island::FullscreenHudMode;
+    const FullscreenHudMode mode = bar.fullscreenHudMode;
+    const island::FullscreenHudLayout previous = bar.fullscreenHudLayout;
+
+    island::FullscreenHudLayout layout;
+    island::FullscreenMusicTextMetrics metrics;
+    if (mode == FullscreenHudMode::MusicNotch || mode == FullscreenHudMode::CallOrb) {
+        const float scale = static_cast<float>(monitor.dpi) / 96.0f;
+        const island::RectF screen = {
+            static_cast<float>(monitor.screen.left) / scale,
+            static_cast<float>(monitor.screen.top) / scale,
+            static_cast<float>(monitor.screen.right) / scale,
+            static_cast<float>(monitor.screen.bottom) / scale,
+        };
+        if (mode == FullscreenHudMode::MusicNotch) {
+            const char* line =
+                lyricLine && lyricLine[0] != '\0' ? lyricLine : fallbackLine;
+            metrics = FullscreenMusicMetricsForLine(runtime, systems, line);
+        }
+        layout = island::FullscreenHudLayoutFor(mode, screen, metrics);
+    }
+
+    const bool geometryChanged =
+        mode != bar.lastReportedFullscreenHud ||
+        std::fabs(layout.box.rect.left - previous.box.rect.left) > 0.01f ||
+        std::fabs(layout.box.rect.top - previous.box.rect.top) > 0.01f ||
+        std::fabs(layout.box.rect.right - previous.box.rect.right) > 0.01f ||
+        std::fabs(layout.box.rect.bottom - previous.box.rect.bottom) > 0.01f;
+
+    bar.fullscreenHudLayout = layout;
+    systems.window.SetFullscreenHud(mode, layout);
+
+    if (geometryChanged) {
+        const bool callActive = systems.wechat.CallNotificationId() != 0;
         const char* reason = mode == FullscreenHudMode::None
                                  ? "ordinary-bar"
                                  : (mode == FullscreenHudMode::CallOrb
                                         ? "active-call"
-                                        : (mode == FullscreenHudMode::MusicNotch ? "music-playing"
-                                                                                 : "clear"));
+                                        : (mode == FullscreenHudMode::MusicNotch
+                                               ? "music-line"
+                                               : "clear"));
+        const bool scrolling =
+            mode == FullscreenHudMode::MusicNotch && layout.lyric.right > layout.lyric.left &&
+            island::LyricNeedsScroll(metrics.widthDip,
+                                     layout.lyric.right - layout.lyric.left, 0.0f);
         island::LogAndPrint(
-            "  fullscreen hud: mode=%d name=%ls reason=%s fullscreen=%d playing=%d call=%d notify=%d "
-            "box=[%.0f,%.0f,%.0f,%.0f] visual=%.0f\n",
+            "  fullscreen hud layout: mode=%d name=%ls reason=%s fullscreen=%d playing=%d "
+            "call=%d notify=%d box=[%.0f,%.0f,%.0f,%.0f] size=%.0fx%.0f text=%.1f "
+            "line=%.1f scrolling=%d\n",
             static_cast<int>(mode), island::FullscreenHudModeName(mode), reason,
             bar.fullscreenAppInFront ? 1 : 0, bar.activePlaying ? 1 : 0, callActive ? 1 : 0,
-            active ? 1 : 0, layout.box.rect.left, layout.box.rect.top, layout.box.rect.right,
-            layout.box.rect.bottom,
-            mode == FullscreenHudMode::CallOrb ? island::kFullscreenCallVisualDip
-                                               : island::kNiriMusicWaveVisualRadiusDip * 2.0f);
+            active ? 1 : 0, layout.box.rect.left, layout.box.rect.top,
+            layout.box.rect.right, layout.box.rect.bottom,
+            layout.box.rect.right - layout.box.rect.left,
+            layout.box.rect.bottom - layout.box.rect.top, metrics.widthDip,
+            metrics.lineHeightDip, scrolling ? 1 : 0);
         std::fflush(stdout);
         bar.lastReportedFullscreenHud = mode;
         bar.statusWakePending = true;
@@ -4478,12 +4537,22 @@ static void PickRestingLyricLine(BarRuntime& runtime, island::BarState& bar, isl
                 wchar_t wide[512] = {};
                 if (MultiByteToWideChar(CP_UTF8, 0, line->text, -1, wide, 512) > 0) {
                     const bool niri = NiriLayoutActive();
+                    const bool fullscreenMusic =
+                        bar.fullscreenHudMode == island::FullscreenHudMode::MusicNotch;
                     float stripWidth = lineBox.rect.right - lineBox.rect.left;
                     float textWidth = systems.text.TrackLineWidth(wide);
                     if (niri) {
-                        const island::RectF lyricBox = island::NiriLyricBoxFor(lineBox);
-                        stripWidth = lyricBox.right - lyricBox.left;
-                        textWidth = systems.text.NiriLyricWidth(wide);
+                        if (fullscreenMusic) {
+                            const island::FullscreenMusicTextMetrics metrics =
+                                FullscreenMusicMetricsForLine(runtime, systems, line->text);
+                            textWidth = metrics.widthDip;
+                            stripWidth =
+                                island::FullscreenMusicLyricWidthFor(textWidth);
+                        } else {
+                            const island::RectF lyricBox = island::NiriLyricBoxFor(lineBox);
+                            stripWidth = lyricBox.right - lyricBox.left;
+                            textWidth = systems.text.NiriLyricWidth(wide);
+                        }
                     }
                     // The same predicate the renderer uses to place the line.
                     // They used to work it out separately from slightly different
@@ -4491,8 +4560,9 @@ static void PickRestingLyricLine(BarRuntime& runtime, island::BarState& bar, isl
                     // scrolled it -- the text would jump sideways for no reason.
                     // ... and the same WIDTH measurement. The classic pill uses TrackLineWidth; Niri
                     // uses NiriLyricWidth because its top-bar lyric has a different face.
-                    const bool needsScroll = island::LyricNeedsScroll(textWidth, stripWidth);
-                    if (niri &&
+                    const bool needsScroll = island::LyricNeedsScroll(
+                        textWidth, stripWidth, fullscreenMusic ? 0.0f : 24.0f);
+                    if (niri && !fullscreenMusic &&
                         (std::fabs(stripWidth - runtime.lastNiriLyricSlotWidth) > 0.1f ||
                          std::fabs(textWidth - runtime.lastNiriLyricTextWidth) > 0.5f ||
                          needsScroll != runtime.lastNiriLyricNeedsScroll)) {
@@ -7241,7 +7311,7 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
             // publishes no session (see PlayerWindow.h). The CARD is a different question and stays with
             // the session -- see ShouldPromoteToCard.
             const bool musicResting = bar.activePresent;
-            UpdateFullscreenHud(bar, systems, active, monitor);
+            UpdateFullscreenHudState(bar, systems);
             const bool musicVisible =
                 musicResting &&
                 (bar.fullscreenHudMode == island::FullscreenHudMode::MusicNotch ||
@@ -7571,6 +7641,8 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                                  island::MusicWaveNeedsFrames(musicVisible, bar.activePlaying),
                                  kLyricScrollDipPerSec, dt, lyricLine, fallbackLine, lyricsScrolling,
                                  lyricLineAnimating, lyricLineChanged, musicWavePhase);
+            UpdateFullscreenHudLayout(runtime, bar, systems, active, monitor,
+                                      lyricLine, fallbackLine);
 
             // The native EDIT host is a separate top-level window and does not always receive
             // WM_KILLFOCUS when the user clicks the desktop. The card flags are therefore the source of

@@ -59,18 +59,22 @@ D2D1_COLOR_F TextColour(float opacity) {
     return island::CardInk(a);
 }
 
-void DrawMusicWaveBadge(ID2D1DeviceContext2* context, float centreX, float centreY,
-                        float phaseSeconds, float level, D2D1_COLOR_F accent, float opacity) {
-    if (!context || opacity <= 0.01f) return;
-    D2D1_COLOR_F visibleAccent = accent;
+D2D1_COLOR_F VisibleWaveAccent(D2D1_COLOR_F accent) {
     const float luma =
-        0.2126f * visibleAccent.r + 0.7152f * visibleAccent.g + 0.0722f * visibleAccent.b;
+        0.2126f * accent.r + 0.7152f * accent.g + 0.0722f * accent.b;
     float scale = 1.0f;
     if (luma > 0.68f && luma > 0.001f) scale = 0.48f / luma;
     if (luma < 0.20f && luma > 0.001f) scale = 0.34f / luma;
-    visibleAccent.r = std::min(1.0f, visibleAccent.r * scale);
-    visibleAccent.g = std::min(1.0f, visibleAccent.g * scale);
-    visibleAccent.b = std::min(1.0f, visibleAccent.b * scale);
+    accent.r = std::min(1.0f, accent.r * scale);
+    accent.g = std::min(1.0f, accent.g * scale);
+    accent.b = std::min(1.0f, accent.b * scale);
+    return accent;
+}
+
+void DrawMusicWaveBadge(ID2D1DeviceContext2* context, float centreX, float centreY,
+                        float phaseSeconds, float level, D2D1_COLOR_F accent, float opacity) {
+    if (!context || opacity <= 0.01f) return;
+    const D2D1_COLOR_F visibleAccent = VisibleWaveAccent(accent);
 
     D2D1_COLOR_F fillColour = visibleAccent;
     fillColour.a = 0.18f * opacity;
@@ -107,6 +111,35 @@ void DrawMusicWaveBadge(ID2D1DeviceContext2* context, float centreX, float centr
         }
         brush->Release();
     }
+}
+
+void DrawMusicWaveBackdrop(ID2D1DeviceContext2* context, const RectF& box,
+                           float phaseSeconds, float level, D2D1_COLOR_F accent,
+                           float opacity) {
+    if (!context || opacity <= 0.01f || box.right <= box.left ||
+        box.bottom <= box.top) {
+        return;
+    }
+
+    D2D1_COLOR_F waveColour = VisibleWaveAccent(accent);
+    waveColour.a = 0.12f * opacity;
+    ID2D1SolidColorBrush* brush = nullptr;
+    if (FAILED(context->CreateSolidColorBrush(waveColour, &brush)) || !brush) return;
+
+    constexpr int kBarCount = 20;
+    const float barStep = (box.right - box.left) / static_cast<float>(kBarCount);
+    const float centreY = (box.top + box.bottom) * 0.5f;
+    const float maxHalf = (box.bottom - box.top) * 0.42f;
+    const float shownLevel = 0.25f + 0.75f * std::min(1.0f, level);
+    for (int i = 0; i < kBarCount; ++i) {
+        const float phase = phaseSeconds * 5.0f + static_cast<float>(i) * 0.73f;
+        const float envelope = 0.22f + 0.78f * (0.5f + 0.5f * std::sin(phase));
+        const float half = 0.55f + maxHalf * envelope * shownLevel;
+        const float x = box.left + (static_cast<float>(i) + 0.5f) * barStep;
+        context->DrawLine(D2D1::Point2F(x, centreY - half),
+                          D2D1::Point2F(x, centreY + half), brush, 1.7f);
+    }
+    brush->Release();
 }
 
 void DrawCallWave(ID2D1DeviceContext2* context, float centreX, float centreY, float phaseSeconds,
@@ -2062,7 +2095,8 @@ void TextRenderer::DrawNiriTopBar(ID2D1DeviceContext2* context, const RoundedBox
 
 void TextRenderer::DrawNiriLyricLine(ID2D1DeviceContext2* context, const RectF& box,
                                      const wchar_t* text, float scrollDip,
-                                     ID2D1SolidColorBrush* ink) {
+                                     ID2D1SolidColorBrush* ink,
+                                     float reservedWidthDip) {
     if (!context || !text || !text[0] || !ink || box.right <= box.left) return;
     IDWriteTextFormat* format = niriLyricFormat_ ? niriLyricFormat_ : niriDateFormat_;
     if (!format) return;
@@ -2072,7 +2106,8 @@ void TextRenderer::DrawNiriLyricLine(ID2D1DeviceContext2* context, const RectF& 
     DWRITE_TEXT_METRICS metrics = {};
     const bool measured = layout && SUCCEEDED(layout->GetMetrics(&metrics));
     const float textWidth = measured ? metrics.width : 0.0f;
-    const bool scrolling = measured && LyricNeedsScroll(textWidth, available);
+    const bool scrolling =
+        measured && LyricNeedsScroll(textWidth, available, reservedWidthDip);
 
     context->PushAxisAlignedClip(
         D2D1::RectF(box.left, box.top, box.right, box.bottom),
@@ -2108,11 +2143,9 @@ void TextRenderer::DrawFullscreenMusicNotch(ID2D1DeviceContext2* context,
     if (MultiByteToWideChar(CP_UTF8, 0, line, -1, lyric, 512) <= 0) return;
     ID2D1SolidColorBrush* ink = nullptr;
     if (FAILED(context->CreateSolidColorBrush(PillInk(0.92f * opacity), &ink)) || !ink) return;
-    DrawNiriLyricLine(context, layout.lyric, lyric, scrollDip, ink);
+    DrawMusicWaveBackdrop(context, layout.wave, musicPhase, musicLevel, musicAccent, opacity);
+    DrawNiriLyricLine(context, layout.lyric, lyric, scrollDip, ink, 0.0f);
     ink->Release();
-    DrawMusicWaveBadge(context, (layout.wave.left + layout.wave.right) * 0.5f,
-                       (layout.wave.top + layout.wave.bottom) * 0.5f, musicPhase, musicLevel,
-                       musicAccent, opacity);
 }
 
 void TextRenderer::DrawFullscreenCallOrb(ID2D1DeviceContext2* context,
@@ -4557,16 +4590,25 @@ float TextRenderer::TrackLineWidth(const wchar_t* text) const {
     return SUCCEEDED(hr) ? metrics.width : 0.0f;
 }
 
-float TextRenderer::NiriLyricWidth(const wchar_t* text) const {
-    if (!text || !factory_) return 0.0f;
+TextRenderer::NiriLyricMetrics TextRenderer::MeasureNiriLyric(const wchar_t* text) const {
+    NiriLyricMetrics result;
+    if (!text || !factory_) return result;
     IDWriteTextFormat* format = niriLyricFormat_ ? niriLyricFormat_ : niriDateFormat_;
-    if (!format) return 0.0f;
+    if (!format) return result;
 
     IDWriteTextLayout* layout = LayoutFor(text, format, 8192.0f, 512.0f);
-    if (!layout) return 0.0f;
+    if (!layout) return result;
     DWRITE_TEXT_METRICS metrics = {};
     const HRESULT hr = layout->GetMetrics(&metrics);
-    return SUCCEEDED(hr) ? metrics.width : 0.0f;
+    if (SUCCEEDED(hr)) {
+        result.widthDip = metrics.width;
+        result.lineHeightDip = metrics.height;
+    }
+    return result;
+}
+
+float TextRenderer::NiriLyricWidth(const wchar_t* text) const {
+    return MeasureNiriLyric(text).widthDip;
 }
 
 void TextRenderer::DrawLyricLine(ID2D1DeviceContext2* context, const RoundedBox& box,

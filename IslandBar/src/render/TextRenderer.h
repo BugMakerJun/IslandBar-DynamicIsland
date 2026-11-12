@@ -824,8 +824,16 @@ public:
     // decision and the drawn rectangle go through here now, so the two cannot disagree.
     float TrackLineWidth(const wchar_t* text) const;
 
-    // Width of the Niri top bar's lyric, measured with the format that actually draws it. The pill's own
-    // line uses a different face, so TrackLineWidth cannot decide whether this lyric fits its slot.
+    struct NiriLyricMetrics {
+        float widthDip = 0.0f;
+        float lineHeightDip = 0.0f;
+    };
+
+    // Width and line height of the Niri top bar's lyric, measured with the format that actually draws it.
+    // The pill's own line uses a different face, so TrackLineWidth cannot answer either question.
+    NiriLyricMetrics MeasureNiriLyric(const wchar_t* text) const;
+
+    // Width only, for callers that do not need the line height.
     float NiriLyricWidth(const wchar_t* text) const;
 
     // Reports the line height each format actually needs, in DIPs.
@@ -854,7 +862,8 @@ public:
 
 private:
     void DrawNiriLyricLine(ID2D1DeviceContext2* context, const RectF& box, const wchar_t* text,
-                           float scrollDip, ID2D1SolidColorBrush* ink);
+                           float scrollDip, ID2D1SolidColorBrush* ink,
+                           float reservedWidthDip = 24.0f);
     // Refreshes the cached formatted strings if the second or the day rolled
     // over. Caching by day-key rather than by value avoids both a strcmp per
     // frame and a stale date at midnight.

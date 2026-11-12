@@ -1047,7 +1047,8 @@ void Renderer::RenderFrame(const FrameState& frame) {
                 const float lineHeight = lineBox.rect.bottom - lineBox.rect.top;
                 const float barHeight = frame.restingPill.rect.bottom - frame.restingPill.rect.top;
                 static bool reportedOutOfPlace = false;
-                if (!reportedOutOfPlace && barHeight > 0.0f && lineHeight > barHeight + 1.0f) {
+                if (frame.fullscreenHudMode == FullscreenHudMode::None &&
+                    !reportedOutOfPlace && barHeight > 0.0f && lineHeight > barHeight + 1.0f) {
                     reportedOutOfPlace = true;
                     LogLine(L"  WARNING: the bar's own line is being drawn in a box taller than the bar: "
                             L"[%.0f,%.0f %.0f,%.0f] against the bar [%.0f,%.0f %.0f,%.0f]",

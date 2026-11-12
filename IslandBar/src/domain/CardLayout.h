@@ -662,8 +662,9 @@ inline bool HitsTransportButton(const RoundedBox& cardBox, float x, float y) {
 // it out separately, from slightly different numbers, which meant the renderer could
 // centre a line while the loop scrolled it -- the text would jump sideways for no
 // visible reason. A line that fits is centred and still; a longer one scrolls.
-inline bool LyricNeedsScroll(float textWidthDip, float stripWidthDip) {
-    return textWidthDip > stripWidthDip - 24.0f;
+inline bool LyricNeedsScroll(float textWidthDip, float stripWidthDip,
+                             float reservedWidthDip = 24.0f) {
+    return textWidthDip > stripWidthDip - reservedWidthDip;
 }
 
 // How far inside each end of the strip a SCROLLING line fades out.
