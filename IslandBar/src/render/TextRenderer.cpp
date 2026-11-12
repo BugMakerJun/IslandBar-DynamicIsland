@@ -1887,10 +1887,10 @@ void TextRenderer::DrawNiriTopBar(ID2D1DeviceContext2* context, const RoundedBox
     // The search mark has one fixed home in both the normal and animated
     // search states. The content after it is laid out independently, so the
     // mark never shifts when the lavender field grows around it.
-    constexpr float kSearchCentreFromLeft = 16.0f;
-    constexpr float kContentLeftFromLeft = 42.0f;
-    constexpr float kTimeWidth = 74.0f;
-    constexpr float kSeparatorWidth = 14.0f;
+    constexpr float kSearchCentreFromLeft = island::kNiriTopBarSearchCentreFromLeftDip;
+    constexpr float kContentLeftFromLeft = island::kNiriTopBarContentLeftDip;
+    constexpr float kTimeWidth = island::kNiriTopBarClockWidthDip;
+    constexpr float kSeparatorWidth = island::kNiriTopBarSeparatorWidthDip;
     constexpr float kDateWidth = 116.0f;
     constexpr float kStatusGap = 6.0f;
     const float statusWidth = callActive ? 32.0f : (unreadNotifications > 0 ? 32.0f : 12.0f);
@@ -1915,7 +1915,9 @@ void TextRenderer::DrawNiriTopBar(ID2D1DeviceContext2* context, const RoundedBox
         context->CreateSolidColorBrush(fillColour, &circle);
         if (circle) {
             context->FillEllipse(
-                D2D1::Ellipse(D2D1::Point2F(waveCentreX, centreY), 13.0f, 13.0f),
+                D2D1::Ellipse(D2D1::Point2F(waveCentreX, centreY),
+                              island::kNiriMusicWaveVisualRadiusDip,
+                              island::kNiriMusicWaveVisualRadiusDip),
                 circle);
             circle->Release();
         }
@@ -1924,7 +1926,9 @@ void TextRenderer::DrawNiriTopBar(ID2D1DeviceContext2* context, const RoundedBox
         context->CreateSolidColorBrush(ringColour, &circle);
         if (circle) {
             context->DrawEllipse(
-                D2D1::Ellipse(D2D1::Point2F(waveCentreX, centreY), 13.0f, 13.0f),
+                D2D1::Ellipse(D2D1::Point2F(waveCentreX, centreY),
+                              island::kNiriMusicWaveVisualRadiusDip,
+                              island::kNiriMusicWaveVisualRadiusDip),
                 circle, 1.25f);
             circle->Release();
         }
@@ -1971,11 +1975,7 @@ void TextRenderer::DrawNiriTopBar(ID2D1DeviceContext2* context, const RoundedBox
     if (musicPresent && !callActive) {
         // While music is playing the date/notification group becomes the lyric line. The moving
         // waveform moves to the far right, where it no longer competes with the search mark.
-        constexpr float kWaveDiameter = 26.0f;
-        constexpr float kWaveGap = 8.0f;
-        const float lyricRight = box.rect.right - kWaveDiameter - kWaveGap - 6.0f;
-        const RectF lyricBox = {cursor, box.rect.top + 1.0f, lyricRight,
-                                box.rect.bottom - 1.0f};
+        const RectF lyricBox = island::NiriLyricBoxFor(box);
         wchar_t lyric[512] = {};
         if (sideLine && sideLine[0] != '\0' &&
             MultiByteToWideChar(CP_UTF8, 0, sideLine, -1, lyric, 512) > 0 &&
@@ -1991,27 +1991,15 @@ void TextRenderer::DrawNiriTopBar(ID2D1DeviceContext2* context, const RoundedBox
                 SUCCEEDED(measuredLayout->GetMetrics(&metrics));
             const float textWidth = measured ? metrics.width : 0.0f;
             // LayoutFor is cache-owned; releasing it here poisons the cache and crashes the next draw.
-            if (!measured || !LyricNeedsScroll(textWidth, available)) {
+            const bool scrolling = measured && LyricNeedsScroll(textWidth, available);
+            context->PushAxisAlignedClip(
+                D2D1::RectF(lyricBox.left, lyricBox.top, lyricBox.right, lyricBox.bottom),
+                D2D1_ANTIALIAS_MODE_ALIASED);
+            if (!scrolling) {
                 DrawTextIn(context, lyricFormat, lyric, lyricBox, ink,
                            DWRITE_TEXT_ALIGNMENT_CENTER,
                            DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
             } else {
-                ID2D1Factory* d2dFactory = nullptr;
-                context->GetFactory(&d2dFactory);
-                ID2D1RectangleGeometry* clip = nullptr;
-                if (d2dFactory) {
-                    d2dFactory->CreateRectangleGeometry(
-                        D2D1::RectF(lyricBox.left, lyricBox.top, lyricBox.right,
-                                    lyricBox.bottom),
-                        &clip);
-                    d2dFactory->Release();
-                }
-                if (clip) {
-                    context->PushLayer(
-                        D2D1::LayerParameters1(D2D1::InfiniteRect(), clip,
-                                               D2D1_ANTIALIAS_MODE_PER_PRIMITIVE),
-                        nullptr);
-                }
                 const float stride = textWidth + 40.0f;
                 const float offset =
                     lyricScrollDip -
@@ -2028,11 +2016,8 @@ void TextRenderer::DrawNiriTopBar(ID2D1DeviceContext2* context, const RoundedBox
                 drawAt(start - offset);
                 drawAt(start - offset + stride);
                 if (offset > 0.0f) drawAt(start - offset - stride);
-                if (clip) {
-                    context->PopLayer();
-                    clip->Release();
-                }
             }
+            context->PopAxisAlignedClip();
         }
         const RectF waveButton = island::NiriMusicWaveButtonFor(box);
         drawMusicWave((waveButton.left + waveButton.right) * 0.5f);
@@ -4531,6 +4516,18 @@ float TextRenderer::TrackLineWidth(const wchar_t* text) const {
     // The same 8192-wide, 512-tall area TextWidth uses: the width of a line is a property of the TEXT and the
     // face, not of the box it will be drawn into -- putting it in a box is what wrapping is for, and wrapping
     // is exactly what this line must never do.
+    IDWriteTextLayout* layout = LayoutFor(text, format, 8192.0f, 512.0f);
+    if (!layout) return 0.0f;
+    DWRITE_TEXT_METRICS metrics = {};
+    const HRESULT hr = layout->GetMetrics(&metrics);
+    return SUCCEEDED(hr) ? metrics.width : 0.0f;
+}
+
+float TextRenderer::NiriLyricWidth(const wchar_t* text) const {
+    if (!text || !factory_) return 0.0f;
+    IDWriteTextFormat* format = niriLyricFormat_ ? niriLyricFormat_ : niriDateFormat_;
+    if (!format) return 0.0f;
+
     IDWriteTextLayout* layout = LayoutFor(text, format, 8192.0f, 512.0f);
     if (!layout) return 0.0f;
     DWRITE_TEXT_METRICS metrics = {};

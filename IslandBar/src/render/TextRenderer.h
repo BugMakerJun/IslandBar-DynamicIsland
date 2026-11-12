@@ -816,6 +816,10 @@ public:
     // decision and the drawn rectangle go through here now, so the two cannot disagree.
     float TrackLineWidth(const wchar_t* text) const;
 
+    // Width of the Niri top bar's lyric, measured with the format that actually draws it. The pill's own
+    // line uses a different face, so TrackLineWidth cannot decide whether this lyric fits its slot.
+    float NiriLyricWidth(const wchar_t* text) const;
+
     // Reports the line height each format actually needs, in DIPs.
     //
     // The card lays text out in hand-sized rectangles, and a rectangle shorter than

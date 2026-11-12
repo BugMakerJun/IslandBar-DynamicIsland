@@ -1268,6 +1268,11 @@ struct BarRuntime {
     unsigned long long lastLyricsRevision = 0;
     int lastLyricIndex = -2;        // -2 forces the first evaluation
     float lyricsScrollDip = 0.0f;
+    // Last Niri lyric geometry reported, so the layout line is written on a word/size change rather than
+    // every frame of a marquee.
+    float lastNiriLyricSlotWidth = -1.0f;
+    float lastNiriLyricTextWidth = -1.0f;
+    bool lastNiriLyricNeedsScroll = false;
     // --- what the loop last saw, so it can tell a CHANGE from a reading ---
     //
     // Every one of these is a comparison against the previous pass, and every one of them used to be a local
@@ -4391,23 +4396,46 @@ static void PickRestingLyricLine(BarRuntime& runtime, island::BarState& bar, isl
                 // Advance the marquee only when there is something to scroll: a
                 // line that fits is centred and stays put, so the loop can
                 // sleep instead of redrawing 60 times a second.
-                // The PILL's width, which is what the line is drawn in -- not `CurrentBox`,
-                // which is card-sized for the whole of a card transition and would tell the
-                // marquee the line fits while the renderer clips it to 220 DIP.
+                // The LINE's own width, not the pill's and not `CurrentBox` (which is card-sized
+                // during a transition). In the Niri layout the line occupies only the slot after
+                // the search mark and clock and before the music wave, so that exact rectangle is
+                // the only correct fit test.
                 const island::RoundedBox lineBox =
                     island::BoxForState(island::IslandState::Collapsed, systems.window.CurrentAnchor());
-                const float stripWidth = lineBox.rect.right - lineBox.rect.left;
                 wchar_t wide[512] = {};
                 if (MultiByteToWideChar(CP_UTF8, 0, line->text, -1, wide, 512) > 0) {
+                    const bool niri = NiriLayoutActive();
+                    float stripWidth = lineBox.rect.right - lineBox.rect.left;
+                    float textWidth = systems.text.TrackLineWidth(wide);
+                    if (niri) {
+                        const island::RectF lyricBox = island::NiriLyricBoxFor(lineBox);
+                        stripWidth = lyricBox.right - lyricBox.left;
+                        textWidth = systems.text.NiriLyricWidth(wide);
+                    }
                     // The same predicate the renderer uses to place the line.
                     // They used to work it out separately from slightly different
                     // numbers, so the renderer could centre a line while the loop
                     // scrolled it -- the text would jump sideways for no reason.
-                    // ... and the same WIDTH measurement: `TrackLineWidth` is the width in the format
-                    // that draws the line. With `TextWidth` (the narrow, non-bold face) a line just
-                    // over the threshold was judged to fit, centred, and cut at both ends.
-                    if (island::LyricNeedsScroll(systems.text.TrackLineWidth(wide),
-                                                 stripWidth)) {
+                    // ... and the same WIDTH measurement. The classic pill uses TrackLineWidth; Niri
+                    // uses NiriLyricWidth because its top-bar lyric has a different face.
+                    const bool needsScroll = island::LyricNeedsScroll(textWidth, stripWidth);
+                    if (niri &&
+                        (std::fabs(stripWidth - runtime.lastNiriLyricSlotWidth) > 0.1f ||
+                         std::fabs(textWidth - runtime.lastNiriLyricTextWidth) > 0.5f ||
+                         needsScroll != runtime.lastNiriLyricNeedsScroll)) {
+                        const island::RectF lyricBox = island::NiriLyricBoxFor(lineBox);
+                        island::LogAndPrint(
+                            L"  lyric layout: pill=%.1f box=[%.1f,%.1f] width=%.1f text=%.1f "
+                            L"needsScroll=%d offset=%.1f rightGap=%.1f\n",
+                            lineBox.rect.right - lineBox.rect.left, lyricBox.left, lyricBox.right,
+                            stripWidth, textWidth, needsScroll ? 1 : 0, runtime.lyricsScrollDip,
+                            island::kNiriLyricWaveGapDip);
+                        std::fflush(stdout);
+                        runtime.lastNiriLyricSlotWidth = stripWidth;
+                        runtime.lastNiriLyricTextWidth = textWidth;
+                        runtime.lastNiriLyricNeedsScroll = needsScroll;
+                    }
+                    if (needsScroll) {
                         // A PAUSED SESSION'S LINE STANDS STILL. The words stay on the pill -- they
                         // are what it is for -- but a line that kept creeping across a paused player
                         // would be reading a playhead that is not moving, and asking for frames

@@ -186,6 +186,24 @@ void TestMotion(float originX, float originY, float monitorWidthDip) {
                          (search.rect.top + search.rect.bottom) * 0.5f, 0.01f),
               L"the music wave keeps one fixed hit rectangle at the right end", detail);
 
+        const RectF lyricBox = NiriLyricBoxFor(search);
+        const float waveVisualLeft =
+            (wave.left + wave.right) * 0.5f - kNiriMusicWaveVisualRadiusDip;
+        const float lyricWidth = lyricBox.right - lyricBox.left;
+        std::swprintf(detail, 224,
+                      L"lyric x[%.1f..%.1f] width %.1f, wave left %.1f, gap %.1f",
+                      lyricBox.left, lyricBox.right, lyricWidth, waveVisualLeft,
+                      waveVisualLeft - lyricBox.right);
+        Check(Nearly(lyricBox.left,
+                     search.rect.left + kNiriTopBarContentLeftDip +
+                         kNiriTopBarClockWidthDip + kNiriTopBarSeparatorWidthDip,
+                     0.01f) &&
+                  Nearly(lyricBox.right, waveVisualLeft - kNiriLyricWaveGapDip, 0.01f) &&
+                  lyricWidth > 0.0f &&
+                  LyricNeedsScroll(lyricWidth - 24.0f + 0.5f, lyricWidth) &&
+                  !LyricNeedsScroll(lyricWidth - 24.0f, lyricWidth),
+              L"the Niri lyric slot owns the same width used by its marquee decision", detail);
+
         float notchExtent = 0.0f;
         const bool notchStarted = NiriNotchExtentStep(&notchExtent, 1.0f, 0.06f);
         const float notchQuarter = notchExtent;

@@ -39,6 +39,12 @@ inline constexpr float kNiriSearchResultsEmptyHeightDip = 52.0f;
 inline constexpr float kNiriSearchResultsRadiusDip = 18.0f;
 inline constexpr float kNiriMusicWaveCentreFromRightDip = 18.0f;
 inline constexpr float kNiriMusicWaveHitDip = 30.0f;
+inline constexpr float kNiriMusicWaveVisualRadiusDip = 13.0f;
+inline constexpr float kNiriLyricWaveGapDip = 10.0f;
+inline constexpr float kNiriTopBarSearchCentreFromLeftDip = 16.0f;
+inline constexpr float kNiriTopBarContentLeftDip = 42.0f;
+inline constexpr float kNiriTopBarClockWidthDip = 74.0f;
+inline constexpr float kNiriTopBarSeparatorWidthDip = 14.0f;
 inline constexpr float kNiriNotchExtentSeconds = 0.24f;
 inline constexpr float kNiriSideGroupSlideDip = 20.0f;
 
@@ -67,6 +73,18 @@ inline RectF NiriMusicWaveButtonFor(const RoundedBox& island) {
     const float centreY = (island.rect.top + island.rect.bottom) * 0.5f;
     const float half = kNiriMusicWaveHitDip * 0.5f;
     return {centreX - half, centreY - half, centreX + half, centreY + half};
+}
+
+// The one geometry shared by the marquee's fit test and the DirectWrite draw call. The lyric starts
+// after the search mark, clock and separator, and stops 10 DIP before the wave's visible left edge.
+inline RectF NiriLyricBoxFor(const RoundedBox& island) {
+    const RectF wave = NiriMusicWaveButtonFor(island);
+    const float waveVisualLeft =
+        (wave.left + wave.right) * 0.5f - kNiriMusicWaveVisualRadiusDip;
+    return {island.rect.left + kNiriTopBarContentLeftDip + kNiriTopBarClockWidthDip +
+                kNiriTopBarSeparatorWidthDip,
+            island.rect.top + 1.0f, waveVisualLeft - kNiriLyricWaveGapDip,
+            island.rect.bottom - 1.0f};
 }
 
 inline bool NiriNotchExtentStep(float* value, float target, float dtSeconds) {
