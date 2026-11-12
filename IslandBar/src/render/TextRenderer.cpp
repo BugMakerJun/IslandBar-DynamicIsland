@@ -2133,7 +2133,12 @@ void TextRenderer::DrawFullscreenMusicNotch(ID2D1DeviceContext2* context,
     const float waveHeight = layout.wave.bottom - layout.wave.top;
     const RoundedBox waveBox = {layout.wave, waveHeight * 0.5f, waveHeight * 0.5f};
     DrawAudioWave(context, waveBox, musicPhase, musicLevel, HudWaveAccent(musicAccent),
-                  opacity * 0.45f);
+                  opacity * 0.65f, opacity * 0.24f);
+    static bool loggedWaveStyle = false;
+    if (!loggedWaveStyle) {
+        loggedWaveStyle = true;
+        LogLine(L"  fullscreen hud wave: fill=0.65 outline=0.75dip alpha=0.24");
+    }
     DrawNiriLyricLine(context, layout.lyric, lyric, scrollDip, ink, 0.0f);
     ink->Release();
 }
@@ -4830,10 +4835,13 @@ float TextRenderer::AudioWaveEnvelope(int step, int steps, float phase) {
 }
 
 void TextRenderer::DrawAudioWave(ID2D1DeviceContext2* context, const RoundedBox& box, float phase,
-                                 float level, const D2D1_COLOR_F& accent, float opacity) {
+                                 float level, const D2D1_COLOR_F& accent, float opacity,
+                                 float outlineOpacity) {
     if (!context) return;
     if (level < 0.0f) level = 0.0f;
     if (level > 1.0f) level = 1.0f;
+    if (outlineOpacity < 0.0f) outlineOpacity = 0.0f;
+    if (outlineOpacity > 1.0f) outlineOpacity = 1.0f;
     const float height = box.rect.bottom - box.rect.top;
     const float width = box.rect.right - box.rect.left;
     if (height <= 4.0f || width <= 8.0f || opacity <= 0.01f) return;
@@ -4913,6 +4921,22 @@ void TextRenderer::DrawAudioWave(ID2D1DeviceContext2* context, const RoundedBox&
         context->FillGeometry(path, brush);
     }
 
+    // The full-screen HUD draws against a light surface where the centre of the fill gradient is
+    // intentionally quiet. A hairline contour gives the wave a readable edge without making the whole
+    // ribbon opaque. outlineOpacity is the final alpha: do not multiply it by the fill opacity above.
+    ID2D1SolidColorBrush* outline = nullptr;
+    if (path && outlineOpacity > 0.01f &&
+        SUCCEEDED(context->CreateSolidColorBrush(
+            D2D1::ColorF(
+                accent.r + (1.0f - accent.r) * 0.18f,
+                accent.g + (1.0f - accent.g) * 0.18f,
+                accent.b + (1.0f - accent.b) * 0.18f, outlineOpacity),
+            &outline)) &&
+        outline) {
+        context->DrawGeometry(path, outline, 0.75f);
+    }
+
+    SafeRelease(&outline);
     SafeRelease(&brush);
     SafeRelease(&stops);
     SafeRelease(&path);

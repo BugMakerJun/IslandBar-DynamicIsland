@@ -496,7 +496,7 @@ public:
     // when it is quiet; `phase` drifts with time so the shape moves even while the level sits still.
     // `accent` is the colour taken from the cover (see AccentColourFromArtwork).
     void DrawAudioWave(ID2D1DeviceContext2* context, const RoundedBox& box, float phase, float level,
-                       const D2D1_COLOR_F& accent, float opacity);
+                       const D2D1_COLOR_F& accent, float opacity, float outlineOpacity = 0.0f);
 
     // The wave's half-height at `step` of `steps`, 0..1, before the level scales it.
     //
