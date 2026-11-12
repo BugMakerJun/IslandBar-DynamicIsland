@@ -2133,11 +2133,11 @@ void TextRenderer::DrawFullscreenMusicNotch(ID2D1DeviceContext2* context,
     const float waveHeight = layout.wave.bottom - layout.wave.top;
     const RoundedBox waveBox = {layout.wave, waveHeight * 0.5f, waveHeight * 0.5f};
     DrawAudioWave(context, waveBox, musicPhase, musicLevel, HudWaveAccent(musicAccent),
-                  opacity * 0.65f, opacity * 0.24f);
+                  opacity * 0.65f, opacity * 0.24f, 1.35f);
     static bool loggedWaveStyle = false;
     if (!loggedWaveStyle) {
         loggedWaveStyle = true;
-        LogLine(L"  fullscreen hud wave: fill=0.65 outline=0.75dip alpha=0.24");
+        LogLine(L"  fullscreen hud wave: fill=0.65 outline=0.75dip alpha=0.24 amplitude=1.35");
     }
     DrawNiriLyricLine(context, layout.lyric, lyric, scrollDip, ink, 0.0f);
     ink->Release();
@@ -4836,7 +4836,7 @@ float TextRenderer::AudioWaveEnvelope(int step, int steps, float phase) {
 
 void TextRenderer::DrawAudioWave(ID2D1DeviceContext2* context, const RoundedBox& box, float phase,
                                  float level, const D2D1_COLOR_F& accent, float opacity,
-                                 float outlineOpacity) {
+                                 float outlineOpacity, float amplitudeScale) {
     if (!context) return;
     if (level < 0.0f) level = 0.0f;
     if (level > 1.0f) level = 1.0f;
@@ -4873,7 +4873,9 @@ void TextRenderer::DrawAudioWave(ID2D1DeviceContext2* context, const RoundedBox&
     // at the levels music actually plays at, the ribbon sits near the centre line -- which is also where
     // the gradient is dimmest -- so the wave the eye was supposed to notice was the faintest part of it.
     // Measured on a live capture: the pill read as a plain dark pill with a lyric in it.
-    const float scale = (0.32f + 0.68f * level) * maxHalf;
+    float scale = (0.32f + 0.68f * level) * maxHalf * amplitudeScale;
+    if (scale < 0.0f) scale = 0.0f;
+    if (scale > maxHalf) scale = maxHalf;
 
     ID2D1PathGeometry* path = nullptr;
     ID2D1GeometrySink* sink = nullptr;
