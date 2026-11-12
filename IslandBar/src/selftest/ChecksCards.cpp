@@ -3011,26 +3011,22 @@ void TestMusicCardLayout() {
             // a call beats music, music beats everything else, and no other content gets a vote.
             {
                 const RectF screen = {0.0f, 0.0f, 2560.0f, 1440.0f};
-                const FullscreenMusicTextMetrics normalMusicText = {180.0f, 14.0f};
-                const FullscreenMusicTextMetrics shortMusicText = {20.0f, 14.0f};
-                const FullscreenMusicTextMetrics longMusicText = {500.0f, 14.0f};
                 const FullscreenHudLayout music =
-                    FullscreenHudLayoutFor(FullscreenHudMode::MusicNotch, screen, normalMusicText);
+                    FullscreenHudLayoutFor(FullscreenHudMode::MusicNotch, screen, 14.7f);
                 const FullscreenHudLayout shortMusic =
-                    FullscreenHudLayoutFor(FullscreenHudMode::MusicNotch, screen, shortMusicText);
+                    FullscreenHudLayoutFor(FullscreenHudMode::MusicNotch, screen, 14.0f);
                 const FullscreenHudLayout longMusic =
-                    FullscreenHudLayoutFor(FullscreenHudMode::MusicNotch, screen, longMusicText);
+                    FullscreenHudLayoutFor(FullscreenHudMode::MusicNotch, screen, 14.7f);
                 const FullscreenHudLayout call =
                     FullscreenHudLayoutFor(FullscreenHudMode::CallOrb, screen);
                 wchar_t hudDetail[256];
                 std::swprintf(
                     hudDetail, 256,
-                    L"music x[%.1f,%.1f] y[%.1f,%.1f], lyric [%.1f,%.1f], short=%.1f, "
-                    L"long=%.1f, call x[%.1f,%.1f]",
+                    L"music x[%.1f,%.1f] y[%.1f,%.1f], lyric [%.1f,%.1f], wave [%.1f,%.1f], "
+                    L"call x[%.1f,%.1f]",
                     music.box.rect.left, music.box.rect.right, music.box.rect.top,
                     music.box.rect.bottom, music.lyric.left, music.lyric.right,
-                    shortMusic.box.rect.right - shortMusic.box.rect.left,
-                    longMusic.box.rect.right - longMusic.box.rect.left,
+                    music.wave.top, music.wave.bottom,
                     call.box.rect.left, call.box.rect.right);
                 Check(FullscreenHudModeFor(false, true, true) == FullscreenHudMode::None &&
                           FullscreenHudModeFor(true, false, false) == FullscreenHudMode::Hidden &&
@@ -3041,22 +3037,27 @@ void TestMusicCardLayout() {
                           FullscreenHudModeFor(true, true, true) ==
                               FullscreenHudMode::CallOrb &&
                           music.valid && call.valid &&
-                          Nearly(music.box.rect.left, 1178.0f, 0.01f) &&
-                          Nearly(music.box.rect.right, 1382.0f, 0.01f) &&
+                          Nearly(music.box.rect.left, 1130.0f, 0.01f) &&
+                          Nearly(music.box.rect.right, 1430.0f, 0.01f) &&
                           Nearly(music.box.rect.top, screen.top, 0.01f) &&
                           Nearly(music.box.rect.bottom - music.box.rect.top,
-                                 20.0f, 0.01f) &&
-                          Nearly(music.material.rect.top, -10.0f, 0.01f) &&
-                          Nearly(music.lyric.right - music.lyric.left, 180.0f, 0.01f) &&
+                                 23.7f, 0.01f) &&
+                          Nearly(music.material.rect.top, -11.85f, 0.01f) &&
+                          Nearly(music.lyric.right - music.lyric.left,
+                                 kFullscreenMusicTextWidthDip, 0.01f) &&
                           Nearly(music.wave.left, music.lyric.left, 0.01f) &&
                           Nearly(music.wave.right, music.lyric.right, 0.01f) &&
+                          Nearly(music.wave.top - music.lyric.bottom,
+                                 kFullscreenMusicWaveGapDip, 0.01f) &&
+                          Nearly(music.wave.bottom - music.wave.top,
+                                 kFullscreenHudWaveHeightDip, 0.01f) &&
                           Nearly(shortMusic.box.rect.right - shortMusic.box.rect.left,
-                                 kFullscreenMusicMinWidthDip, 0.01f) &&
+                                 kFullscreenMusicWidthDip, 0.01f) &&
                           Nearly(longMusic.box.rect.right - longMusic.box.rect.left,
-                                 kFullscreenMusicMaxWidthDip, 0.01f) &&
-                          !LyricNeedsScroll(normalMusicText.widthDip,
+                                 kFullscreenMusicWidthDip, 0.01f) &&
+                          !LyricNeedsScroll(180.0f,
                                             music.lyric.right - music.lyric.left, 0.0f) &&
-                          LyricNeedsScroll(longMusicText.widthDip,
+                          LyricNeedsScroll(500.0f,
                                            longMusic.lyric.right - longMusic.lyric.left, 0.0f) &&
                           Nearly(call.box.rect.left, 1265.0f, 0.01f) &&
                           Nearly(call.box.rect.right, 1295.0f, 0.01f) &&
@@ -3066,7 +3067,7 @@ void TestMusicCardLayout() {
                                  kFullscreenCallVisualDip, 0.01f) &&
                           Nearly(call.material.rect.bottom - call.material.rect.top,
                                  kFullscreenCallVisualDip, 0.01f),
-                      L"the full-screen HUD sizes the music notch from its words and leaves the call orb alone",
+                      L"the full-screen music HUD keeps a fixed width with a separate wave band",
                       hudDetail);
             }
 

@@ -113,16 +113,16 @@ void DrawMusicWaveBadge(ID2D1DeviceContext2* context, float centreX, float centr
     }
 }
 
-void DrawMusicWaveBackdrop(ID2D1DeviceContext2* context, const RectF& box,
-                           float phaseSeconds, float level, D2D1_COLOR_F accent,
-                           float opacity) {
+void DrawMusicWaveUnderLyrics(ID2D1DeviceContext2* context, const RectF& box,
+                              float phaseSeconds, float level, D2D1_COLOR_F accent,
+                              float opacity) {
     if (!context || opacity <= 0.01f || box.right <= box.left ||
         box.bottom <= box.top) {
         return;
     }
 
     D2D1_COLOR_F waveColour = VisibleWaveAccent(accent);
-    waveColour.a = 0.12f * opacity;
+    waveColour.a = opacity * (0.45f + 0.20f * std::min(1.0f, level));
     ID2D1SolidColorBrush* brush = nullptr;
     if (FAILED(context->CreateSolidColorBrush(waveColour, &brush)) || !brush) return;
 
@@ -137,7 +137,7 @@ void DrawMusicWaveBackdrop(ID2D1DeviceContext2* context, const RectF& box,
         const float half = 0.55f + maxHalf * envelope * shownLevel;
         const float x = box.left + (static_cast<float>(i) + 0.5f) * barStep;
         context->DrawLine(D2D1::Point2F(x, centreY - half),
-                          D2D1::Point2F(x, centreY + half), brush, 1.7f);
+                          D2D1::Point2F(x, centreY + half), brush, 2.0f);
     }
     brush->Release();
 }
@@ -2143,7 +2143,7 @@ void TextRenderer::DrawFullscreenMusicNotch(ID2D1DeviceContext2* context,
     if (MultiByteToWideChar(CP_UTF8, 0, line, -1, lyric, 512) <= 0) return;
     ID2D1SolidColorBrush* ink = nullptr;
     if (FAILED(context->CreateSolidColorBrush(PillInk(0.92f * opacity), &ink)) || !ink) return;
-    DrawMusicWaveBackdrop(context, layout.wave, musicPhase, musicLevel, musicAccent, opacity);
+    DrawMusicWaveUnderLyrics(context, layout.wave, musicPhase, musicLevel, musicAccent, opacity);
     DrawNiriLyricLine(context, layout.lyric, lyric, scrollDip, ink, 0.0f);
     ink->Release();
 }

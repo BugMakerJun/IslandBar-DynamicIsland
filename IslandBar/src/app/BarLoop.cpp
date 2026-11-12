@@ -1274,10 +1274,9 @@ struct BarRuntime {
     float lastNiriLyricSlotWidth = -1.0f;
     float lastNiriLyricTextWidth = -1.0f;
     bool lastNiriLyricNeedsScroll = false;
-    // The full-screen music notch changes width with the words. The text and its metrics are cached so a
-    // marquee redraw does not remeasure the same line or resize the window region.
-    char fullscreenMusicMetricsText[512] = {};
-    island::FullscreenMusicTextMetrics fullscreenMusicMetrics;
+    // The full-screen music notch has a fixed width. Only the font's actual line height is measured, and it
+    // is unchanged for every lyric line in a track.
+    float fullscreenMusicLineHeightDip = 0.0f;
     // --- what the loop last saw, so it can tell a CHANGE from a reading ---
     //
     // Every one of these is a comparison against the previous pass, and every one of them used to be a local
@@ -1983,29 +1982,20 @@ static void UpdateFullscreenHudState(island::BarState& bar, island::BarSystems& 
     }
 }
 
-static island::FullscreenMusicTextMetrics FullscreenMusicMetricsForLine(
-    BarRuntime& runtime, island::BarSystems& systems, const char* line) {
-    island::FullscreenMusicTextMetrics metrics;
-    if (!line || line[0] == '\0') {
-        runtime.fullscreenMusicMetricsText[0] = '\0';
-        runtime.fullscreenMusicMetrics = {};
-        return metrics;
+static float FullscreenMusicLineHeightForLine(BarRuntime& runtime,
+                                               island::BarSystems& systems,
+                                               const char* line) {
+    if (runtime.fullscreenMusicLineHeightDip > 0.0f) {
+        return runtime.fullscreenMusicLineHeightDip;
     }
-    if (std::strcmp(line, runtime.fullscreenMusicMetricsText) == 0) {
-        return runtime.fullscreenMusicMetrics;
-    }
-
+    if (!line || line[0] == '\0') return 0.0f;
     wchar_t wide[512] = {};
     if (MultiByteToWideChar(CP_UTF8, 0, line, -1, wide, 512) > 0) {
         const island::TextRenderer::NiriLyricMetrics measured =
             systems.text.MeasureNiriLyric(wide);
-        metrics.widthDip = measured.widthDip;
-        metrics.lineHeightDip = measured.lineHeightDip;
+        runtime.fullscreenMusicLineHeightDip = measured.lineHeightDip;
     }
-    strncpy_s(runtime.fullscreenMusicMetricsText,
-              sizeof(runtime.fullscreenMusicMetricsText), line, _TRUNCATE);
-    runtime.fullscreenMusicMetrics = metrics;
-    return metrics;
+    return runtime.fullscreenMusicLineHeightDip;
 }
 
 static void UpdateFullscreenHudLayout(BarRuntime& runtime, island::BarState& bar,
@@ -2018,7 +2008,7 @@ static void UpdateFullscreenHudLayout(BarRuntime& runtime, island::BarState& bar
     const island::FullscreenHudLayout previous = bar.fullscreenHudLayout;
 
     island::FullscreenHudLayout layout;
-    island::FullscreenMusicTextMetrics metrics;
+    float lineHeightDip = 0.0f;
     if (mode == FullscreenHudMode::MusicNotch || mode == FullscreenHudMode::CallOrb) {
         const float scale = static_cast<float>(monitor.dpi) / 96.0f;
         const island::RectF screen = {
@@ -2030,9 +2020,9 @@ static void UpdateFullscreenHudLayout(BarRuntime& runtime, island::BarState& bar
         if (mode == FullscreenHudMode::MusicNotch) {
             const char* line =
                 lyricLine && lyricLine[0] != '\0' ? lyricLine : fallbackLine;
-            metrics = FullscreenMusicMetricsForLine(runtime, systems, line);
+            lineHeightDip = FullscreenMusicLineHeightForLine(runtime, systems, line);
         }
-        layout = island::FullscreenHudLayoutFor(mode, screen, metrics);
+        layout = island::FullscreenHudLayoutFor(mode, screen, lineHeightDip);
     }
 
     const bool geometryChanged =
@@ -2054,9 +2044,19 @@ static void UpdateFullscreenHudLayout(BarRuntime& runtime, island::BarState& bar
                                         : (mode == FullscreenHudMode::MusicNotch
                                                ? "music-line"
                                                : "clear"));
+        float textWidthDip = 0.0f;
+        if (mode == FullscreenHudMode::MusicNotch) {
+            const char* line =
+                lyricLine && lyricLine[0] != '\0' ? lyricLine : fallbackLine;
+            wchar_t wide[512] = {};
+            if (line && line[0] != '\0' &&
+                MultiByteToWideChar(CP_UTF8, 0, line, -1, wide, 512) > 0) {
+                textWidthDip = systems.text.NiriLyricWidth(wide);
+            }
+        }
         const bool scrolling =
             mode == FullscreenHudMode::MusicNotch && layout.lyric.right > layout.lyric.left &&
-            island::LyricNeedsScroll(metrics.widthDip,
+            island::LyricNeedsScroll(textWidthDip,
                                      layout.lyric.right - layout.lyric.left, 0.0f);
         island::LogAndPrint(
             "  fullscreen hud layout: mode=%d name=%ls reason=%s fullscreen=%d playing=%d "
@@ -2067,8 +2067,8 @@ static void UpdateFullscreenHudLayout(BarRuntime& runtime, island::BarState& bar
             active ? 1 : 0, layout.box.rect.left, layout.box.rect.top,
             layout.box.rect.right, layout.box.rect.bottom,
             layout.box.rect.right - layout.box.rect.left,
-            layout.box.rect.bottom - layout.box.rect.top, metrics.widthDip,
-            metrics.lineHeightDip, scrolling ? 1 : 0);
+            layout.box.rect.bottom - layout.box.rect.top, textWidthDip,
+            lineHeightDip, scrolling ? 1 : 0);
         std::fflush(stdout);
         bar.lastReportedFullscreenHud = mode;
         bar.statusWakePending = true;
@@ -4543,11 +4543,8 @@ static void PickRestingLyricLine(BarRuntime& runtime, island::BarState& bar, isl
                     float textWidth = systems.text.TrackLineWidth(wide);
                     if (niri) {
                         if (fullscreenMusic) {
-                            const island::FullscreenMusicTextMetrics metrics =
-                                FullscreenMusicMetricsForLine(runtime, systems, line->text);
-                            textWidth = metrics.widthDip;
-                            stripWidth =
-                                island::FullscreenMusicLyricWidthFor(textWidth);
+                            stripWidth = island::kFullscreenMusicTextWidthDip;
+                            textWidth = systems.text.NiriLyricWidth(wide);
                         } else {
                             const island::RectF lyricBox = island::NiriLyricBoxFor(lineBox);
                             stripWidth = lyricBox.right - lyricBox.left;

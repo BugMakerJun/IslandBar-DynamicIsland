@@ -37,21 +37,15 @@ inline const wchar_t* FullscreenHudModeName(FullscreenHudMode mode) {
     return L"?";
 }
 
-inline constexpr float kFullscreenMusicMinWidthDip = 96.0f;
-inline constexpr float kFullscreenMusicMaxWidthDip = 300.0f;
+inline constexpr float kFullscreenMusicWidthDip = 300.0f;
 inline constexpr float kFullscreenMusicDefaultLineHeightDip = 14.0f;
 inline constexpr float kFullscreenHudSidePadDip = 12.0f;
-inline constexpr float kFullscreenHudVerticalPadDip = 3.0f;
-inline constexpr float kFullscreenHudWaveHeightDip = 6.0f;
+inline constexpr float kFullscreenMusicTopPadDip = 2.0f;
+inline constexpr float kFullscreenMusicWaveGapDip = 1.0f;
+inline constexpr float kFullscreenHudWaveHeightDip = 5.0f;
+inline constexpr float kFullscreenMusicBottomPadDip = 1.0f;
 inline constexpr float kFullscreenCallLayoutDip = 30.0f;
 inline constexpr float kFullscreenCallVisualDip = 26.0f;
-
-// DirectWrite measures both values in DIP. Keeping them as plain numbers preserves the domain layer's
-// independence from the renderer while letting the music notch size itself from the words it will draw.
-struct FullscreenMusicTextMetrics {
-    float widthDip = 0.0f;
-    float lineHeightDip = 0.0f;
-};
 
 struct FullscreenHudLayout {
     RoundedBox box;
@@ -62,23 +56,14 @@ struct FullscreenHudLayout {
     bool valid = false;
 };
 
-inline float FullscreenMusicBoxWidthFor(float textWidthDip) {
-    const float requested = (textWidthDip > 0.0f ? textWidthDip : 0.0f) +
-                            2.0f * kFullscreenHudSidePadDip;
-    if (requested < kFullscreenMusicMinWidthDip) return kFullscreenMusicMinWidthDip;
-    if (requested > kFullscreenMusicMaxWidthDip) return kFullscreenMusicMaxWidthDip;
-    return requested;
-}
-
-inline float FullscreenMusicLyricWidthFor(float textWidthDip) {
-    return FullscreenMusicBoxWidthFor(textWidthDip) - 2.0f * kFullscreenHudSidePadDip;
-}
+inline constexpr float kFullscreenMusicTextWidthDip =
+    kFullscreenMusicWidthDip - 2.0f * kFullscreenHudSidePadDip;
 
 // `screen` is the current monitor rectangle in DIP. Music uses the existing notch silhouette; the
 // call uses a stadium whose equal width and height make it a circle.
-inline FullscreenHudLayout FullscreenHudLayoutFor(
-    FullscreenHudMode mode, const RectF& screen,
-    const FullscreenMusicTextMetrics& musicText = {}) {
+inline FullscreenHudLayout FullscreenHudLayoutFor(FullscreenHudMode mode,
+                                                  const RectF& screen,
+                                                  float musicLineHeightDip = 0.0f) {
     FullscreenHudLayout layout;
     if (mode != FullscreenHudMode::MusicNotch && mode != FullscreenHudMode::CallOrb) return layout;
 
@@ -99,25 +84,27 @@ inline FullscreenHudLayout FullscreenHudLayoutFor(
         layout.material.radiusX = kFullscreenCallVisualDip * 0.5f;
         layout.material.radiusY = layout.material.radiusX;
     } else {
-        const float measuredLineHeight = musicText.lineHeightDip > 0.0f
-                                             ? musicText.lineHeightDip
+        const float measuredLineHeight = musicLineHeightDip > 0.0f
+                                             ? musicLineHeightDip
                                              : kFullscreenMusicDefaultLineHeightDip;
-        const float height = measuredLineHeight + 2.0f * kFullscreenHudVerticalPadDip;
-        const float width = FullscreenMusicBoxWidthFor(musicText.widthDip);
-        layout.box.rect = {centreX - width * 0.5f, screen.top,
-                           centreX + width * 0.5f, screen.top + height};
+        const float height = measuredLineHeight + kFullscreenMusicTopPadDip +
+                             kFullscreenMusicWaveGapDip + kFullscreenHudWaveHeightDip +
+                             kFullscreenMusicBottomPadDip;
+        layout.box.rect = {centreX - kFullscreenMusicWidthDip * 0.5f, screen.top,
+                           centreX + kFullscreenMusicWidthDip * 0.5f,
+                           screen.top + height};
         layout.box.radiusX = height * 0.5f;
         layout.box.radiusY = layout.box.radiusX;
         layout.shape = BarShape::Notch;
         layout.lyric = {layout.box.rect.left + kFullscreenHudSidePadDip,
-                        layout.box.rect.top + kFullscreenHudVerticalPadDip,
+                        layout.box.rect.top + kFullscreenMusicTopPadDip,
                         layout.box.rect.right - kFullscreenHudSidePadDip,
-                        layout.box.rect.bottom - kFullscreenHudVerticalPadDip};
+                        layout.box.rect.top + kFullscreenMusicTopPadDip + measuredLineHeight};
         layout.wave = {layout.lyric.left,
-                       layout.box.rect.bottom - kFullscreenHudVerticalPadDip -
-                           kFullscreenHudWaveHeightDip,
+                       layout.lyric.bottom + kFullscreenMusicWaveGapDip,
                        layout.lyric.right,
-                       layout.box.rect.bottom - kFullscreenHudVerticalPadDip};
+                       layout.lyric.bottom + kFullscreenMusicWaveGapDip +
+                           kFullscreenHudWaveHeightDip};
         layout.material = BarMaterialBoxFor(layout.box, layout.shape);
     }
     layout.valid = layout.box.rect.right > layout.box.rect.left;
