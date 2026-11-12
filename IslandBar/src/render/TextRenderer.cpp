@@ -2133,11 +2133,11 @@ void TextRenderer::DrawFullscreenMusicNotch(ID2D1DeviceContext2* context,
     const float waveHeight = layout.wave.bottom - layout.wave.top;
     const RoundedBox waveBox = {layout.wave, waveHeight * 0.5f, waveHeight * 0.5f};
     DrawAudioWave(context, waveBox, musicPhase, musicLevel, HudWaveAccent(musicAccent),
-                  opacity * 0.65f, opacity * 0.24f, 1.35f);
+                  opacity * 0.65f, opacity * 0.24f, 1.55f);
     static bool loggedWaveStyle = false;
     if (!loggedWaveStyle) {
         loggedWaveStyle = true;
-        LogLine(L"  fullscreen hud wave: fill=0.65 outline=0.75dip alpha=0.24 amplitude=1.35");
+        LogLine(L"  fullscreen hud wave: fill=0.65 outline=0.75dip alpha=0.24 amplitude=1.55");
     }
     DrawNiriLyricLine(context, layout.lyric, lyric, scrollDip, ink, 0.0f);
     ink->Release();
