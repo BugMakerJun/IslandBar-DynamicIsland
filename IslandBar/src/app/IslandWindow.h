@@ -222,6 +222,9 @@ public:
     // only place that knows where the pointer is; the geometry comes from TrayPageFor, so the hit test and
     // the drawing agree.
     int  TrayCellHovered() const { return trayCellHovered_; }
+    // The cell under a screen point. A click uses this rather than the cached hover result, which can be
+    // stale when the tray list changes while the pointer is still.
+    int  TrayCellAtScreen(POINT screenPoint) const;
     bool TrayTaskManagerAtScreen(POINT screenPoint) const;
     bool TrayTaskManagerHovered() const { return trayTaskManagerHovered_; }
 

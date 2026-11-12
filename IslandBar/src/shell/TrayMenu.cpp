@@ -87,6 +87,37 @@ bool SameImage(const wchar_t* a, const wchar_t* b) {
     return *a == L'\0' && *b == L'\0';
 }
 
+// Whether any process is running the registered image. A tray-only application can have no
+// task window, so "no icon-row window" is not the same question as "not running".
+bool ProcessImageRunning(const wchar_t* image) {
+    if (!image || image[0] == L'\0') return false;
+    const HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) return false;
+
+    bool running = false;
+    PROCESSENTRY32W entry = {};
+    entry.dwSize = sizeof(entry);
+    if (Process32FirstW(snapshot, &entry)) {
+        do {
+            if (SameImage(entry.szExeFile, image)) {
+                running = true;
+                break;
+            }
+        } while (Process32NextW(snapshot, &entry));
+    }
+    CloseHandle(snapshot);
+    return running;
+}
+
+bool IsLaunchableFile(const wchar_t* path) {
+    if (!path || path[0] == L'\0') return false;
+    wchar_t expanded[MAX_PATH] = {};
+    const DWORD length = ExpandEnvironmentStringsW(path, expanded, MAX_PATH);
+    if (length == 0 || length >= MAX_PATH) return false;
+    const DWORD attributes = GetFileAttributesW(expanded);
+    return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
+}
+
 // Ends every process of that image, and returns how many were ended.
 //
 // THE FORCEFUL PATH, and the only one that can promise what the entry says. A tray application's window
@@ -152,7 +183,10 @@ void TrayMenuFactsFor(const island::TrayIcons& icons, island::WindowList& window
     const wchar_t* path = icons.ExePathAt(cell);
     out->hasExePath = path && path[0] != L'\0';
     if (!out->hasExePath) return;
-    out->hasWindow = WindowOfImageInList(windows, BaseNameOf(path)) != nullptr;
+    const wchar_t* image = BaseNameOf(path);
+    out->hasWindow = WindowOfImageInList(windows, image) != nullptr;
+    out->processRunning = ProcessImageRunning(image);
+    out->hasLaunchTarget = IsLaunchableFile(path);
 }
 
 void RunTrayMenuAction(const island::TrayIcons& icons, island::WindowList& windows, int cell,
@@ -164,6 +198,22 @@ void RunTrayMenuAction(const island::TrayIcons& icons, island::WindowList& windo
             // Exactly what a left click on the cell does: the icon's own default action.
             StartTrayPress(icons, cell, false);
             break;
+        case island::TrayMenuAction::LaunchApplication: {
+            if (!path || path[0] == L'\0') break;
+            wchar_t expanded[MAX_PATH] = {};
+            const DWORD length = ExpandEnvironmentStringsW(path, expanded, MAX_PATH);
+            if (length == 0 || length >= MAX_PATH) {
+                island::LogAndPrint(L"  tray menu: cannot expand launch path '%ls'\n", path);
+                break;
+            }
+            const HINSTANCE opened =
+                ShellExecuteW(nullptr, L"open", expanded, nullptr, nullptr, SW_SHOWNORMAL);
+            island::LogAndPrint(
+                L"  tray menu: launch '%ls' (%ls, result %lld)\n", expanded,
+                reinterpret_cast<INT_PTR>(opened) > 32 ? L"ok" : L"FAILED",
+                static_cast<long long>(reinterpret_cast<INT_PTR>(opened)));
+            break;
+        }
         case island::TrayMenuAction::ApplicationMenu:
             // ... and exactly what a right click used to do, for the items only the application knows.
             StartTrayPress(icons, cell, true);

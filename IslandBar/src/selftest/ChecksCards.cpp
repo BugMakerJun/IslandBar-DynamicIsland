@@ -70,6 +70,7 @@
 #include "shell/TrayIcons.h"
 #include "shell/TrayPress.h"
 #include "shell/TrayLearn.h"   // CountCoveredIcons: how much of the tray a press can reach (see the tray checks)
+#include "shell/TrayReport.h"
 
 #include "selftest/Checks.h"
 #include "selftest/Harness.h"
@@ -4973,27 +4974,62 @@ void TestMusicCardLayout() {
                 // instead of under the pointer. This menu is the bar's own, and these are the two rules it
                 // runs on: WHICH rows it offers, and WHERE they land.
                 {
-                    // Which rows: THE FOUR THE USER ASKED FOR, in his order -- 打开 / 文件位置 / 应用菜单 /
-                    // 关闭应用 (2026-10-16) -- and an entry that would do nothing is still not offered. A row
-                    // whose message cannot be sent (no callback learned) or whose path is unknown is absent,
-                    // which is the rule that was measured the hard way on 2026-10-15: the user pressed
-                    // 应用自己的菜单… on such a cell and it "did nothing", because all it could do was
-                    // re-open the same menu.
+                    wchar_t parsedExe[260] = {};
+                    wchar_t quotedExe[260] = {};
+                    wchar_t hookExe[260] = {};
+                    Check(TrayReportExeName(
+                              L"call S NIM_ADD pid 1 exe DeepSeek Harness.exe hwnd 0x1 uid 3",
+                              parsedExe, 260) &&
+                              TrayReportExeName(
+                                  L"call S NIM_ADD pid 1 exe \"DeepSeek Harness.exe\" hwnd 0x1 uid 3",
+                                  quotedExe, 260) &&
+                              TrayReportExeName(
+                                  L"call W NIM_ADD pid 1 exe DeepSeek Harness.exe caller 0x1 hwnd 0x2",
+                                  hookExe, 260) &&
+                              std::wcscmp(parsedExe, L"DeepSeek Harness.exe") == 0 &&
+                              std::wcscmp(quotedExe, L"DeepSeek Harness.exe") == 0 &&
+                              std::wcscmp(hookExe, L"DeepSeek Harness.exe") == 0,
+                          L"the tray report keeps executable names that contain spaces");
+                }
+                {
+                    // Which rows: the application's own actions first, then the safe recovery rows. An entry
+                    // that would do nothing is not offered. A row whose message cannot be sent (no callback
+                    // learned), whose window is absent, whose executable is missing, or whose process is not
+                    // running is filtered out by the same facts the menu action reads.
                     //
-                    // 打开 and 应用菜单 are the application's own left and right actions, so both need a
-                    // callback; 文件位置 needs a recorded path; 关闭应用 always has something to do.
+                    // 打开 and 应用菜单 need a callback; 显示窗口 needs a window; 文件位置 needs a recorded
+                    // path; 关闭应用 needs a running process. 启动应用 covers a stale tray icon whose
+                    // registered executable still exists.
+                    TrayMenuFacts everything;
+                    everything.hasWindow = true;
+                    everything.hasExePath = true;
+                    everything.hasCallback = true;
+                    everything.processRunning = true;
+                    everything.hasLaunchTarget = true;
                     TrayMenuAction all[kMaxTrayMenuEntries] = {};
-                    const int withEverything = TrayMenuEntriesFor(TrayMenuFacts{true, true, true}, all,
-                                                                  kMaxTrayMenuEntries);
+                    const int withEverything =
+                        TrayMenuEntriesFor(everything, all, kMaxTrayMenuEntries);
+
+                    TrayMenuFacts runningWithoutCallback;
+                    runningWithoutCallback.hasWindow = true;
+                    runningWithoutCallback.hasExePath = true;
+                    runningWithoutCallback.processRunning = true;
+                    runningWithoutCallback.hasLaunchTarget = true;
                     TrayMenuAction noCallback[kMaxTrayMenuEntries] = {};
-                    const int withNoCallback = TrayMenuEntriesFor(TrayMenuFacts{true, true, false}, noCallback,
-                                                                  kMaxTrayMenuEntries);
+                    const int withNoCallback = TrayMenuEntriesFor(
+                        runningWithoutCallback, noCallback, kMaxTrayMenuEntries);
+
                     TrayMenuAction bare[kMaxTrayMenuEntries] = {};
-                    const int withNothing = TrayMenuEntriesFor(TrayMenuFacts{false, false, false}, bare,
-                                                               kMaxTrayMenuEntries);
+                    const int withNothing =
+                        TrayMenuEntriesFor(TrayMenuFacts{}, bare, kMaxTrayMenuEntries);
+
+                    TrayMenuFacts stopped;
+                    stopped.hasExePath = true;
+                    stopped.hasLaunchTarget = true;
                     TrayMenuAction onlyPath[kMaxTrayMenuEntries] = {};
-                    const int withPath = TrayMenuEntriesFor(TrayMenuFacts{false, true, true}, onlyPath,
-                                                            kMaxTrayMenuEntries);
+                    const int withPath =
+                        TrayMenuEntriesFor(stopped, onlyPath, kMaxTrayMenuEntries);
+
                     std::swprintf(trayDetail, 256,
                                   L"everything=%d (last=%d), no callback=%d, nothing=%d, path only=%d",
                                   withEverything,
@@ -5001,22 +5037,24 @@ void TestMusicCardLayout() {
                                       ? static_cast<int>(all[withEverything - 1])
                                       : -1,
                                   withNoCallback, withNothing, withPath);
-                    Check(withEverything == 4 && all[0] == TrayMenuAction::Open &&
-                              all[1] == TrayMenuAction::OpenLocation &&
-                              all[2] == TrayMenuAction::ApplicationMenu &&
-                              all[3] == TrayMenuAction::QuitApplication &&
-                              // no callback: the two rows that ARE the application's own action go, and the
-                              // two that do not need it stay.
-                              withNoCallback == 2 && noCallback[0] == TrayMenuAction::OpenLocation &&
-                              noCallback[1] == TrayMenuAction::QuitApplication &&
-                              // nothing known at all: one row, and it is the one that always has something
-                              // to do. path only, with a callback: three, because there is no window but
-                              // there is a path -- and 关闭应用 is still there.
-                              withNothing == 1 && bare[0] == TrayMenuAction::QuitApplication &&
-                              withPath == 4 && onlyPath[0] == TrayMenuAction::Open &&
+                    Check(withEverything == 5 && all[0] == TrayMenuAction::Open &&
+                              all[1] == TrayMenuAction::ActivateWindow &&
+                              all[2] == TrayMenuAction::OpenLocation &&
+                              all[3] == TrayMenuAction::ApplicationMenu &&
+                              all[4] == TrayMenuAction::QuitApplication &&
+                              // A tray-only application can also be relaunched when its callback is unavailable.
+                              withNoCallback == 4 &&
+                              noCallback[0] == TrayMenuAction::ActivateWindow &&
+                              noCallback[1] == TrayMenuAction::LaunchApplication &&
+                              noCallback[2] == TrayMenuAction::OpenLocation &&
+                              noCallback[3] == TrayMenuAction::QuitApplication &&
+                              // Nothing known means no row; a stopped application with a valid path can be
+                              // launched and located, while "close" is not offered for something not running.
+                              withNothing == 0 &&
+                              withPath == 2 && onlyPath[0] == TrayMenuAction::LaunchApplication &&
                               onlyPath[1] == TrayMenuAction::OpenLocation &&
-                              onlyPath[2] == TrayMenuAction::ApplicationMenu &&
-                              onlyPath[3] == TrayMenuAction::QuitApplication,
+                              std::wcscmp(TrayMenuLabel(TrayMenuAction::LaunchApplication),
+                                          L"启动应用") == 0,
                           L"the menu offers only what can be done, and never a row that would do nothing",
                           trayDetail);
                     // THE ROW THAT TELLS THE TRUTH ABOUT ITSELF (2026-10-16, round 44). When an icon's own menu

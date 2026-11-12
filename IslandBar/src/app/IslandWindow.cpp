@@ -1730,6 +1730,15 @@ bool IslandWindow::TrayButtonAtScreen(POINT screenPoint) const {
     return TrayButtonHit(LayoutIslandFor(), localX, localY);
 }
 
+int IslandWindow::TrayCellAtScreen(POINT screenPoint) const {
+    if (!hwnd_ || !trayPageOpen_ || trayIconCount_ <= 0 || cardLeftDip_ <= 0.0f) return -1;
+
+    float localX = 0.0f;
+    float localY = 0.0f;
+    ToLocalDip(screenPoint, &localX, &localY);
+    return TrayPageCellAt(PageBodyFor(PlacedCard()), trayIconCount_, localX, localY);
+}
+
 
 void IslandWindow::UpdatePointerState() {
     if (!hwnd_) return;

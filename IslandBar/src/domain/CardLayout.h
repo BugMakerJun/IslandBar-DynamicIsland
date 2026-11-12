@@ -474,6 +474,7 @@ inline constexpr int   kMaxTrayMenuEntries = 6;
 
 enum class TrayMenuAction : int {
     Open,             // the icon's own default action -- exactly what a left click on it does
+    LaunchApplication,// start a registered application that is not currently running
     ActivateWindow,   // bring a window of that application to the front
     OpenLocation,     // the folder the executable lives in, with the file selected
     CloseWindow,      // ask the application to close its window (WM_CLOSE: graceful, it may prompt)
@@ -492,6 +493,7 @@ inline const wchar_t* TrayMenuLabel(TrayMenuAction action, bool ownMenuUnreachab
     if (action == TrayMenuAction::ApplicationMenu && ownMenuUnreachable) return L"应用菜单（本机拿不到）";
     switch (action) {
         case TrayMenuAction::Open:            return L"打开";
+        case TrayMenuAction::LaunchApplication: return L"启动应用";
         case TrayMenuAction::ActivateWindow:  return L"显示窗口";
         case TrayMenuAction::OpenLocation:    return L"文件位置";
         case TrayMenuAction::CloseWindow:     return L"关闭窗口";
@@ -527,6 +529,10 @@ struct TrayMenuFacts {
     // tried and the application answered neither (the press writes that down per icon). The row stays -- the
     // press falls back to this bar's menu -- but its label says what it can actually deliver.
     bool ownMenuUnreachable = false;
+    // The registered image has a process, even when no normal window is visible.
+    bool processRunning = false;
+    // The recorded path names a file that exists and can be launched.
+    bool hasLaunchTarget = false;
 };
 
 // Which entries the menu shows, in order, for one icon -- PURE, so the rule is pinned by the self-test
@@ -538,14 +544,15 @@ inline int TrayMenuEntriesFor(const TrayMenuFacts& facts, TrayMenuAction* out, i
     const auto add = [&](TrayMenuAction action) {
         if (count < capacity) out[count++] = action;
     };
-    // THE FOUR ROWS THE USER ASKED FOR (2026-10-16): 打开 / 文件位置 / 应用菜单 / 关闭应用 -- in his
-    // order. 打开 is the icon's own default action (the application's own left click, sent as its own
-    // callback), and 应用菜单 is the one row that goes and gets the application's OWN menu, which is the
-    // slow route and the only one that can offer what only the application knows ("退出微信").
+    // The application's own actions come first; recovery actions follow. Each row is gated by the exact
+    // fact its handler needs, so a stale icon still has a visible, useful response without offering a
+    // callback or a "close" action that cannot work.
     if (facts.hasCallback) add(TrayMenuAction::Open);
+    if (facts.hasWindow) add(TrayMenuAction::ActivateWindow);
+    if (!facts.hasCallback && facts.hasLaunchTarget) add(TrayMenuAction::LaunchApplication);
     if (facts.hasExePath) add(TrayMenuAction::OpenLocation);
     if (facts.hasCallback) add(TrayMenuAction::ApplicationMenu);
-    add(TrayMenuAction::QuitApplication);
+    if (facts.processRunning) add(TrayMenuAction::QuitApplication);
     return count;
 }
 

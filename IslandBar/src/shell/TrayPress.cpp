@@ -2,6 +2,7 @@
 //  TrayPress.cpp -- see the header for the route and for what it is built on.
 // =====================================================================
 #include "shell/TrayPress.h"
+#include "shell/TrayReport.h"
 #include "domain/TrayEncoding.h"   // the only place a click's two words are placed (see its header)
 
 #include "shell/TrayUia.h"   // the fallback for the icons no message can ever reach
@@ -1228,7 +1229,7 @@ std::wstring RecordedShellTipFor(const TrayPressRequest& request) {
     while (fgetws(line, 1024, stream)) {
         if (!wcsstr(line, L"call S NIM_ADD") && !wcsstr(line, L"call S NIM_MODIFY")) continue;
         wchar_t lineExe[260] = {};
-        if (!ReportField(line, L"exe", lineExe, 260) || BaseNameLower(lineExe) != exe) continue;
+        if (!TrayReportExeName(line, lineExe, 260) || BaseNameLower(lineExe) != exe) continue;
         // The identity: the guid when the icon is named by one, the uid otherwise -- the same rule the cache
         // uses, so a cell and its record cannot be paired up two different ways.
         wchar_t lineGuid[64] = {};

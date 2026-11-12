@@ -1505,9 +1505,15 @@ static void ApplyRightClicks(island::BarState& bar, island::BarSystems& systems)
     // The worker's request, answered on the thread that owns the window (see island::trayMenuRequestCell).
     const int menuRequestCell = island::trayMenuRequestCell.exchange(-1);
     if (menuRequestCell >= 0 && menuRequestCell < systems.trayIcons.Count()) {
-        island::LogAndPrint(L"  tray menu: nothing is known about cell %d yet, so the press opens "
-                            L"this bar's own menu instead\n", menuRequestCell);
-        openBarTrayMenu(menuRequestCell);
+        if (!bar.systemPanelOpen || !bar.trayPageOpen) {
+            island::LogAndPrint(
+                L"  tray menu: ignored a late fallback for cell %d (the tray page was closed)\n",
+                menuRequestCell);
+        } else {
+            island::LogAndPrint(L"  tray menu: nothing is known about cell %d yet, so the press opens "
+                                L"this bar's own menu instead\n", menuRequestCell);
+            openBarTrayMenu(menuRequestCell);
+        }
     }
     while (systems.window.TakeRightClick()) {
         POINT rightCursor = {};
@@ -1525,8 +1531,8 @@ static void ApplyRightClicks(island::BarState& bar, island::BarSystems& systems)
                 bar.startPowerConfirm = -1;
             }
         } else if (island::LevelAnswersInput(bar.panelLevel, island::PanelLevel::Tray) &&
-                   systems.window.TrayCellHovered() >= 0 &&
-                   systems.window.TrayCellHovered() < systems.trayIcons.Count()) {
+                   systems.window.TrayCellAtScreen(rightCursor) >= 0 &&
+                   systems.window.TrayCellAtScreen(rightCursor) < systems.trayIcons.Count()) {
             // THE BAR'S OWN MENU, not the shell's (HANDOFF 8.80).
             //
             // Right-clicking a cell used to ask the shell for the application's menu: show the
@@ -1536,7 +1542,7 @@ static void ApplyRightClicks(island::BarState& bar, island::BarSystems& systems)
             // the pointer that asked for it. This menu is instant, lands where the pointer is, and
             // is drawn in the card the user is already looking at; the application's own menu is the
             // LAST entry of it, for the things only the application knows ("退出微信").
-            openBarTrayMenu(systems.window.TrayCellHovered());
+            openBarTrayMenu(systems.window.TrayCellAtScreen(rightCursor));
         } else {
             island::LogAndPrint("  right click: no tray cell under the pointer (%d,%d)\n",
                                 rightCursor.x, rightCursor.y);
@@ -3081,6 +3087,8 @@ static void ApplyPressesAndClicks(island::BarState& bar, island::BarSystems& sys
                 std::fflush(stdout);
                 island::RunTrayMenuAction(systems.trayIcons, systems.taskWindows, bar.trayMenuCell, action);
                 if (action == island::TrayMenuAction::Open ||
+                    action == island::TrayMenuAction::LaunchApplication ||
+                    action == island::TrayMenuAction::ActivateWindow ||
                     action == island::TrayMenuAction::CloseWindow ||
                     action == island::TrayMenuAction::ApplicationMenu) {
                     // The card goes with the press, which is what the shell does with its own
@@ -3432,7 +3440,7 @@ static void ApplyPressesAndClicks(island::BarState& bar, island::BarSystems& sys
             // The weather page is a read-only dashboard; a click on its body must
             // not fall through to the panel's generic "click elsewhere closes".
         } else if (island::LevelAnswersInput(bar.panelLevel, island::PanelLevel::Tray) &&
-                   systems.window.TrayCellHovered() >= 0) {
+                   systems.window.TrayCellAtScreen(cursor) >= 0) {
             // A CELL OF THE TRAY PAGE: press that application's tray icon, which is the only
             // thing about the tray this bar cannot do itself -- the menu or the window that
             // follows belongs to the application, and the shell is the one that knows how to ask
@@ -3442,13 +3450,25 @@ static void ApplyPressesAndClicks(island::BarState& bar, island::BarSystems& sys
             // On a WORKER THREAD, because showing the shell's tray, opening its overflow and
             // pressing through UI Automation takes a few hundred milliseconds, and the bar draws
             // at the compositor's rate on this thread.
-            const int cell = systems.window.TrayCellHovered();
-            if (cell < systems.trayIcons.Count()) {
-                island::StartTrayPress(systems.trayIcons, cell, false);
+            const int cell = systems.window.TrayCellAtScreen(cursor);
+            if (cell >= 0 && cell < systems.trayIcons.Count()) {
+                const island::TrayPressRequest request = island::MakeTrayPressRequest(
+                    systems.trayIcons.At(cell), systems.trayIcons.ExePathAt(cell));
+                const bool reachable = island::TrayPressReachable(request);
+                wchar_t flat[128] = {};
+                island::LogAndPrint(
+                    L"  tray: click cell %d '%ls' reachable=%d action=%ls\n", cell,
+                    island::FlatName(systems.trayIcons.At(cell).name, flat, 128), reachable ? 1 : 0,
+                    reachable ? L"callback" : L"fallback-menu");
+                if (reachable) {
+                    island::StartTrayPress(systems.trayIcons, cell, false);
+                    DismissPanelSurface(bar, systems, active, resting);
+                } else {
+                    OpenBarTrayMenu(bar, systems, cell);
+                }
+            } else {
+                DismissPanelSurface(bar, systems, active, resting);
             }
-            // The card goes with the press, which is what the shell does with its own flyout: the
-            // application's window or menu is what the user is waiting for.
-            DismissPanelSurface(bar, systems, active, resting);
         } else if (systems.window.SystemButtonAtScreen(cursor)) {
             // The system panel is a TOGGLE of its OWN level, like the shell's own flyout: pressing the
             // control again closes what it opened. Without that the only way out would be to click

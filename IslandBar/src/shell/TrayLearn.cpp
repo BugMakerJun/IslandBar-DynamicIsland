@@ -25,6 +25,7 @@
 #include "platform/TrayRing.h"
 #include "platform/UiWake.h"
 #include "platform/WorkerThread.h"
+#include "shell/TrayReport.h"
 
 #include <psapi.h>   // GetProcessMemoryInfo: which of an application's processes carries its tray icon
 #include <tlhelp32.h>
@@ -364,7 +365,7 @@ std::wstring ExeLeafForPid(unsigned pid) {
 
 // `exe` if the line could state it, the pid's image name otherwise. False when neither is available.
 bool LineExe(const wchar_t* line, wchar_t* out, size_t count) {
-    if (Field(line, L"exe", out, count) && out[0] && _wcsicmp(out, L"-") != 0) return true;
+    if (TrayReportExeName(line, out, count) && out[0] && _wcsicmp(out, L"-") != 0) return true;
     unsigned pid = 0;
     if (!FieldNumber(line, L"pid", &pid, false) || pid == 0) return false;
     const std::wstring name = ExeLeafForPid(pid);
