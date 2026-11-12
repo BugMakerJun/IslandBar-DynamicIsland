@@ -129,47 +129,6 @@ void DrawMusicWaveBadge(ID2D1DeviceContext2* context, float centreX, float centr
     }
 }
 
-void DrawMusicWaveBackground(ID2D1DeviceContext2* context, const RectF& box,
-                             float phaseSeconds, float level, D2D1_COLOR_F accent,
-                             float opacity) {
-    if (!context || opacity <= 0.01f || box.right <= box.left ||
-        box.bottom <= box.top) {
-        return;
-    }
-
-    const float shownLevel = 0.25f + 0.75f * std::min(1.0f, level);
-    D2D1_COLOR_F waveColour = HudWaveAccent(accent);
-    waveColour.a = opacity * (0.22f + 0.06f * shownLevel);
-    ID2D1SolidColorBrush* brush = nullptr;
-    if (FAILED(context->CreateSolidColorBrush(waveColour, &brush)) || !brush) return;
-
-    constexpr int kBarCount = 16;
-    constexpr float kBarWidth = 3.0f;
-    constexpr float kBarGap = 3.5f;
-    const float clusterWidth =
-        kBarWidth * static_cast<float>(kBarCount) + kBarGap * static_cast<float>(kBarCount - 1);
-    const float clusterLeft = (box.left + box.right - clusterWidth) * 0.5f;
-    const float centreY = (box.top + box.bottom) * 0.5f;
-    const float maxHalf = (box.bottom - box.top) * 0.18f;
-    for (int i = 0; i < kBarCount; ++i) {
-        const float across =
-            (static_cast<float>(i) + 0.5f) / static_cast<float>(kBarCount);
-        const float centreWeight = std::sin(across * 3.14159265f);
-        const float phase = phaseSeconds * 3.1f + static_cast<float>(i) * 0.62f;
-        const float motion =
-            0.52f + 0.32f * std::sin(phase) + 0.16f * std::sin(phase * 0.53f + 1.7f);
-        const float intensity = 0.20f + 0.80f * centreWeight * motion;
-        const float half = 1.5f + maxHalf * shownLevel * intensity;
-        const float left = clusterLeft + static_cast<float>(i) * (kBarWidth + kBarGap);
-        const D2D1_ROUNDED_RECT bar =
-            D2D1::RoundedRect(D2D1::RectF(left, centreY - half, left + kBarWidth,
-                                          centreY + half),
-                              kBarWidth * 0.5f, kBarWidth * 0.5f);
-        context->FillRoundedRectangle(bar, brush);
-    }
-    brush->Release();
-}
-
 void DrawCallWave(ID2D1DeviceContext2* context, float centreX, float centreY, float phaseSeconds,
                   float level, float opacity) {
     if (!context || opacity <= 0.01f) return;
@@ -2171,7 +2130,10 @@ void TextRenderer::DrawFullscreenMusicNotch(ID2D1DeviceContext2* context,
     if (MultiByteToWideChar(CP_UTF8, 0, line, -1, lyric, 512) <= 0) return;
     ID2D1SolidColorBrush* ink = nullptr;
     if (FAILED(context->CreateSolidColorBrush(PillInk(0.92f * opacity), &ink)) || !ink) return;
-    DrawMusicWaveBackground(context, layout.wave, musicPhase, musicLevel, musicAccent, opacity);
+    const float waveHeight = layout.wave.bottom - layout.wave.top;
+    const RoundedBox waveBox = {layout.wave, waveHeight * 0.5f, waveHeight * 0.5f};
+    DrawAudioWave(context, waveBox, musicPhase, musicLevel, HudWaveAccent(musicAccent),
+                  opacity * 0.45f);
     DrawNiriLyricLine(context, layout.lyric, lyric, scrollDip, ink, 0.0f);
     ink->Release();
 }
