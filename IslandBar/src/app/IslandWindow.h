@@ -131,12 +131,12 @@ public:
     // frame become one and the second is silently dropped -- and a dropped click is indistinguishable
     // from a click that was misunderstood. A count at least answers "did the message arrive", which is
     // the question that decides whether the fault is in the window procedure or in the routing.
-    bool TakeClick();
+    bool TakeClick(POINT* screenPoint);
 
     // The same for a RIGHT click, which only the tray page's cells use so far: right-clicking one of the
     // shell's tray icons is how its application's own menu is opened -- the menu with 退出 in it -- and
     // there is no UI Automation pattern for a right click, so it has to arrive as one. See TrayPress.
-    bool TakeRightClick();
+    bool TakeRightClick(POINT* screenPoint);
 
     // Takes a left-button PRESS, reported with where it landed. A press and a click are different events:
     // the click says "this control was chosen", the press says "the drag has started", and a slider needs
@@ -761,9 +761,11 @@ private:
 
     bool  layoutChanged_ = false;
     int   pendingClicks_ = 0;
+    POINT lastClick_ = {};
     // Right clicks, counted the same way and for the same reason: what one means is policy and belongs in
     // the frame loop. See TakeRightClick.
     int   pendingRightClicks_ = 0;
+    POINT lastRightClick_ = {};
     int   pendingPresses_ = 0;
     POINT lastPress_ = {};
     bool  leftDown_ = false;

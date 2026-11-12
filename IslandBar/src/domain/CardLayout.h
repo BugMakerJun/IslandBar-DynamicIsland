@@ -473,32 +473,17 @@ inline constexpr float kTrayMenuPadDip     = 6.0f;
 inline constexpr int   kMaxTrayMenuEntries = 6;
 
 enum class TrayMenuAction : int {
-    Open,             // the icon's own default action -- exactly what a left click on it does
-    LaunchApplication,// start a registered application that is not currently running
-    ActivateWindow,   // bring a window of that application to the front
+    LaunchApplication,// activate an existing application window, or start its executable
     OpenLocation,     // the folder the executable lives in, with the file selected
-    CloseWindow,      // ask the application to close its window (WM_CLOSE: graceful, it may prompt)
     QuitApplication,  // END the application's processes -- the forceful one, behind a second press
-    ApplicationMenu,  // the application's own menu, through the shell (slow, and at the icon's corner)
 };
 
-// The label a user reads. Wide, because two of the four are Chinese and the renderer wants wide strings.
-//
-// `ownMenuUnreachable` is the one fact that changes a WORD rather than adding a row (2026-10-16, round 44):
-// an icon whose application has answered neither of the two shapes a right press may send (see
-// TrayPress.cpp's right-note file) can still be offered the row -- the press will simply open this bar's own
-// menu -- but the row has to say so. A row that promises the application's own menu and delivers this bar's
-// is the kind of quiet lie this project keeps paying for.
-inline const wchar_t* TrayMenuLabel(TrayMenuAction action, bool ownMenuUnreachable = false) {
-    if (action == TrayMenuAction::ApplicationMenu && ownMenuUnreachable) return L"应用菜单（本机拿不到）";
+// The label a user reads. Wide, because every row is Chinese and the renderer wants wide strings.
+inline const wchar_t* TrayMenuLabel(TrayMenuAction action) {
     switch (action) {
-        case TrayMenuAction::Open:            return L"打开";
         case TrayMenuAction::LaunchApplication: return L"启动应用";
-        case TrayMenuAction::ActivateWindow:  return L"显示窗口";
         case TrayMenuAction::OpenLocation:    return L"文件位置";
-        case TrayMenuAction::CloseWindow:     return L"关闭窗口";
         case TrayMenuAction::QuitApplication: return L"关闭应用";
-        case TrayMenuAction::ApplicationMenu: return L"应用菜单";
     }
     return L"";
 }
@@ -518,40 +503,25 @@ inline const wchar_t* TrayMenuArmedLabel(TrayMenuAction action) {
 struct TrayMenuFacts {
     bool hasWindow = false;    // the application has a window to bring forward
     bool hasExePath = false;   // the registry recorded where its executable lives
-    // ... AND WHETHER ITS TRAY CALLBACK IS KNOWN. The two rows that are "the icon's own action" cannot do
-    // anything without it: 打开 sends the application its own left-click callback (TrayPress) and 应用自己的
-    // 菜单… sends it the right-click one, and an application whose callback has never been learned is simply
-    // not sendable to. Measured by the user on 2026-10-15: pressing 应用自己的菜单… on one of those cells
-    // "did nothing", because all it could do was re-open the same menu -- a row that does nothing is worse
-    // than a row that is absent, and this struct is what the rule is stated in.
-    bool hasCallback = false;
-    // ... AND WHETHER ITS OWN MENU IS REACHABLE AT ALL: false once both shapes a right press can send have been
-    // tried and the application answered neither (the press writes that down per icon). The row stays -- the
-    // press falls back to this bar's menu -- but its label says what it can actually deliver.
-    bool ownMenuUnreachable = false;
     // The registered image has a process, even when no normal window is visible.
     bool processRunning = false;
     // The recorded path names a file that exists and can be launched.
     bool hasLaunchTarget = false;
 };
 
-// Which entries the menu shows, in order, for one icon -- PURE, so the rule is pinned by the self-test
-// rather than by looking at the screen. The application's menu is always last: it is the slow one, and it
-// is the one that leaves the bar.
+// Which entries the fallback menu shows, in order, for one icon -- PURE, so the rule is pinned by the
+// self-test rather than by looking at the screen.
 inline int TrayMenuEntriesFor(const TrayMenuFacts& facts, TrayMenuAction* out, int capacity) {
     if (!out || capacity <= 0) return 0;
     int count = 0;
     const auto add = [&](TrayMenuAction action) {
         if (count < capacity) out[count++] = action;
     };
-    // The application's own actions come first; recovery actions follow. Each row is gated by the exact
-    // fact its handler needs, so a stale icon still has a visible, useful response without offering a
-    // callback or a "close" action that cannot work.
-    if (facts.hasCallback) add(TrayMenuAction::Open);
-    if (facts.hasWindow) add(TrayMenuAction::ActivateWindow);
-    if (!facts.hasCallback && facts.hasLaunchTarget) add(TrayMenuAction::LaunchApplication);
+    // This menu is the fallback after an application's own right-click menu was unavailable. Its rows
+    // therefore use only actions IslandBar can carry out itself; it never retries the application's
+    // button callbacks.
+    if (facts.hasWindow || facts.hasLaunchTarget) add(TrayMenuAction::LaunchApplication);
     if (facts.hasExePath) add(TrayMenuAction::OpenLocation);
-    if (facts.hasCallback) add(TrayMenuAction::ApplicationMenu);
     if (facts.processRunning) add(TrayMenuAction::QuitApplication);
     return count;
 }

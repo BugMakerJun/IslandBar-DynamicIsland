@@ -8,10 +8,8 @@
 //
 //  WHY THE MOVE. main.cpp is where the program is ASSEMBLED, and a reader had to walk past 1,300 lines of
 //  command-line handlers and 230 lines of tray-menu rules to find the frame loop. The rule this file is
-//  built on is the one the menu states in its own comment: an entry is offered only if it can actually do
-//  something, and the two entries that need a learned callback are dropped when there is none -- measured
-//  on the user's machine, where pressing 应用自己的菜单… on an unlearned cell could only re-open the same
-//  menu, which read as "nothing happened".
+//  built on is the one the menu states in its own comment: this is the fallback for an unavailable
+//  application menu, so every row must be something IslandBar can carry out itself.
 //
 //  Nothing here is new code: it is the same text, moved, with island:: qualification added at the call sites.
 // =====================================================================
@@ -164,22 +162,45 @@ HWND WindowOfImageInList(island::WindowList& windows, const wchar_t* image) {
     return nullptr;
 }
 
+const wchar_t* TrayLaunchResultName(TrayLaunchResult result) {
+    switch (result) {
+        case TrayLaunchResult::Activated: return L"activate";
+        case TrayLaunchResult::Launched: return L"launch";
+        case TrayLaunchResult::NoTarget: return L"no-target";
+        case TrayLaunchResult::Failed: return L"failed";
+    }
+    return L"?";
+}
+
+TrayLaunchResult LaunchOrActivateTrayApplication(const TrayIcons& icons, WindowList& windows, int cell) {
+    if (cell < 0 || cell >= icons.Count()) return TrayLaunchResult::NoTarget;
+
+    const wchar_t* path = icons.ExePathAt(cell);
+    if (!path || path[0] == L'\0') return TrayLaunchResult::NoTarget;
+
+    const wchar_t* image = BaseNameOf(path);
+    HWND window = WindowOfImageInList(windows, image);
+    if (window && windows.Activate(window)) return TrayLaunchResult::Activated;
+
+    // No normal task window means "let the application handle a second launch". ShellExecuteW is
+    // what the Start card already uses, and single-instance applications commonly restore their
+    // main window in response to it. Searching further down the HWND hierarchy would start
+    // activating helper, message-only and hidden utility windows.
+    if (!IsLaunchableFile(path)) return TrayLaunchResult::NoTarget;
+
+    wchar_t expanded[MAX_PATH] = {};
+    const DWORD length = ExpandEnvironmentStringsW(path, expanded, MAX_PATH);
+    if (length == 0 || length >= MAX_PATH) return TrayLaunchResult::NoTarget;
+    const HINSTANCE opened = ShellExecuteW(nullptr, L"open", expanded, nullptr, nullptr, SW_SHOWNORMAL);
+    return reinterpret_cast<INT_PTR>(opened) > 32 ? TrayLaunchResult::Launched
+                                                 : TrayLaunchResult::Failed;
+}
+
 void TrayMenuFactsFor(const island::TrayIcons& icons, island::WindowList& windows, int cell,
                       island::TrayMenuFacts* out) {
     if (!out) return;
     *out = island::TrayMenuFacts{};
     if (cell < 0 || cell >= icons.Count()) return;
-    // WHETHER THIS ICON'S CALLBACK IS KNOWN AT ALL -- the question the two "its own action" rows depend on
-    // (see TrayMenuFacts). Asked of the same function the press itself asks, so the menu cannot offer a row
-    // that the press would then refuse.
-    {
-        const island::TrayPressRequest request = MakeTrayPressRequest(icons.At(cell), icons.ExePathAt(cell));
-        out->hasCallback = island::TrayPressReachable(request);
-        // ... and whether its OWN menu has already been shown to be out of reach: two shapes tried, neither
-        // answered (the press writes that down per icon). The row stays -- the press answers with this bar's
-        // menu -- but it says so (see TrayMenuLabel).
-        out->ownMenuUnreachable = island::TrayRightClickExhausted(request);
-    }
     const wchar_t* path = icons.ExePathAt(cell);
     out->hasExePath = path && path[0] != L'\0';
     if (!out->hasExePath) return;
@@ -189,45 +210,19 @@ void TrayMenuFactsFor(const island::TrayIcons& icons, island::WindowList& window
     out->hasLaunchTarget = IsLaunchableFile(path);
 }
 
-void RunTrayMenuAction(const island::TrayIcons& icons, island::WindowList& windows, int cell,
+bool RunTrayMenuAction(const island::TrayIcons& icons, island::WindowList& windows, int cell,
                        island::TrayMenuAction action) {
-    if (cell < 0 || cell >= icons.Count()) return;
+    if (cell < 0 || cell >= icons.Count()) return false;
     const wchar_t* path = icons.ExePathAt(cell);
     switch (action) {
-        case island::TrayMenuAction::Open:
-            // Exactly what a left click on the cell does: the icon's own default action.
-            StartTrayPress(icons, cell, false);
-            break;
         case island::TrayMenuAction::LaunchApplication: {
-            if (!path || path[0] == L'\0') break;
-            wchar_t expanded[MAX_PATH] = {};
-            const DWORD length = ExpandEnvironmentStringsW(path, expanded, MAX_PATH);
-            if (length == 0 || length >= MAX_PATH) {
-                island::LogAndPrint(L"  tray menu: cannot expand launch path '%ls'\n", path);
-                break;
-            }
-            const HINSTANCE opened =
-                ShellExecuteW(nullptr, L"open", expanded, nullptr, nullptr, SW_SHOWNORMAL);
-            island::LogAndPrint(
-                L"  tray menu: launch '%ls' (%ls, result %lld)\n", expanded,
-                reinterpret_cast<INT_PTR>(opened) > 32 ? L"ok" : L"FAILED",
-                static_cast<long long>(reinterpret_cast<INT_PTR>(opened)));
-            break;
-        }
-        case island::TrayMenuAction::ApplicationMenu:
-            // ... and exactly what a right click used to do, for the items only the application knows.
-            StartTrayPress(icons, cell, true);
-            break;
-        case island::TrayMenuAction::ActivateWindow: {
-            HWND window = WindowOfImageInList(windows, BaseNameOf(path));
-            const bool raised = window != nullptr && windows.Activate(window);
-            island::LogAndPrint(L"  tray menu: '%ls' -> %ls\n", BaseNameOf(path),
-                                raised ? L"brought forward" : L"nothing to bring forward");
-            std::fflush(stdout);
-            break;
+            const TrayLaunchResult result = LaunchOrActivateTrayApplication(icons, windows, cell);
+            island::LogAndPrint(L"  tray menu: launch/activate '%ls' result=%ls\n", BaseNameOf(path),
+                                TrayLaunchResultName(result));
+            return result == TrayLaunchResult::Activated || result == TrayLaunchResult::Launched;
         }
         case island::TrayMenuAction::OpenLocation: {
-            if (!path || path[0] == L'\0') break;
+            if (!path || path[0] == L'\0') return false;
             // Through Explorer's own "open file location", which is the same gesture the shell's menus
             // offer. Quoted, because a path with spaces in it is the normal case.
             wchar_t argument[512] = {};
@@ -237,50 +232,17 @@ void RunTrayMenuAction(const island::TrayIcons& icons, island::WindowList& windo
             island::LogAndPrint(L"  tray menu: opened the folder of '%ls' (result %lld)\n", path,
                                 static_cast<long long>(reinterpret_cast<INT_PTR>(result)));
             std::fflush(stdout);
-            break;
-        }
-        case island::TrayMenuAction::CloseWindow: {
-            // "关闭" on OUR side can only mean "ask it to close", and that is `WM_CLOSE`: the application
-            // gets the request, saves what it wants to save, and may put up its own prompt. Terminating the
-            // process would be the other way to make a window go away, and it is not offered here for the
-            // obvious reason -- it takes the decision out of the application's hands.
-            //
-            // POSTED, not sent: `SendMessage` would sit in this thread while the application runs its own
-            // modal prompt (an unsaved-document dialog), and the bar draws on this thread.
-            //
-            // An application that lives in the tray closes its window INTO the tray rather than quitting --
-            // WeChat and QQ音乐 both do -- so this closes the window and does not end the process. Its own
-            // 退出 is still the last entry of this menu, and that is stated in the handover rather than
-            // papered over with a label like "退出" that this entry cannot honour.
-            HWND first = WindowOfImageInList(windows, BaseNameOf(path));
-            int closed = 0;
-            if (first) {
-                for (int i = 0; i < windows.Count(); ++i) {
-                    const island::TaskEntry& entry = windows.At(i);
-                    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE,
-                                                 entry.processId);
-                    if (!process) continue;
-                    wchar_t image[MAX_PATH] = {};
-                    DWORD length = MAX_PATH;
-                    const bool havePath = QueryFullProcessImageNameW(process, 0, image, &length) != FALSE;
-                    CloseHandle(process);
-                    if (!havePath || !SameImage(BaseNameOf(image), BaseNameOf(path))) continue;
-                    if (PostMessageW(entry.handle, WM_CLOSE, 0, 0)) ++closed;
-                }
-            }
-            island::LogAndPrint(L"  tray menu: asked '%ls' to close %d window(s)\n", BaseNameOf(path),
-                                closed);
-            std::fflush(stdout);
-            break;
+            return reinterpret_cast<INT_PTR>(result) > 32;
         }
         case island::TrayMenuAction::QuitApplication: {
             const int ended = TerminateProcessesOfImage(BaseNameOf(path));
             island::LogAndPrint(L"  tray menu: ended %d process(es) of '%ls'\n", ended,
                                 BaseNameOf(path));
             std::fflush(stdout);
-            break;
+            return ended > 0;
         }
     }
+    return false;
 }
 
 void StartTrayPress(const island::TrayIcons& icons, int cell, bool rightClick) {
@@ -311,9 +273,9 @@ void StartTrayPress(const island::TrayIcons& icons, int cell, bool rightClick) {
         if (outcome.result == island::TrayPressResult::Pressed) {
             island::LogAndPrint(L"  tray press: delivered to %ls -- %ls\n", outcome.target, outcome.answer);
         }
-        // ... AND A CELL WITH NOTHING LEARNED OPENS THE BAR'S OWN MENU INSTEAD, which is the same thing a
-        // right click does there: the user asked for something to happen, and "nothing" is not an answer. The
-        // menu is handed to the frame loop because this runs on a worker thread (see the tray menu's state).
+        // A right press can lose its callback window between the synchronous check and delivery. That cell
+        // then opens the bar's fallback menu; the request is handed to the frame loop because this runs on a
+        // worker thread (see the tray menu's state).
         if (outcome.result == island::TrayPressResult::NoEntry) {
             trayMenuRequestCell.store(cell);
         }

@@ -4992,32 +4992,23 @@ void TestMusicCardLayout() {
                           L"the tray report keeps executable names that contain spaces");
                 }
                 {
-                    // Which rows: the application's own actions first, then the safe recovery rows. An entry
-                    // that would do nothing is not offered. A row whose message cannot be sent (no callback
-                    // learned), whose window is absent, whose executable is missing, or whose process is not
-                    // running is filtered out by the same facts the menu action reads.
-                    //
-                    // 打开 and 应用菜单 need a callback; 显示窗口 needs a window; 文件位置 needs a recorded
-                    // path; 关闭应用 needs a running process. 启动应用 covers a stale tray icon whose
-                    // registered executable still exists.
+                    // Which rows: this is the right button's fallback menu, so every row is an action
+                    // IslandBar can carry out itself. 启动应用 needs a window or valid executable;
+                    // 文件位置 needs a recorded path; 关闭应用 needs a running process.
                     TrayMenuFacts everything;
                     everything.hasWindow = true;
                     everything.hasExePath = true;
-                    everything.hasCallback = true;
                     everything.processRunning = true;
                     everything.hasLaunchTarget = true;
                     TrayMenuAction all[kMaxTrayMenuEntries] = {};
                     const int withEverything =
                         TrayMenuEntriesFor(everything, all, kMaxTrayMenuEntries);
 
-                    TrayMenuFacts runningWithoutCallback;
-                    runningWithoutCallback.hasWindow = true;
-                    runningWithoutCallback.hasExePath = true;
-                    runningWithoutCallback.processRunning = true;
-                    runningWithoutCallback.hasLaunchTarget = true;
-                    TrayMenuAction noCallback[kMaxTrayMenuEntries] = {};
-                    const int withNoCallback = TrayMenuEntriesFor(
-                        runningWithoutCallback, noCallback, kMaxTrayMenuEntries);
+                    TrayMenuFacts windowOnly;
+                    windowOnly.hasWindow = true;
+                    TrayMenuAction windowRows[kMaxTrayMenuEntries] = {};
+                    const int withWindow =
+                        TrayMenuEntriesFor(windowOnly, windowRows, kMaxTrayMenuEntries);
 
                     TrayMenuAction bare[kMaxTrayMenuEntries] = {};
                     const int withNothing =
@@ -5031,23 +5022,16 @@ void TestMusicCardLayout() {
                         TrayMenuEntriesFor(stopped, onlyPath, kMaxTrayMenuEntries);
 
                     std::swprintf(trayDetail, 256,
-                                  L"everything=%d (last=%d), no callback=%d, nothing=%d, path only=%d",
+                                  L"everything=%d (last=%d), window only=%d, nothing=%d, path only=%d",
                                   withEverything,
                                   withEverything > 0
                                       ? static_cast<int>(all[withEverything - 1])
                                       : -1,
-                                  withNoCallback, withNothing, withPath);
-                    Check(withEverything == 5 && all[0] == TrayMenuAction::Open &&
-                              all[1] == TrayMenuAction::ActivateWindow &&
-                              all[2] == TrayMenuAction::OpenLocation &&
-                              all[3] == TrayMenuAction::ApplicationMenu &&
-                              all[4] == TrayMenuAction::QuitApplication &&
-                              // A tray-only application can also be relaunched when its callback is unavailable.
-                              withNoCallback == 4 &&
-                              noCallback[0] == TrayMenuAction::ActivateWindow &&
-                              noCallback[1] == TrayMenuAction::LaunchApplication &&
-                              noCallback[2] == TrayMenuAction::OpenLocation &&
-                              noCallback[3] == TrayMenuAction::QuitApplication &&
+                                  withWindow, withNothing, withPath);
+                    Check(withEverything == 3 && all[0] == TrayMenuAction::LaunchApplication &&
+                              all[1] == TrayMenuAction::OpenLocation &&
+                              all[2] == TrayMenuAction::QuitApplication &&
+                              withWindow == 1 && windowRows[0] == TrayMenuAction::LaunchApplication &&
                               // Nothing known means no row; a stopped application with a valid path can be
                               // launched and located, while "close" is not offered for something not running.
                               withNothing == 0 &&
@@ -5057,27 +5041,15 @@ void TestMusicCardLayout() {
                                           L"启动应用") == 0,
                           L"the menu offers only what can be done, and never a row that would do nothing",
                           trayDetail);
-                    // THE ROW THAT TELLS THE TRUTH ABOUT ITSELF (2026-10-16, round 44). When an icon's own menu
-                    // has been shown to be out of reach -- both shapes a right press may send were tried and the
-                    // application answered neither -- the row stays (the press opens this bar's menu) and says
-                    // so. A row promising the application's menu and delivering this bar's is the quiet lie
-                    // this round was about.
-                    Check(std::wcscmp(TrayMenuLabel(TrayMenuAction::ApplicationMenu, true),
-                                      L"应用菜单（本机拿不到）") == 0 &&
-                              std::wcscmp(TrayMenuLabel(TrayMenuAction::ApplicationMenu), L"应用菜单") == 0 &&
-                              std::wcscmp(TrayMenuLabel(TrayMenuAction::Open, true), L"打开") == 0 &&
-                              std::wcscmp(TrayMenuLabel(TrayMenuAction::QuitApplication, true),
-                                          L"关闭应用") == 0,
-                          L"only the 应用菜单 row changes when its menu cannot be reached, and it says so",
-                          trayDetail);
                     // The one entry with a second state says so in words, and only that one does.
                     wchar_t armedDetail[192];
                     std::swprintf(armedDetail, 192, L"'%ls' / '%ls'",
                                   TrayMenuArmedLabel(TrayMenuAction::QuitApplication),
-                                  TrayMenuArmedLabel(TrayMenuAction::Open));
+                                  TrayMenuArmedLabel(TrayMenuAction::LaunchApplication));
                     Check(std::wcscmp(TrayMenuArmedLabel(TrayMenuAction::QuitApplication),
                                       L"再点一次：关闭应用") == 0 &&
-                              std::wcscmp(TrayMenuArmedLabel(TrayMenuAction::Open), L"打开") == 0,
+                              std::wcscmp(TrayMenuArmedLabel(TrayMenuAction::LaunchApplication),
+                                          L"启动应用") == 0,
                           L"an armed entry says what the second press will do, and only it changes",
                           armedDetail);
                 }

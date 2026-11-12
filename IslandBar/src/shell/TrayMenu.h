@@ -1,7 +1,7 @@
 // =====================================================================
 //  TrayMenu.h -- the tray card's behaviour: what a cell does, what its menu offers
 //
-//  WHAT IS IN HERE. Nine functions, and every one of them was in main.cpp's anonymous namespace until
+//  WHAT IS IN HERE. The tray-cell operations, and every one of them was in main.cpp's anonymous namespace until
 //  2026-10-15. They are the whole of "a tray cell": turning an icon into a press request, flattening a
 //  tooltip for a log line, comparing an executable's name with a window's process, finding the window behind
 //  an icon, deciding which menu rows are possible, carrying one out, and starting the press on a worker
@@ -12,10 +12,9 @@
 //  two callers -- the frame loop (a click on a cell) and the --tray-* commands (a press from a script) -- and
 //  neither of them is main.cpp's business.
 //
-//  THE ONE RULE WORTH KNOWING BEFORE READING THE CODE: an entry is offered only if it can actually do
-//  something. `TrayMenuFacts::hasCallback` is what keeps 打开 and 应用自己的菜单… out of the menu for an
-//  icon whose callback was never learned -- those two entries ARE the application's own action, and there is
-//  no message to send without a learned callback. A row that silently does nothing is worse than no row.
+//  THE ONE RULE WORTH KNOWING BEFORE READING THE CODE: a tray cell's LEFT button means "activate or start
+//  the application" while its RIGHT button asks the application for its own tray menu. The bar's menu is
+//  only the right button's fallback when that application menu is unreachable.
 // =====================================================================
 #pragma once
 
@@ -59,15 +58,29 @@ bool SameImage(const wchar_t* a, const wchar_t* b);
 // quitting, so "ask it to close" cannot deliver "the application is gone".
 int TerminateProcessesOfImage(const wchar_t* image);
 
-// The first window of that image in the bar's own task list -- the same list the icon row draws, so 显示窗口
-// acts on the window whose icon the user would have clicked.
+// The first window of that image in the bar's own task list -- the same list the icon row draws, so a
+// left click acts on the window whose icon the user would have clicked.
 HWND WindowOfImageInList(WindowList& windows, const wchar_t* image);
+
+enum class TrayLaunchResult : int {
+    Activated,   // an existing task window was brought forward
+    Launched,    // ShellExecuteW started the recorded executable
+    NoTarget,    // neither a task window nor a launchable executable is known
+    Failed,      // the target exists, but Windows refused to start it
+};
+
+// The left-button action for a tray cell. Only the existing task-window list is searched, so helper and
+// message-only windows are excluded by the same filter the application row uses. If no task window exists,
+// ShellExecuteW lets the application's own single-instance logic restore itself.
+TrayLaunchResult LaunchOrActivateTrayApplication(const TrayIcons& icons, WindowList& windows, int cell);
+
+const wchar_t* TrayLaunchResultName(TrayLaunchResult result);
 
 // What the icon can actually do, so that the menu never offers a row that does nothing.
 void TrayMenuFactsFor(const TrayIcons& icons, WindowList& windows, int cell, TrayMenuFacts* out);
 
 // Carries out one entry of that menu.
-void RunTrayMenuAction(const TrayIcons& icons, WindowList& windows, int cell, TrayMenuAction action);
+bool RunTrayMenuAction(const TrayIcons& icons, WindowList& windows, int cell, TrayMenuAction action);
 
 // Starts a press on a worker thread (it sends a message and then watches the application for an answer, which
 // the bar's own frame loop has no time for).

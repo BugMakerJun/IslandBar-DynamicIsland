@@ -403,15 +403,17 @@ bool IslandWindow::TakeLayoutChanged() {
     return true;
 }
 
-bool IslandWindow::TakeClick() {
+bool IslandWindow::TakeClick(POINT* screenPoint) {
     if (pendingClicks_ <= 0) return false;
     --pendingClicks_;
+    if (screenPoint) *screenPoint = lastClick_;
     return true;
 }
 
-bool IslandWindow::TakeRightClick() {
+bool IslandWindow::TakeRightClick(POINT* screenPoint) {
     if (pendingRightClicks_ <= 0) return false;
     --pendingRightClicks_;
+    if (screenPoint) *screenPoint = lastRightClick_;
     return true;
 }
 
@@ -2266,6 +2268,7 @@ LRESULT IslandWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
             std::swprintf(local, 96, L"click at screen (%ld,%ld) = local (%.0f,%.0f) DIP",
                           where.x, where.y, localX, localY);
             LogAndPrint("  %ls", local);
+            lastClick_ = where;
             ++pendingClicks_;
             // The other half of the capture: whoever is holding the mouse gives it back, so the drag the
             // press started can be ended wherever the pointer happens to be.
@@ -2319,6 +2322,7 @@ LRESULT IslandWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
             std::swprintf(local, 96, L"right click at screen (%ld,%ld) = local (%.0f,%.0f) DIP",
                           where.x, where.y, localX, localY);
             LogAndPrint("  %ls", local);
+            lastRightClick_ = where;
             ++pendingRightClicks_;
             return 0;
         }
