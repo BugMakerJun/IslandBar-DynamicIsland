@@ -1347,20 +1347,20 @@ void TestRenderer(IslandWindow& window) {
                       L"the pill still shows its own line while a card is up", pillDetail);
             }
 
-            // --- AND WHILE A FULL-SCREEN APPLICATION IS IN FRONT, THE ISLAND STAYS -------------------
+            // --- A FULL-SCREEN APPLICATION WITH NOTHING TO SAY PAINTS NOTHING ----------------------
             //
-            // The policy was the opposite once: nothing was painted over a game. The request is now that
-            // the island remain visible (only the decks and the icon row stand down), so this measures
-            // that the pill's band still has ink. The sides are checked just below.
+            // The ordinary pill used to remain visible here. The full-screen HUD now makes no-music/no-call
+            // an explicit Hidden mode, so the same band must clear to transparency.
             {
-                FrameState standDown;
-                standDown.pill.box = BoxForState(IslandState::FullBar, window.CurrentAnchor());
-                standDown.pill.opacity = 1.0f;
-                standDown.state = IslandState::FullBar;
-                standDown.contentOpacity = 1.0f;
-                standDown.fullscreenApp = true;
-                renderer.Render(standDown);
-                renderer.Render(standDown);
+                FrameState hidden;
+                hidden.pill.box = pillBox;
+                hidden.pill.opacity = 0.0f;
+                hidden.state = IslandState::Collapsed;
+                hidden.contentOpacity = 0.0f;
+                hidden.fullscreenApp = true;
+                hidden.fullscreenHudMode = FullscreenHudMode::Hidden;
+                renderer.Render(hidden);
+                renderer.Render(hidden);
 
                 float bandInFullScreen = -1.0f;
                 const bool measuredFull =
@@ -1371,8 +1371,9 @@ void TestRenderer(IslandWindow& window) {
                 // The same strip with the bar at rest: the pill IS there, which is what makes the reading
                 // above mean "nothing" rather than "the readback is broken".
                 FrameState resting;
-                resting.pill = standDown.pill;
+                resting.pill = hidden.pill;
                 resting.pill.box = pillBox;
+                resting.pill.opacity = 1.0f;
                 resting.restingPill = pillBox;
                 resting.state = IslandState::Collapsed;
                 renderer.Render(resting);
@@ -1387,33 +1388,40 @@ void TestRenderer(IslandWindow& window) {
                 Check(measuredRest && bandAtRest > 2.0f,
                       L"the island's band is painted at rest, so the next reading means something",
                       pillDetail);
-                Check(measuredFull && bandInFullScreen > 2.0f,
-                      L"the island stays painted while a full-screen application is in front",
+                Check(measuredFull && bandInFullScreen < 1.0f,
+                      L"a full-screen game with no music and no call leaves no island pixels",
                       pillDetail);
             }
 
-            // --- ... AND ONLY THE ISLAND IS THE BAR ----------------------------------------------
+            // --- THE MUSIC HUD IS THE ONLY THING DRAWN -------------------------------------------
             //
-            // Asked for after a message came up over a game: "玩游戏的时候 有通知和通话时 只要显示灵动岛就行
-            // 左右两侧的不用显示". Three readings, and the first is the one that says the other two mean
-            // something: the island's own band has ink, the strip where the application icon row would be
-            // has none, and neither has the one where the Start button sits.
+            // A game plus active playback gets the lyric notch; notifications and every ordinary side
+            // element must remain absent.
             {
+                const FullscreenHudLayout hud =
+                    FullscreenHudLayoutFor(FullscreenHudMode::MusicNotch,
+                                           {0.0f, 0.0f, 2560.0f, 1440.0f});
                 FrameState onlyIsland;
-                onlyIsland.pill.box = BoxForState(IslandState::NoticeStrip, window.CurrentAnchor());
+                onlyIsland.pill.box = hud.box;
                 onlyIsland.pill.opacity = 1.0f;
-                onlyIsland.state = IslandState::NoticeStrip;
+                onlyIsland.state = IslandState::Collapsed;
                 onlyIsland.restingPill = pillBox;
+                onlyIsland.restingPill = hud.box;
+                onlyIsland.restingMaterial = hud.material;
+                onlyIsland.barShape = hud.shape;
                 onlyIsland.contentOpacity = 1.0f;
-                onlyIsland.noticeLine = "a message while a game has the screen";
                 onlyIsland.fullscreenApp = true;
+                onlyIsland.fullscreenHudMode = FullscreenHudMode::MusicNotch;
+                onlyIsland.fullscreenHud = hud;
+                onlyIsland.restingState = IslandState::MusicStrip;
+                onlyIsland.lyricLine = "a lyric while a game has the screen";
                 renderer.Render(onlyIsland);
                 renderer.Render(onlyIsland);
 
                 // The row and the deck are laid out from the shape the bar is in -- the widened strip here,
                 // through the same RowAnchorBox the renderer uses -- so the bands sampled are the bands
                 // those controls would occupy if they were drawn.
-                const RoundedBox strip = BoxForState(IslandState::NoticeStrip, window.CurrentAnchor());
+                const RoundedBox strip = hud.box;
                 const RectF firstIcon = TaskIconButtonAt(strip, 0, 4, -1);
                 const RectF startButton = StartButtonFor(strip);
 
@@ -1433,10 +1441,54 @@ void TestRenderer(IslandWindow& window) {
                               L"island band=%.2f, first icon=%.2f, Start button=%.2f", islandInk,
                               rowInk, deckInk);
                 Check(measuredIsland && islandInk > 2.0f,
-                      L"the island is drawn while a full-screen application is in front", pillDetail);
+                      L"the music notch is drawn while a full-screen application is in front",
+                      pillDetail);
                 Check(measuredRow && rowInk < 1.0f,
                       L"the application icon row beside it is not", pillDetail);
                 Check(measuredDeck && deckInk < 1.0f, L"nor is the Start button", pillDetail);
+                // A notification passed into the same frame must not replace the music HUD.
+                onlyIsland.noticeLine = "a message while a game has the screen";
+                renderer.Render(onlyIsland);
+                renderer.Render(onlyIsland);
+                float notifiedNotchInk = -1.0f;
+                Check(renderer.RegionLuminance(
+                          hud.box.rect.left + 20.0f, hud.box.rect.top,
+                          hud.box.rect.right - 20.0f, hud.box.rect.bottom, &notifiedNotchInk) &&
+                          notifiedNotchInk > 2.0f,
+                      L"a notification does not replace the full-screen music HUD", pillDetail);
+
+                const FullscreenHudLayout callHud =
+                    FullscreenHudLayoutFor(FullscreenHudMode::CallOrb,
+                                           {0.0f, 0.0f, 2560.0f, 1440.0f});
+                FrameState call;
+                call.pill.box = callHud.box;
+                call.pill.opacity = 1.0f;
+                call.state = IslandState::Collapsed;
+                call.restingPill = callHud.box;
+                call.restingMaterial = callHud.material;
+                call.barShape = callHud.shape;
+                call.contentOpacity = 1.0f;
+                call.fullscreenApp = true;
+                call.fullscreenHudMode = FullscreenHudMode::CallOrb;
+                call.fullscreenHud = callHud;
+                call.callUp = true;
+                call.callStrip.level = 0.45f;
+                call.callWavePhase = 1.3f;
+                renderer.Render(call);
+                renderer.Render(call);
+                float callInside = -1.0f;
+                float callOutside = -1.0f;
+                const bool measuredCall =
+                    renderer.RegionLuminance(callHud.box.rect.left, callHud.box.rect.top,
+                                             callHud.box.rect.right, callHud.box.rect.bottom,
+                                             &callInside) &&
+                    renderer.RegionLuminance(callHud.box.rect.right + 2.0f, callHud.box.rect.top,
+                                             callHud.box.rect.right + 14.0f,
+                                             callHud.box.rect.bottom, &callOutside);
+                std::swprintf(pillDetail, 224, L"call orb ink=%.2f, outside=%.2f", callInside,
+                              callOutside);
+                Check(measuredCall && callInside > 2.0f && callOutside < 1.0f,
+                      L"the call HUD paints one small circle and nothing outside it", pillDetail);
             }
         }
 

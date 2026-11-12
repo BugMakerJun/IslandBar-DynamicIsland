@@ -21,6 +21,7 @@
 #include <unordered_map>
 
 #include "domain/Geometry.h"      // RoundedBox: the text is laid out inside the pill's box
+#include "domain/FullscreenHud.h"
 #include "domain/StartSearch.h"   // unified application/settings/file results
 #include "media/MusicSession.h"  // the now-playing field capacities
 #include "domain/CardLayout.h"    // where the card's controls go
@@ -296,6 +297,13 @@ public:
                         D2D1_COLOR_F musicAccent = D2D1::ColorF(0.40f, 0.80f, 0.95f, 1.0f),
                         bool callActive = false, float callLevel = 0.0f,
                         float lyricScrollDip = 0.0f, float searchMarkOpacity = 1.0f);
+    // Full-screen game HUDs: one lyric notch and one call-only orb. They deliberately have no clock,
+    // search, notification, pointer or card state.
+    void DrawFullscreenMusicNotch(ID2D1DeviceContext2* context, const FullscreenHudLayout& layout,
+                                  const char* line, float scrollDip, float musicLevel,
+                                  float musicPhase, D2D1_COLOR_F musicAccent, float opacity);
+    void DrawFullscreenCallOrb(ID2D1DeviceContext2* context, const FullscreenHudLayout& layout,
+                               float callLevel, float phase, float opacity);
     void DrawNiriNotification(ID2D1DeviceContext2* context, const RoundedBox& box,
                               const char* line, const uint8_t* iconPixels, int iconWidth,
                               int iconHeight, unsigned long long iconRevision, float opacity);
@@ -845,6 +853,8 @@ public:
     void CurrentTimeText(wchar_t* out, size_t capacity) const;
 
 private:
+    void DrawNiriLyricLine(ID2D1DeviceContext2* context, const RectF& box, const wchar_t* text,
+                           float scrollDip, ID2D1SolidColorBrush* ink);
     // Refreshes the cached formatted strings if the second or the day rolled
     // over. Caching by day-key rather than by value avoids both a strcmp per
     // frame and a stale date at midnight.

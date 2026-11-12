@@ -1032,11 +1032,28 @@ void IslandWindow::ApplyInputRegion() {
     // The card's left edge is passed so the region can follow the icon row past it. It is the value the
     // renderer was given, held on the window for exactly this reason: a plan for where the card goes that
     // only the renderer knows about is a plan the clickable area cannot keep up with.
-    const RECT region =
-        InputRegionFor(monitor_, motion_.Target(), anchor, motion_.Current(), cardLeftDip_,
-                       taskButtonCount_, statusStripWidthDip_, trayIconCount_, noticeStripUp_,
-                       cardHeightDip_, cardWidthDip_, niriSearchResultsReveal_,
-                       niriSearchResultsCount_, niriSearchResultsPending_);
+    RECT region = {};
+    if (fullscreenHudMode_ != FullscreenHudMode::None) {
+        if (fullscreenHudMode_ == FullscreenHudMode::Hidden || !fullscreenHud_.valid) {
+            region = {0, 0, 1, 1};
+        } else {
+            const float scale = static_cast<float>(monitor_.dpi) / kDipPerInch;
+            region.left = static_cast<LONG>(std::lround(
+                (fullscreenHud_.box.rect.left - originX) * scale));
+            region.top = static_cast<LONG>(std::lround(
+                (fullscreenHud_.box.rect.top - originY) * scale));
+            region.right = static_cast<LONG>(std::lround(
+                (fullscreenHud_.box.rect.right - originX) * scale));
+            region.bottom = static_cast<LONG>(std::lround(
+                (fullscreenHud_.box.rect.bottom - originY) * scale));
+        }
+    } else {
+        region = InputRegionFor(
+            monitor_, motion_.Target(), anchor, motion_.Current(), cardLeftDip_,
+            taskButtonCount_, statusStripWidthDip_, trayIconCount_, noticeStripUp_,
+            cardHeightDip_, cardWidthDip_, niriSearchResultsReveal_,
+            niriSearchResultsCount_, niriSearchResultsPending_);
+    }
 
     // Skipped when it is the same rectangle as last time.
     //
@@ -1258,6 +1275,22 @@ bool IslandWindow::HitTestScreen(POINT screenPoint) const {
 
 void IslandWindow::SetFullscreenApp(bool fullscreenApp) {
     fullscreenApp_ = fullscreenApp;
+}
+
+void IslandWindow::SetFullscreenHud(FullscreenHudMode mode, const FullscreenHudLayout& layout) {
+    const bool same =
+        fullscreenHudMode_ == mode &&
+        fullscreenHud_.box.rect.left == layout.box.rect.left &&
+        fullscreenHud_.box.rect.top == layout.box.rect.top &&
+        fullscreenHud_.box.rect.right == layout.box.rect.right &&
+        fullscreenHud_.box.rect.bottom == layout.box.rect.bottom;
+    if (same) return;
+
+    fullscreenHudMode_ = mode;
+    fullscreenHud_ = layout;
+    havePointer_ = false;
+    ApplyInputRegion();
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
 void IslandWindow::SetTrayIconCount(int count) {
@@ -1517,12 +1550,9 @@ bool IslandWindow::ShouldAcceptPointer(const MonitorGeometry& monitor, const REC
                                        float cardWidthDip, float niriRightExtent) {
     // THE BAR IS NOT THERE WHILE A FULL-SCREEN APPLICATION IS IN FRONT.
     //
-    // Nothing of it is drawn in that state (see Renderer::RenderFrame), so there is nothing to point at
-    // -- and accepting the pointer anyway would mean the pointer crossing the top of the screen during a
-    // game opened the media card over it, which is the second half of what was reported: "如果音乐的时候也
-    // 显示那就鼠标放灵动岛的时候 不要 显示出音乐卡片". A call or a message is a different state (the notice
-    // strip), and that one is answered normally below.
-    if (state == IslandState::FullBar) return false;
+    // The full-screen HUD is status-only and click-through. Even when music or a call makes one visible,
+    // the game beneath it must keep receiving every pointer event.
+    if (state == IslandState::FullBar || fullscreenApp) return false;
 
     const float originX    = PixelsToDip(windowRect.left, monitor.dpi);
     const float originY    = PixelsToDip(windowRect.top, monitor.dpi);
@@ -1578,24 +1608,6 @@ bool IslandWindow::ShouldAcceptPointer(const MonitorGeometry& monitor, const REC
     const RoundedBox island =
         (currentShape.rect.right > currentShape.rect.left) ? RowAnchorBox(currentShape, restingPill)
                                                           : restingPill;
-
-    // ... AND WITH A FULL-SCREEN APPLICATION IN FRONT, ONLY THE ISLAND IS THE BAR.
-    //
-    // Asked for after a message came up over a game: "只要显示灵动岛就行 左右两侧的不用显示". Neither the
-    // deck nor the icon row is DRAWN in that situation (see Renderer::RenderFrame), and a bar that accepted
-    // the pointer there would be answering for buttons that are not on screen -- the pointer crossing the
-    // top of the screen would count as "on an icon", which opens that icon's title and is the hover state
-    // the card rules are built on.
-    if (fullscreenApp) {
-        const RoundedBox shape = BoxForState(state, anchor);
-        const auto inside = [](const RoundedBox& box, float x, float y) {
-            return x >= box.rect.left && x <= box.rect.right && y >= box.rect.top &&
-                   y <= box.rect.bottom;
-        };
-        // The state's own shape as well as the resting island, for the reason the union above gives: a
-        // message widens the island, and the widened strip is what the pointer is on.
-        return inside(island, localX, localY) || inside(shape, localX, localY);
-    }
 
     if (NiriLayoutActive()) {
         const bool cardMorph =

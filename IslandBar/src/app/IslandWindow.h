@@ -30,6 +30,7 @@
 #include <algorithm>
 
 #include "domain/CardLayout.h"   // CardControl: which control a click landed on
+#include "domain/FullscreenHud.h"
 #include "domain/Geometry.h"
 #include "platform/Monitor.h"
 #include "domain/Motion.h"
@@ -206,6 +207,9 @@ public:
     // Told by the frame loop, which measures it (see island::FullScreenAppInFront). The hit test is
     // answered here, so it has to be told the same thing the renderer was.
     void SetFullscreenApp(bool fullscreenApp);
+    // The game-facing HUD is a status-only overlay: it is positioned independently of the normal
+    // island and never accepts pointer input.
+    void SetFullscreenHud(FullscreenHudMode mode, const FullscreenHudLayout& layout);
 
     // The tray: how many icons the CARD holds, whether the pointer is on its button, and which cell of the
     // card's grid the pointer is on. The count comes from a list the window does not own, which is why it
@@ -770,6 +774,8 @@ private:
     POINT lastPress_ = {};
     bool  leftDown_ = false;
     bool  destroyed_ = false;
+    FullscreenHudMode fullscreenHudMode_ = FullscreenHudMode::None;
+    FullscreenHudLayout fullscreenHud_;
 
     // The window region currently applied, so an unchanged one is not re-applied.
     //

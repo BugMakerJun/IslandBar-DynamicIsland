@@ -29,6 +29,7 @@
 
 #include "app/PlayerWindow.h"    // PlayerWindowInfo: the player that never publishes a session
 #include "domain/CardLayout.h"   // TrayMenuAction, kMaxTrayMenuEntries
+#include "domain/FullscreenHud.h"
 #include "domain/StartSearch.h"  // the unified application/settings/file results
 #include "media/Lyrics.h"        // kLyricLineCapacity, TrackPosition
 #include "media/MusicSession.h"  // kMusicTitleCapacity, kMusicArtistCapacity
@@ -382,6 +383,12 @@ struct BarState {
     // ... and whether a full-screen APPLICATION is in front, measured by us rather than announced by the
     // shell (see FullScreenAppInFront). Polled: three cheap calls, four times a second.
     bool fullscreenAppInFront = false;
+    FullscreenHudMode fullscreenHudMode = FullscreenHudMode::None;
+    FullscreenHudLayout fullscreenHudLayout;
+    FullscreenHudMode lastReportedFullscreenHud = FullscreenHudMode::None;
+    // A short hold covers the media session's paused/transitional gaps, so a playing game HUD does not
+    // blink away for a frame or two while the player re-publishes its state.
+    unsigned long long musicHudHoldUntil = 0;
     unsigned long long lastFullscreenCheck = 0;
     int lastReportedButtons = -1;
     island::IslandState lastReportedState = island::IslandState::Collapsed;

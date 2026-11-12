@@ -27,6 +27,7 @@
 // =====================================================================
 
 #include "domain/CardLayout.h"       // brings Geometry.h, TaskStripLayout.h, Motion.h with it
+#include "domain/FullscreenHud.h"
 #include "domain/Geometry.h"
 #include "domain/MiniJson.h"
 #include "domain/Motion.h"

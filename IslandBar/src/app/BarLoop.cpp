@@ -36,6 +36,7 @@
 #include "platform/WindowList.h"
 #include "media/AudioVolume.h"
 #include "domain/Geometry.h"
+#include "domain/FullscreenHud.h"
 #include "app/IslandWindow.h"
 #include "core/FrameStats.h"
 #include "core/Log.h"
@@ -1940,6 +1941,78 @@ static void UpdateFullscreenStandDown(island::BarState& bar, island::BarSystems&
             island::LogAndPrint("  fullscreen: over, back to the pill");
         }
         std::fflush(stdout);
+    }
+}
+
+// The game-facing HUD is a separate three-state product mode, not another point in the ordinary
+// pointer-driven shape machine. It reuses the existing full-screen detector and media/call readings but
+// never draws a normal pill, card or notification.
+static void UpdateFullscreenHud(island::BarState& bar, island::BarSystems& systems,
+                                const island::Notification* active,
+                                const island::MonitorGeometry& monitor) {
+    using island::FullscreenHudMode;
+    const unsigned long long now = GetTickCount64();
+    if (bar.activePlaying) bar.musicHudHoldUntil = now + 1000;
+    const bool musicForHud = bar.activePlaying || now < bar.musicHudHoldUntil;
+    const bool callActive = systems.wechat.CallNotificationId() != 0;
+    const FullscreenHudMode mode =
+        island::FullscreenHudModeFor(bar.fullscreenAppInFront, callActive, musicForHud);
+
+    island::FullscreenHudLayout layout;
+    if (mode == FullscreenHudMode::MusicNotch || mode == FullscreenHudMode::CallOrb) {
+        const float scale = static_cast<float>(monitor.dpi) / 96.0f;
+        const island::RectF screen = {
+            static_cast<float>(monitor.screen.left) / scale,
+            static_cast<float>(monitor.screen.top) / scale,
+            static_cast<float>(monitor.screen.right) / scale,
+            static_cast<float>(monitor.screen.bottom) / scale,
+        };
+        layout = island::FullscreenHudLayoutFor(mode, screen);
+    }
+    if (!bar.fullscreenAppInFront) bar.musicHudHoldUntil = 0;
+
+    bar.fullscreenHudMode = mode;
+    bar.fullscreenHudLayout = layout;
+    systems.window.SetFullscreenHud(mode, layout);
+
+    if (mode != FullscreenHudMode::None) {
+        // A card cannot survive into the dedicated HUD. Input is already click-through in full screen,
+        // so leaving these flags set would only make later frames compose work that can never be seen.
+        bar.systemPanelOpen = false;
+        bar.soundPageOpen = false;
+        bar.startPageOpen = false;
+        bar.centerPageOpen = false;
+        bar.weatherPageOpen = false;
+        bar.trayPageOpen = false;
+        bar.musicCardOpen = false;
+        bar.dashboardOpen = false;
+        bar.panelSliderDrag = false;
+        bar.mixerSliderDragRow = -1;
+        bar.mixerSliderDragPid = 0;
+        bar.niriNotchLeftExtent = 0.0f;
+        bar.niriNotchRightExtent = 0.0f;
+        systems.window.CloseTrayMenu();
+    }
+
+    if (mode != bar.lastReportedFullscreenHud) {
+        const char* reason = mode == FullscreenHudMode::None
+                                 ? "ordinary-bar"
+                                 : (mode == FullscreenHudMode::CallOrb
+                                        ? "active-call"
+                                        : (mode == FullscreenHudMode::MusicNotch ? "music-playing"
+                                                                                 : "clear"));
+        island::LogAndPrint(
+            "  fullscreen hud: mode=%d name=%ls reason=%s fullscreen=%d playing=%d call=%d notify=%d "
+            "box=[%.0f,%.0f,%.0f,%.0f] visual=%.0f\n",
+            static_cast<int>(mode), island::FullscreenHudModeName(mode), reason,
+            bar.fullscreenAppInFront ? 1 : 0, bar.activePlaying ? 1 : 0, callActive ? 1 : 0,
+            active ? 1 : 0, layout.box.rect.left, layout.box.rect.top, layout.box.rect.right,
+            layout.box.rect.bottom,
+            mode == FullscreenHudMode::CallOrb ? island::kFullscreenCallVisualDip
+                                               : island::kNiriMusicWaveVisualRadiusDip * 2.0f);
+        std::fflush(stdout);
+        bar.lastReportedFullscreenHud = mode;
+        bar.statusWakePending = true;
     }
 }
 
@@ -6432,6 +6505,53 @@ bool RunPowerAction(PowerAction action) {
 }
 }  // namespace
 
+// Replace every ordinary frame field a HUD does not use. Doing this immediately before the single Render
+// call keeps the special product mode from leaking normal cards, rows, status text or their animation state
+// into the frame assembled by the usual phases.
+static void ApplyFullscreenHudFrame(const island::BarState& bar, island::BarSystems& systems,
+                                    island::FrameState& frame) {
+    const island::FullscreenHudMode mode = bar.fullscreenHudMode;
+    if (mode == island::FullscreenHudMode::None) return;
+
+    frame.fullscreenApp = true;
+    frame.fullscreenHudMode = mode;
+    frame.fullscreenHud = bar.fullscreenHudLayout;
+    frame.outerCardUp = false;
+    frame.state = island::IslandState::Collapsed;
+    frame.restingState = mode == island::FullscreenHudMode::MusicNotch
+                             ? island::IslandState::MusicStrip
+                             : island::IslandState::Collapsed;
+    frame.taskButtonCount = 0;
+    frame.trayIconCount = 0;
+    frame.statusStripOpacity = 0.0f;
+    frame.niriNotchLeftExtent = 0.0f;
+    frame.niriNotchRightExtent = 0.0f;
+    frame.niriInlineSearch = false;
+    frame.noticeLine = nullptr;
+    frame.notification = nullptr;
+    frame.callUp = mode == island::FullscreenHudMode::CallOrb;
+    frame.callWavePhase =
+        static_cast<float>(GetTickCount64() % 62832ULL) / 10000.0f;
+    if (frame.callUp) {
+        float peak = 0.0f;
+        frame.callStrip.levelKnown = systems.volume.Peak(&peak);
+        frame.callStrip.level = frame.callStrip.levelKnown ? peak : 0.45f;
+    }
+
+    if (mode == island::FullscreenHudMode::Hidden) {
+        frame.pill.opacity = 0.0f;
+        frame.contentOpacity = 0.0f;
+        return;
+    }
+
+    frame.pill.opacity = 1.0f;
+    frame.contentOpacity = 1.0f;
+    frame.pill.box = bar.fullscreenHudLayout.box;
+    frame.restingPill = bar.fullscreenHudLayout.box;
+    frame.restingMaterial = bar.fullscreenHudLayout.material;
+    frame.barShape = bar.fullscreenHudLayout.shape;
+}
+
 // `forcedState` pins the shape so it can be looked at, and `forcedStartHover` pins the Start button's
 // hover. Debug only, and they exist because a shape can satisfy every assertion and still be wrong to
 // look at: a screenshot of a named state settles in seconds what reasoning about geometry does not.
@@ -7121,9 +7241,11 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
             // publishes no session (see PlayerWindow.h). The CARD is a different question and stays with
             // the session -- see ShouldPromoteToCard.
             const bool musicResting = bar.activePresent;
+            UpdateFullscreenHud(bar, systems, active, monitor);
             const bool musicVisible =
                 musicResting &&
-                (!NiriLayoutActive() ||
+                (bar.fullscreenHudMode == island::FullscreenHudMode::MusicNotch ||
+                 !NiriLayoutActive() ||
                  (active == nullptr && !bar.inlineSearchOpen &&
                   bar.inlineSearchProgress <= 0.001f));
             const island::IslandState resting =
@@ -7131,7 +7253,9 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
             systems.volume.SetPeakMeterActive(
                 volumeAvailable &&
                 island::AudioPeakMeterNeedsSampling(musicVisible && bar.activePlaying,
-                                                    IsCallNotification(systems, active)));
+                                                    IsCallNotification(systems, active) ||
+                                                        bar.fullscreenHudMode ==
+                                                            island::FullscreenHudMode::CallOrb));
 
             // Puts the panel away -- and puts the SHAPE away with it.
             //
@@ -7275,8 +7399,10 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
 
             // The shape the pointer asks for. The phase lives above RunBar; `resting` and `active` were
             // worked out earlier in this pass and are handed in with the session's own answer.
-            ApplyPointerShapePolicy(bar, systems, active, resting,
-                                    runtime.nowPlaying.present, forcedState);
+            if (bar.fullscreenHudMode == island::FullscreenHudMode::None) {
+                ApplyPointerShapePolicy(bar, systems, active, resting,
+                                        runtime.nowPlaying.present, forcedState);
+            }
 
             // --- advance the animation ---
             // The frame's own clock and the track position: both phases live above RunBar, in this order.
@@ -7833,42 +7959,54 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                 frame.taskButtonCount = drawn;
                 frame.taskButtonAppearValid = true;
                 {
-                    bool activeAppPresent = false;
-                    for (int i = 0; i < drawn; ++i) {
-                        if (frame.taskButtons[i].active) {
-                            activeAppPresent = true;
-                            break;
+                    if (bar.fullscreenHudMode != island::FullscreenHudMode::None) {
+                        bar.niriNotchLeftExtent = 0.0f;
+                        bar.niriNotchRightExtent = 0.0f;
+                        bar.niriNotchExtentAnimating = false;
+                        frame.niriNotchLeftExtent = 0.0f;
+                        frame.niriNotchRightExtent = 0.0f;
+                        systems.window.SetNiriSideHitExtent(0.0f);
+                    } else {
+                        bool activeAppPresent = false;
+                        for (int i = 0; i < drawn; ++i) {
+                            if (frame.taskButtons[i].active) {
+                                activeAppPresent = true;
+                                break;
+                            }
+                        }
+                        const bool sideGroupsHidden = systems.window.IsPointerOnIsland() ||
+                                                      frame.outerCardUp || frame.niriInlineSearch;
+                        const float leftTarget =
+                            island::NiriSideGroupTarget(sideGroupsHidden, activeAppPresent);
+                        const float rightTarget =
+                            island::NiriSideGroupTarget(sideGroupsHidden, drawn > 0);
+                        const bool leftAnimating =
+                            island::NiriNotchExtentStep(&bar.niriNotchLeftExtent, leftTarget, dt);
+                        const bool rightAnimating =
+                            island::NiriNotchExtentStep(&bar.niriNotchRightExtent, rightTarget, dt);
+                        bar.niriNotchExtentAnimating = leftAnimating || rightAnimating;
+                        frame.niriNotchLeftExtent = bar.niriNotchLeftExtent;
+                        frame.niriNotchRightExtent = bar.niriNotchRightExtent;
+                        systems.window.SetNiriSideHitExtent(bar.niriNotchRightExtent);
+
+                        const int visible =
+                            (bar.niriNotchLeftExtent > 0.01f || bar.niriNotchRightExtent > 0.01f)
+                                ? 1
+                                : 0;
+                        if (visible != bar.niriSideVisibilityLog) {
+                            bar.niriSideVisibilityLog = visible;
+                            island::LogAndPrint(
+                                "  niri sides: shape=%s pointer=%s left=%.2f right=%.2f "
+                                "visible=%d\n",
+                                island::BarShapeKey(frame.barShape),
+                                systems.window.IsPointerOnIsland() ? "inside" : "outside",
+                                bar.niriNotchLeftExtent, bar.niriNotchRightExtent, visible);
                         }
                     }
-                    const bool sideGroupsHidden =
-                        systems.window.IsPointerOnIsland() || frame.outerCardUp ||
-                        frame.niriInlineSearch;
-                    const float leftTarget =
-                        island::NiriSideGroupTarget(sideGroupsHidden, activeAppPresent);
-                    const float rightTarget =
-                        island::NiriSideGroupTarget(sideGroupsHidden, drawn > 0);
-                    const bool leftAnimating = island::NiriNotchExtentStep(
-                        &bar.niriNotchLeftExtent, leftTarget, dt);
-                    const bool rightAnimating = island::NiriNotchExtentStep(
-                        &bar.niriNotchRightExtent, rightTarget, dt);
-                    bar.niriNotchExtentAnimating = leftAnimating || rightAnimating;
-                    frame.niriNotchLeftExtent = bar.niriNotchLeftExtent;
-                    frame.niriNotchRightExtent = bar.niriNotchRightExtent;
-                    systems.window.SetNiriSideHitExtent(bar.niriNotchRightExtent);
-
-                    const int visible =
-                        (bar.niriNotchLeftExtent > 0.01f || bar.niriNotchRightExtent > 0.01f) ? 1 : 0;
-                    if (visible != bar.niriSideVisibilityLog) {
-                        bar.niriSideVisibilityLog = visible;
-                        island::LogAndPrint(
-                            "  niri sides: shape=%s pointer=%s left=%.2f right=%.2f visible=%d\n",
-                            island::BarShapeKey(frame.barShape),
-                            systems.window.IsPointerOnIsland() ? "inside" : "outside",
-                            bar.niriNotchLeftExtent, bar.niriNotchRightExtent, visible);
-                    }
                 }
-                // Whether any icon is still on its way in or out, which is what asks for the next frame.
-                // Read by needDraw on the NEXT pass, because the row is updated inside the draw.
+                // Whether any icon is still on its way in or out, which is what asks for the next
+                // frame. Read by needDraw on the NEXT pass, because the row is updated inside the
+                // draw.
                 bar.rowAppearAnimating = false;
                 for (int i = 0; i < drawn; ++i) {
                     if (frame.taskButtonAppear[i] < 0.999f) bar.rowAppearAnimating = true;
@@ -8049,6 +8187,7 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                 // lives above RunBar; its place in the sequence is unchanged.
                 FillDecodedPictures(runtime, frame, runtime.nowPlaying);
 
+                ApplyFullscreenHudFrame(bar, systems, frame);
                 systems.renderer.Render(frame);
                 frameWork |= kWorkDraw;
 

@@ -1163,7 +1163,19 @@ void Renderer::RenderFrame(const FrameState& frame) {
                                           false, 0.0f, 0.0f, searchMarkOpacity);
                 }
             };
-            if (inlineSearch) {
+            if (frame.fullscreenHudMode == FullscreenHudMode::MusicNotch) {
+                const char* line = frame.lyricLine && frame.lyricLine[0] != '\0'
+                                       ? frame.lyricLine
+                                       : frame.fallbackLine;
+                text_->DrawFullscreenMusicNotch(d2dContext_, frame.fullscreenHud, line,
+                                                frame.lyricScrollDip, frame.musicLevel,
+                                                frame.musicWavePhase, frame.musicAccent,
+                                                frame.contentOpacity);
+            } else if (frame.fullscreenHudMode == FullscreenHudMode::CallOrb) {
+                text_->DrawFullscreenCallOrb(d2dContext_, frame.fullscreenHud,
+                                             frame.callStrip.level, frame.callWavePhase,
+                                             frame.contentOpacity);
+            } else if (inlineSearch) {
                 const island::NiriSearchMotion searchMotion =
                     island::NiriSearchMotionFor(frame.niriSearchProgress);
                 if (searchMotion.contentOpacity > 0.01f) {

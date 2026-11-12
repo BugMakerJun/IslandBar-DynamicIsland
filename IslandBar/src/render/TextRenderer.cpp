@@ -59,6 +59,77 @@ D2D1_COLOR_F TextColour(float opacity) {
     return island::CardInk(a);
 }
 
+void DrawMusicWaveBadge(ID2D1DeviceContext2* context, float centreX, float centreY,
+                        float phaseSeconds, float level, D2D1_COLOR_F accent, float opacity) {
+    if (!context || opacity <= 0.01f) return;
+    D2D1_COLOR_F visibleAccent = accent;
+    const float luma =
+        0.2126f * visibleAccent.r + 0.7152f * visibleAccent.g + 0.0722f * visibleAccent.b;
+    float scale = 1.0f;
+    if (luma > 0.68f && luma > 0.001f) scale = 0.48f / luma;
+    if (luma < 0.20f && luma > 0.001f) scale = 0.34f / luma;
+    visibleAccent.r = std::min(1.0f, visibleAccent.r * scale);
+    visibleAccent.g = std::min(1.0f, visibleAccent.g * scale);
+    visibleAccent.b = std::min(1.0f, visibleAccent.b * scale);
+
+    D2D1_COLOR_F fillColour = visibleAccent;
+    fillColour.a = 0.18f * opacity;
+    ID2D1SolidColorBrush* brush = nullptr;
+    if (SUCCEEDED(context->CreateSolidColorBrush(fillColour, &brush)) && brush) {
+        context->FillEllipse(
+            D2D1::Ellipse(D2D1::Point2F(centreX, centreY), kNiriMusicWaveVisualRadiusDip,
+                          kNiriMusicWaveVisualRadiusDip),
+            brush);
+        brush->Release();
+        brush = nullptr;
+    }
+    D2D1_COLOR_F ringColour = visibleAccent;
+    ringColour.a = 0.62f * opacity;
+    if (SUCCEEDED(context->CreateSolidColorBrush(ringColour, &brush)) && brush) {
+        context->DrawEllipse(
+            D2D1::Ellipse(D2D1::Point2F(centreX, centreY), kNiriMusicWaveVisualRadiusDip,
+                          kNiriMusicWaveVisualRadiusDip),
+            brush, 1.25f);
+        brush->Release();
+        brush = nullptr;
+    }
+    D2D1_COLOR_F waveColour = visibleAccent;
+    waveColour.a = 0.96f * opacity;
+    if (SUCCEEDED(context->CreateSolidColorBrush(waveColour, &brush)) && brush) {
+        for (int i = 0; i < 5; ++i) {
+            const float phase = phaseSeconds * 5.0f + static_cast<float>(i) * 0.9f;
+            const float envelope = 0.22f + 0.78f * (0.5f + 0.5f * std::sin(phase));
+            const float shownLevel = 0.25f + 0.75f * std::min(1.0f, level);
+            const float half = 1.5f + 9.5f * envelope * shownLevel;
+            const float x = centreX - 5.2f + static_cast<float>(i) * 2.6f;
+            context->DrawLine(D2D1::Point2F(x, centreY - half),
+                              D2D1::Point2F(x, centreY + half), brush, 2.2f);
+        }
+        brush->Release();
+    }
+}
+
+void DrawCallWave(ID2D1DeviceContext2* context, float centreX, float centreY, float phaseSeconds,
+                  float level, float opacity) {
+    if (!context || opacity <= 0.01f) return;
+    ID2D1SolidColorBrush* brush = nullptr;
+    if (FAILED(context->CreateSolidColorBrush(
+            D2D1::ColorF(0.18f, 0.82f, 0.48f, 0.95f * opacity), &brush)) ||
+        !brush) {
+        return;
+    }
+    for (int i = 0; i < 7; ++i) {
+        const float phase = phaseSeconds * 6.0f + static_cast<float>(i) * 0.8f;
+        const float envelope = 0.25f + 0.75f * (0.5f + 0.5f * std::sin(phase));
+        const float shownLevel = 0.35f + 0.65f * std::clamp(level, 0.0f, 1.0f);
+        const float half = 2.0f + 7.0f * envelope * shownLevel;
+        const float x = centreX - 12.0f + static_cast<float>(i) * 4.0f;
+        context->DrawLine(D2D1::Point2F(x, centreY - half),
+                          D2D1::Point2F(x, centreY + half), brush, 2.0f);
+    }
+    brush->Release();
+}
+
 // Chinese weekday and month names for the card's date line.
 //
 // Written as \u escapes, NOT as literal UTF-8, and that is deliberate. The
@@ -1897,57 +1968,8 @@ void TextRenderer::DrawNiriTopBar(ID2D1DeviceContext2* context, const RoundedBox
     float cursor = box.rect.left + kContentLeftFromLeft;
 
     const auto drawMusicWave = [&](float waveCentreX) {
-        // Keep the cover's HUE, but move very pale accents away from the white Niri island so the
-        // waveform remains readable. Dark accents are lifted by the same rule.
-        D2D1_COLOR_F visibleAccent = musicAccent;
-        const float luma =
-            0.2126f * visibleAccent.r + 0.7152f * visibleAccent.g + 0.0722f * visibleAccent.b;
-        float scale = 1.0f;
-        if (luma > 0.68f && luma > 0.001f) scale = 0.48f / luma;
-        if (luma < 0.20f && luma > 0.001f) scale = 0.34f / luma;
-        visibleAccent.r = std::min(1.0f, visibleAccent.r * scale);
-        visibleAccent.g = std::min(1.0f, visibleAccent.g * scale);
-        visibleAccent.b = std::min(1.0f, visibleAccent.b * scale);
-
-        D2D1_COLOR_F fillColour = visibleAccent;
-        fillColour.a = 0.18f * opacity;
-        ID2D1SolidColorBrush* circle = nullptr;
-        context->CreateSolidColorBrush(fillColour, &circle);
-        if (circle) {
-            context->FillEllipse(
-                D2D1::Ellipse(D2D1::Point2F(waveCentreX, centreY),
-                              island::kNiriMusicWaveVisualRadiusDip,
-                              island::kNiriMusicWaveVisualRadiusDip),
-                circle);
-            circle->Release();
-        }
-        D2D1_COLOR_F ringColour = visibleAccent;
-        ringColour.a = 0.62f * opacity;
-        context->CreateSolidColorBrush(ringColour, &circle);
-        if (circle) {
-            context->DrawEllipse(
-                D2D1::Ellipse(D2D1::Point2F(waveCentreX, centreY),
-                              island::kNiriMusicWaveVisualRadiusDip,
-                              island::kNiriMusicWaveVisualRadiusDip),
-                circle, 1.25f);
-            circle->Release();
-        }
-        ID2D1SolidColorBrush* wave = nullptr;
-        D2D1_COLOR_F waveColour = visibleAccent;
-        waveColour.a = 0.96f * opacity;
-        context->CreateSolidColorBrush(waveColour, &wave);
-        if (wave) {
-            for (int i = 0; i < 5; ++i) {
-                const float phase = musicPhase * 5.0f + static_cast<float>(i) * 0.9f;
-                const float envelope = 0.22f + 0.78f * (0.5f + 0.5f * std::sin(phase));
-                const float level = 0.25f + 0.75f * std::min(1.0f, musicLevel);
-                const float half = 1.5f + 9.5f * envelope * level;
-                const float x = waveCentreX - 5.2f + static_cast<float>(i) * 2.6f;
-                context->DrawLine(D2D1::Point2F(x, centreY - half),
-                                  D2D1::Point2F(x, centreY + half), wave, 2.2f);
-            }
-            wave->Release();
-        }
+        DrawMusicWaveBadge(context, waveCentreX, centreY, musicPhase, musicLevel, musicAccent,
+                           opacity);
     };
 
     // Search mark, drawn rather than typed so it remains crisp at every DPI.
@@ -1980,44 +2002,7 @@ void TextRenderer::DrawNiriTopBar(ID2D1DeviceContext2* context, const RoundedBox
         if (sideLine && sideLine[0] != '\0' &&
             MultiByteToWideChar(CP_UTF8, 0, sideLine, -1, lyric, 512) > 0 &&
             lyricBox.right > lyricBox.left) {
-            IDWriteTextFormat* lyricFormat =
-                niriLyricFormat_ ? niriLyricFormat_ : niriDateFormat_;
-            const float available = lyricBox.right - lyricBox.left;
-            IDWriteTextLayout* measuredLayout =
-                LayoutFor(lyric, lyricFormat, 8192.0f, 512.0f);
-            DWRITE_TEXT_METRICS metrics = {};
-            const bool measured =
-                measuredLayout &&
-                SUCCEEDED(measuredLayout->GetMetrics(&metrics));
-            const float textWidth = measured ? metrics.width : 0.0f;
-            // LayoutFor is cache-owned; releasing it here poisons the cache and crashes the next draw.
-            const bool scrolling = measured && LyricNeedsScroll(textWidth, available);
-            context->PushAxisAlignedClip(
-                D2D1::RectF(lyricBox.left, lyricBox.top, lyricBox.right, lyricBox.bottom),
-                D2D1_ANTIALIAS_MODE_ALIASED);
-            if (!scrolling) {
-                DrawTextIn(context, lyricFormat, lyric, lyricBox, ink,
-                           DWRITE_TEXT_ALIGNMENT_CENTER,
-                           DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            } else {
-                const float stride = textWidth + 40.0f;
-                const float offset =
-                    lyricScrollDip -
-                    stride * static_cast<float>(
-                                 static_cast<long long>(lyricScrollDip / stride));
-                const auto drawAt = [&](float left) {
-                    const RectF drawBox = {left, lyricBox.top, left + textWidth + 4.0f,
-                                           lyricBox.bottom};
-                    DrawTextIn(context, lyricFormat, lyric, drawBox, ink,
-                               DWRITE_TEXT_ALIGNMENT_LEADING,
-                               DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                };
-                const float start = lyricBox.left + 6.0f;
-                drawAt(start - offset);
-                drawAt(start - offset + stride);
-                if (offset > 0.0f) drawAt(start - offset - stride);
-            }
-            context->PopAxisAlignedClip();
+            DrawNiriLyricLine(context, lyricBox, lyric, lyricScrollDip, ink);
         }
         const RectF waveButton = island::NiriMusicWaveButtonFor(box);
         drawMusicWave((waveButton.left + waveButton.right) * 0.5f);
@@ -2046,22 +2031,7 @@ void TextRenderer::DrawNiriTopBar(ID2D1DeviceContext2* context, const RoundedBox
         // the plain count beside it, exactly as in the reference.
         const float bellX = cursor + 7.0f;
         if (callActive) {
-            ID2D1SolidColorBrush* call = nullptr;
-            context->CreateSolidColorBrush(
-                D2D1::ColorF(0.18f, 0.82f, 0.48f, 0.95f * opacity), &call);
-            if (call) {
-                for (int i = 0; i < 7; ++i) {
-                    const float phase = musicPhase * 6.0f + static_cast<float>(i) * 0.8f;
-                    const float envelope =
-                        0.25f + 0.75f * (0.5f + 0.5f * std::sin(phase));
-                    const float half =
-                        1.0f + 7.0f * envelope * std::min(1.0f, callLevel);
-                    const float x = cursor + 2.0f + static_cast<float>(i) * 4.0f;
-                    context->DrawLine(D2D1::Point2F(x, centreY - half),
-                                      D2D1::Point2F(x, centreY + half), call, 2.0f);
-                }
-                call->Release();
-            }
+            DrawCallWave(context, cursor + 14.0f, centreY, musicPhase, callLevel, opacity);
         } else {
             context->DrawRoundedRectangle(
                 D2D1::RoundedRect(
@@ -2088,6 +2058,70 @@ void TextRenderer::DrawNiriTopBar(ID2D1DeviceContext2* context, const RoundedBox
     if (accent) accent->Release();
     if (muted) muted->Release();
     ink->Release();
+}
+
+void TextRenderer::DrawNiriLyricLine(ID2D1DeviceContext2* context, const RectF& box,
+                                     const wchar_t* text, float scrollDip,
+                                     ID2D1SolidColorBrush* ink) {
+    if (!context || !text || !text[0] || !ink || box.right <= box.left) return;
+    IDWriteTextFormat* format = niriLyricFormat_ ? niriLyricFormat_ : niriDateFormat_;
+    if (!format) return;
+
+    const float available = box.right - box.left;
+    IDWriteTextLayout* layout = LayoutFor(text, format, 8192.0f, 512.0f);
+    DWRITE_TEXT_METRICS metrics = {};
+    const bool measured = layout && SUCCEEDED(layout->GetMetrics(&metrics));
+    const float textWidth = measured ? metrics.width : 0.0f;
+    const bool scrolling = measured && LyricNeedsScroll(textWidth, available);
+
+    context->PushAxisAlignedClip(
+        D2D1::RectF(box.left, box.top, box.right, box.bottom),
+        D2D1_ANTIALIAS_MODE_ALIASED);
+    if (!scrolling) {
+        DrawTextIn(context, format, text, box, ink, DWRITE_TEXT_ALIGNMENT_CENTER,
+                   DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    } else {
+        const float stride = textWidth + 40.0f;
+        const float offset =
+            scrollDip - stride * static_cast<float>(static_cast<long long>(scrollDip / stride));
+        const auto drawAt = [&](float left) {
+            const RectF drawBox = {left, box.top, left + textWidth + 4.0f, box.bottom};
+            DrawTextIn(context, format, text, drawBox, ink, DWRITE_TEXT_ALIGNMENT_LEADING,
+                       DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        };
+        const float start = box.left + 6.0f;
+        drawAt(start - offset);
+        drawAt(start - offset + stride);
+        if (offset > 0.0f) drawAt(start - offset - stride);
+    }
+    context->PopAxisAlignedClip();
+}
+
+void TextRenderer::DrawFullscreenMusicNotch(ID2D1DeviceContext2* context,
+                                            const FullscreenHudLayout& layout,
+                                            const char* line, float scrollDip, float musicLevel,
+                                            float musicPhase, D2D1_COLOR_F musicAccent,
+                                            float opacity) {
+    if (!context || !layout.valid || opacity <= 0.01f || !line || !line[0]) return;
+    Refresh();
+    wchar_t lyric[512] = {};
+    if (MultiByteToWideChar(CP_UTF8, 0, line, -1, lyric, 512) <= 0) return;
+    ID2D1SolidColorBrush* ink = nullptr;
+    if (FAILED(context->CreateSolidColorBrush(PillInk(0.92f * opacity), &ink)) || !ink) return;
+    DrawNiriLyricLine(context, layout.lyric, lyric, scrollDip, ink);
+    ink->Release();
+    DrawMusicWaveBadge(context, (layout.wave.left + layout.wave.right) * 0.5f,
+                       (layout.wave.top + layout.wave.bottom) * 0.5f, musicPhase, musicLevel,
+                       musicAccent, opacity);
+}
+
+void TextRenderer::DrawFullscreenCallOrb(ID2D1DeviceContext2* context,
+                                         const FullscreenHudLayout& layout, float callLevel,
+                                         float phase, float opacity) {
+    if (!context || !layout.valid || opacity <= 0.01f) return;
+    Refresh();
+    DrawCallWave(context, (layout.box.rect.left + layout.box.rect.right) * 0.5f,
+                 (layout.box.rect.top + layout.box.rect.bottom) * 0.5f, phase, callLevel, opacity);
 }
 
 void TextRenderer::DrawNiriNotification(ID2D1DeviceContext2* context, const RoundedBox& box,

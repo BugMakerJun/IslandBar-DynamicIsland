@@ -38,6 +38,7 @@
 #include "domain/TrayLedger.h"     // which registrations the shell is holding (see the tray checks)
 #include "platform/TrayRing.h"     // the channel the module publishes registrations on
 #include "domain/CardLayout.h"
+#include "domain/FullscreenHud.h"
 #include "domain/StartSearch.h"
 #include "domain/StatePolicy.h"
 #include "domain/TrayEncoding.h"   // the only place a tray click is encoded (see its header)
@@ -3006,6 +3007,51 @@ void TestMusicCardLayout() {
                       L"and it takes the bar cluster out of full screen too", dt);
             }
 
+            // THE FULL-SCREEN HUD, after the request that changed its policy: while a game owns the screen,
+            // a call beats music, music beats everything else, and no other content gets a vote.
+            {
+                const RectF screen = {0.0f, 0.0f, 2560.0f, 1440.0f};
+                const FullscreenHudLayout music =
+                    FullscreenHudLayoutFor(FullscreenHudMode::MusicNotch, screen);
+                const FullscreenHudLayout call =
+                    FullscreenHudLayoutFor(FullscreenHudMode::CallOrb, screen);
+                wchar_t hudDetail[256];
+                std::swprintf(
+                    hudDetail, 256,
+                    L"music x[%.1f,%.1f] y[%.1f,%.1f], lyric [%.1f,%.1f], call x[%.1f,%.1f]",
+                    music.box.rect.left, music.box.rect.right, music.box.rect.top,
+                    music.box.rect.bottom, music.lyric.left, music.lyric.right,
+                    call.box.rect.left, call.box.rect.right);
+                Check(FullscreenHudModeFor(false, true, true) == FullscreenHudMode::None &&
+                          FullscreenHudModeFor(true, false, false) == FullscreenHudMode::Hidden &&
+                          FullscreenHudModeFor(true, false, true) ==
+                              FullscreenHudMode::MusicNotch &&
+                          FullscreenHudModeFor(true, true, false) ==
+                              FullscreenHudMode::CallOrb &&
+                          FullscreenHudModeFor(true, true, true) ==
+                              FullscreenHudMode::CallOrb &&
+                          music.valid && call.valid &&
+                          Nearly(music.box.rect.left, 1130.0f, 0.01f) &&
+                          Nearly(music.box.rect.right, 1430.0f, 0.01f) &&
+                          Nearly(music.box.rect.top, screen.top, 0.01f) &&
+                          Nearly(music.box.rect.bottom - music.box.rect.top,
+                                 kFullscreenMusicHeightDip, 0.01f) &&
+                          Nearly(music.material.rect.top, -18.0f, 0.01f) &&
+                          music.lyric.left >= music.box.rect.left &&
+                          music.lyric.right <= music.wave.left - kFullscreenHudWaveGapDip +
+                                                     0.01f &&
+                          Nearly(call.box.rect.left, 1265.0f, 0.01f) &&
+                          Nearly(call.box.rect.right, 1295.0f, 0.01f) &&
+                          Nearly(call.box.rect.bottom - call.box.rect.top,
+                                 kFullscreenCallLayoutDip, 0.01f) &&
+                          Nearly(call.material.rect.right - call.material.rect.left,
+                                 kFullscreenCallVisualDip, 0.01f) &&
+                          Nearly(call.material.rect.bottom - call.material.rect.top,
+                                 kFullscreenCallVisualDip, 0.01f),
+                      L"the full-screen HUD has call > music > hidden and exact centred geometry",
+                      hudDetail);
+            }
+
             // AND THE BAR IS NOT THERE TO POINT AT in that state: every point is refused, including the
             // middle of the pill, so the pointer crossing the top of the screen during a game cannot
             // open anything.
@@ -3048,9 +3094,9 @@ void TestMusicCardLayout() {
                 std::swprintf(dt, 224, L"first icon %ld,%ld, Start %ld,%ld, strip %ld,%ld",
                               onTheFirstIcon.x, onTheFirstIcon.y, onTheStartButton.x,
                               onTheStartButton.y, onTheStrip.x, onTheStrip.y);
-                Check(IslandWindow::ShouldAcceptPointer(fullMon, windowRect, onTheStrip,
-                                                        IslandState::NoticeStrip, 8, 0.0f, true),
-                      L"a message over a full-screen application leaves the island clickable", dt);
+                Check(!IslandWindow::ShouldAcceptPointer(fullMon, windowRect, onTheStrip,
+                                                         IslandState::NoticeStrip, 8, 0.0f, true),
+                      L"the full-screen HUD is click-through", dt);
                 Check(!IslandWindow::ShouldAcceptPointer(fullMon, windowRect, onTheFirstIcon,
                                                          IslandState::NoticeStrip, 8, 0.0f, true) &&
                           !IslandWindow::ShouldAcceptPointer(fullMon, windowRect, onTheStartButton,

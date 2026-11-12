@@ -23,6 +23,7 @@
 #include <dxgi1_6.h>
 
 #include "domain/Geometry.h"
+#include "domain/FullscreenHud.h"
 #include "domain/TaskStripLayout.h"   // the island plus the row of application icons
 #include "domain/Motion.h"
 #include "media/MusicSession.h"
@@ -203,15 +204,14 @@ struct FrameState {
     // the first frame that is not moving.
     bool cardSurfaceMoving = false;
 
-    // Whether a FULL-SCREEN APPLICATION is in front of the bar: the bar is not part of the picture then,
-    // except for the island itself.
-    //
-    // Set by the frame loop, which measures it (see island::FullScreenAppInFront). What it suppresses:
-    // the deck, the application icon row and the date-and-time line -- the "left and right sides", in the
-    // words of the report: "玩游戏的时候 有通知和通话时 只要显示灵动岛就行 左右两侧的不用显示". A call or a
-    // message is still the island, in the band, because that is what the state says and this flag does not
-    // touch it.
+    // Whether a FULL-SCREEN APPLICATION is in front of the bar. The ordinary deck, icon row, cards and
+    // status line do not exist then; FullscreenHudMode decides whether one small HUD replaces them.
     bool fullscreenApp = false;
+    // A game's full-screen mode has its own three-state companion HUD. None means the ordinary bar is in
+    // charge; the other values deliberately bypass every normal pill, card and notification rule.
+    FullscreenHudMode fullscreenHudMode = FullscreenHudMode::None;
+    FullscreenHudLayout fullscreenHud;
+    float callWavePhase = 0.0f;
 
     // WHICH card owns the shape this frame -- held from the moment a card is asked for until the shape
     // has finished returning to the bar.
