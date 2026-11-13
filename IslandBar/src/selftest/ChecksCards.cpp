@@ -3067,6 +3067,20 @@ void TestMusicCardLayout() {
                                  kFullscreenCallVisualDip, 0.01f),
                       L"the full-screen music HUD keeps a fixed width with the wave behind the lyric",
                       hudDetail);
+
+                std::swprintf(dt, 224, L"ordinary frame limited=%d, event frame limited=%d",
+                              FullscreenMusicFrameIsRateLimited(
+                                  FullscreenHudMode::MusicNotch, false),
+                              FullscreenMusicFrameIsRateLimited(
+                                  FullscreenHudMode::MusicNotch, true));
+                Check(FullscreenMusicFrameIsRateLimited(FullscreenHudMode::MusicNotch, false) &&
+                          !FullscreenMusicFrameIsRateLimited(FullscreenHudMode::MusicNotch, true) &&
+                          !FullscreenMusicFrameIsRateLimited(FullscreenHudMode::None, false) &&
+                          !FullscreenMusicFrameIsRateLimited(FullscreenHudMode::Hidden, false) &&
+                          !FullscreenMusicFrameIsRateLimited(FullscreenHudMode::CallOrb, false),
+                      L"only the full-screen music animation is held to the 20 Hz frame cap; "
+                      L"events and every other HUD mode keep their normal cadence",
+                      dt);
             }
 
             // AND THE BAR IS NOT THERE TO POINT AT in that state: every point is refused, including the

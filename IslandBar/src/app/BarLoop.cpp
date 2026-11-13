@@ -1298,7 +1298,8 @@ struct BarRuntime {
 // BarRuntime -- the ten redraw counters, the frame statistics, and the four numbers the throttle line
 // subtracts -- which is what that struct was extended for; the pacing path is the pass own.
 static void ReportIntervalAndThrottle(BarRuntime& runtime, island::BarSystems& systems,
-                                      const char* pacingPath) {
+                                      const char* pacingPath,
+                                      island::FullscreenHudMode fullscreenHudMode) {
     const unsigned long long nowMs = GetTickCount64();
     const unsigned long long intervalMs = nowMs - runtime.lastIntervalReport;
     if (intervalMs >= 4000) {
@@ -1331,9 +1332,20 @@ static void ReportIntervalAndThrottle(BarRuntime& runtime, island::BarSystems& s
                 static_cast<double>(frames - runtime.lastFramesPresented) / intervalSeconds;
             const double waitsPerSecond =
                 static_cast<double>(runtime.frameWaits - runtime.lastFrameWaits) / intervalSeconds;
+            const char* hudName = fullscreenHudMode == island::FullscreenHudMode::MusicNotch
+                                      ? "music"
+                                      : (fullscreenHudMode == island::FullscreenHudMode::CallOrb
+                                             ? "call"
+                                             : (fullscreenHudMode == island::FullscreenHudMode::Hidden
+                                                    ? "hidden"
+                                                    : "none"));
+            const char* hudCap = fullscreenHudMode == island::FullscreenHudMode::MusicNotch
+                                     ? "20fps"
+                                     : "vsync";
             island::LogAndPrint(
-                "  throttle: path=%s frames=%.1f/s waits=%.1f/s maxLatency=1",
-                pacingPath, framesPerSecond, waitsPerSecond);
+                "  throttle: path=%s frames=%.1f/s waits=%.1f/s maxLatency=1 "
+                "hud=%s cap=%s",
+                pacingPath, framesPerSecond, waitsPerSecond, hudName, hudCap);
             runtime.lastFramesPresented = frames;
             runtime.lastFrameWaits = runtime.frameWaits;
         }
@@ -4299,8 +4311,15 @@ static bool DecideNeedDraw(BarRuntime& runtime, island::BarState& bar, island::B
         bar.lastTaskHovered = taskHovered;
     }
 
+    // A full-screen music notch has one animation that is allowed to run without an event: the
+    // drifting wave and its scrolling line. Keep the loop awake for it; the caller caps the actual
+    // presentation at FullscreenHud.h's 20 Hz rate. A paused session and every other HUD mode
+    // remain event-driven.
+    const bool fullscreenMusicAnimation =
+        bar.fullscreenHudMode == island::FullscreenHudMode::MusicNotch && bar.activePlaying;
+
     return bar.trayWakePending || bar.statusWakePending || bar.taskRefreshWakePending ||
-           animating || clockChanged || notificationChanged ||
+           fullscreenMusicAnimation || animating || clockChanged || notificationChanged ||
            musicChanged || lyricsScrolling || lyricLineChanged ||
            lyricLineAnimating || progressChanged || musicMeterDue ||
            bar.iconAnimating || bar.rowAppearAnimating || soundPageChanged ||
@@ -7171,6 +7190,13 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
             (static_cast<unsigned long long>(frequency.QuadPart) * kMinimumDrawIntervalMs +
              999ull) /
             1000ull;
+        constexpr unsigned long long kFullscreenMusicFrameIntervalMs =
+            1000ull / static_cast<unsigned long long>(island::kFullscreenMusicMaxFps);
+        const unsigned long long fullscreenMusicFrameTicks =
+            (static_cast<unsigned long long>(frequency.QuadPart) *
+                 kFullscreenMusicFrameIntervalMs +
+             999ull) /
+            1000ull;
         std::vector<island::WindowEvent> windowEvents;
         windowEvents.reserve(island::kScrollTilingMaxColumns);
         std::wstring tilingDetail;
@@ -7698,9 +7724,16 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                                                  progressChanged, weatherChanged, musicMeterDue,
                                                  startHoverChanged, startSearchChanged, startPowerChanged,
                                                  trayPageChanged);
+            const bool fullscreenMusicEventFrame =
+                settledFrame || musicChanged || lyricLineChanged || notificationChanged;
+            const bool fullscreenMusicSpacing =
+                island::FullscreenMusicFrameIsRateLimited(bar.fullscreenHudMode,
+                                                          fullscreenMusicEventFrame);
+            const unsigned long long drawSpacingTicks =
+                fullscreenMusicSpacing ? fullscreenMusicFrameTicks : minimumDrawTicks;
             const bool drawDue =
                 settledFrame || runtime.lastDrawAtTicks == 0 ||
-                frameStartedTicks - runtime.lastDrawAtTicks >= minimumDrawTicks;
+                frameStartedTicks - runtime.lastDrawAtTicks >= drawSpacingTicks;
             if (needDraw && drawDue) {
                 bar.statusWakePending = false;
                 runtime.lastDrawAtTicks = frameStartedTicks;
@@ -8322,7 +8355,7 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
 
             // The two periodic reports: what the frames did, and whether the loop paced itself. The phase
             // lives above RunBar; its cross-frame state is BarRuntime's.
-            ReportIntervalAndThrottle(runtime, systems, pacingPath);
+            ReportIntervalAndThrottle(runtime, systems, pacingPath, bar.fullscreenHudMode);
 
             // The wait that paces the loop. The phase lives above RunBar and it is the last thing a pass
             // does; the work flags below are the loop own bookkeeping and stay here.
@@ -8330,8 +8363,8 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
             if (needDraw) {
                 const unsigned long long elapsedTicks =
                     frameStartedTicks - runtime.lastDrawAtTicks;
-                if (elapsedTicks < minimumDrawTicks) {
-                    const unsigned long long remainingTicks = minimumDrawTicks - elapsedTicks;
+                if (elapsedTicks < drawSpacingTicks) {
+                    const unsigned long long remainingTicks = drawSpacingTicks - elapsedTicks;
                     drawWaitMs = static_cast<DWORD>(
                         (remainingTicks * 1000ull +
                          static_cast<unsigned long long>(frequency.QuadPart) - 1ull) /

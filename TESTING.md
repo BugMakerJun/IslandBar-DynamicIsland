@@ -441,3 +441,29 @@ user 对象 `25 → 13`、位图 0；常驻字节在前 5 秒涨到 `~90 MB`（�
 
 **为什么不能用"卡片关闭后那行"代替**：那行自带 30 秒延迟，而卡片每关一次就把这 30 秒重新推后一次，
 所以"每 2.5 秒开关一次卡片"这种循环**一行都不会打**（实测：200 秒 40 个来回，0 行）。
+
+---
+
+## 8. 全屏游戏同时放歌：CPU 降载验收
+
+同一款游戏、同一条 `island_bar.exe` 运行实例、同一首歌下连续采样 20 秒：
+
+```powershell
+$p = Get-Process island_bar
+$t0 = $p.TotalProcessorTime
+$w0 = Get-Date
+Start-Sleep -Seconds 20
+$p.Refresh()
+$dt = ((Get-Date) - $w0).TotalSeconds
+$used = ($p.TotalProcessorTime - $t0).TotalSeconds
+"island_bar one-core: {0:N2}%" -f ($used / $dt * 100)
+```
+
+验收数字：单核占用从 2026-11-13 的基线 **20.45%** 降到不超过 **12.0%**。
+日志必须出现：
+
+```text
+throttle: ... frames=20.0/s ... hud=music cap=20fps
+```
+
+歌词换句、切歌仍应立即更新；普通桌面帧率不变；全屏来电仍按原来的通话路径显示，不受音乐 HUD 的 20 Hz 限制。

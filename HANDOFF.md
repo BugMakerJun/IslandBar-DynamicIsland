@@ -14339,3 +14339,39 @@ ChatGPT 与 Gemini 的当前版本审核结论一致：采用独立、可激活�
 * 诊断 `ISLANDBAR_OPEN_SETTINGS=appearance` 可自动打开设置页用于截图；默认不生效。
 * 回退 `ISLANDBAR_LEGACY_APPEARANCE_CYCLE=1` 时外观磁贴恢复旧的直接换主题行为。
 
+---
+
+## 8.183 **全屏游戏 + 音乐：MusicNotch 降到最高 20 Hz**（2026-11-13）
+
+用户报告玩游戏并同时放歌时 `island_bar.exe` 的 CPU 到 **20–30%**。本机 12 逻辑处理器，
+音乐播放、桌面折叠状态实测 20 秒为 **20.45% 单核 / 1.7% 整机**；日志同时显示约
+`36–41` 次绘制/秒，持续重绘由 `music` 与 `lyrics` 驱动。音量线程在表不可见时已经停掉
+20 Hz 峰值采样，因此先处理全屏音乐 HUD 的连续呈现，而不是改音频线程或 UI 框架。
+
+ChatGPT 与 Gemini 在内部浏览器分别评审：
+
+* ChatGPT：同意方案 A 的增强版——全屏音乐 HUD 最高 20 Hz、歌词事件驱动、无变化不重绘。
+* Gemini：更倾向全屏时静态歌词；反对继续高频动效，认为游戏时 CPU 收益优先。
+
+首阶段采用更保守的方案 A，保留声波，只限制全屏游戏中的持续动画：
+
+* `domain/FullscreenHud.h`：新增 `kFullscreenMusicMaxFps = 20` 和纯规则
+  `FullscreenMusicFrameIsRateLimited`。只有 `MusicNotch` 的普通动画帧受限；切歌、歌词换句、
+  通知等事件帧立即绘制，`CallOrb`、普通桌面和 `Hidden` 不受影响。
+* `app/BarLoop.cpp`：全屏音乐播放时保持循环可被唤醒，但普通绘制间隔由 16 ms 改为 50 ms；
+  现有 `throttle` 日志增加 `hud=` 与 `cap=`，不碰 Renderer、音频线程或 `Present(1)`。
+* `selftest/ChecksCards.cpp`：断言仅 `MusicNotch` 的普通帧被限速，事件帧和其他 HUD 模式不降频。
+* `TESTING.md`：记录同机、同歌、同游戏的 20 秒 CPU 采样方法和验收线。
+
+实测：用全屏浏览器模拟“全屏应用 + 正在播放音乐”，全屏被正确识别后日志为
+`throttle: … frames=16.5/s … hud=music cap=20fps`；20 秒采样
+`CPU 1.359 s / 20 s = 6.79% 单核 / 0.57% 整机`，低于 **12%** 的验收线。
+普通桌面仍约 36 draw/s，`hud=none cap=vsync`，行为未改。动画期间 `hitches(>50 ms) = 0`。
+
+构建与测试：Debug、Release 均 `/WX` 零告警；Release `island_smoke` PASS。自检中本轮新增的
+限帧断言通过；全套仍有 5 项既有失败：3 项在上一版部署二进制同样复现（Start 页两处旧命中坐标、
+系统滑块的亮度比较），另 2 项是当前 HEAD 全屏像素检查在临时裁出的采样区域外读取；均不属于本轮
+20 Hz 调度改动，运行中的实际全屏 HUD 与 CPU 已单独验证。
+
+回退：撤销本提交即可；部署副本保留 `island_bar.exe.previous`。无配置或数据迁移。
+

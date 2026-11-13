@@ -43,6 +43,15 @@ inline constexpr float kFullscreenHudSidePadDip = 12.0f;
 inline constexpr float kFullscreenMusicVerticalPadDip = 3.0f;
 inline constexpr float kFullscreenCallLayoutDip = 30.0f;
 inline constexpr float kFullscreenCallVisualDip = 26.0f;
+inline constexpr int kFullscreenMusicMaxFps = 20;
+
+// The full-screen music notch is the one continuous animation that can sit over a game. Its lyric
+// changes and track changes still draw at once; the drifting wave and its meter are capped so a
+// game is not paying for the desktop's frame rate. The rule lives here, beside the HUD mode, so the
+// app loop and its self-test cannot disagree about which state is throttled.
+inline bool FullscreenMusicFrameIsRateLimited(FullscreenHudMode mode, bool eventFrame) noexcept {
+    return mode == FullscreenHudMode::MusicNotch && !eventFrame;
+}
 
 struct FullscreenHudLayout {
     RoundedBox box;
