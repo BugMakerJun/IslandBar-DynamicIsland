@@ -356,6 +356,14 @@ inline bool ShouldFetchArtwork(bool artworkEnabled, bool trackChanged, bool artw
     return sinceLastTryMs >= cadence;
 }
 
+// Reacquiring the manager resets a Windows Runtime object around every two seconds. It is kept as a
+// fallback for QQMusic's stale playback-status cache, but a diagnostic needs to switch that periodic
+// reset off without discarding the normal PlaybackInfoChanged wake-up.
+inline bool ShouldRefreshMediaManager(bool periodicRefreshEnabled, bool playbackChanged,
+                                      bool fallbackDue) noexcept {
+    return playbackChanged || (periodicRefreshEnabled && fallbackDue);
+}
+
 inline unsigned long long NextPollIntervalMs(unsigned long long nowMs, unsigned long long lastSkipMs,
                                             unsigned long long lastTrackChangeMs) {
     // An event that has not happened yet is represented by 0, and the subtraction below would wrap: 0 reads

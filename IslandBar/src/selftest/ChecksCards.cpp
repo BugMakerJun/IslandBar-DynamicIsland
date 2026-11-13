@@ -1583,6 +1583,14 @@ void TestMusicCardLayout() {
                 Check(!ShouldFetchArtwork(false, true, true, kArtworkRetrySlowMs, 60000),
                       L"the artwork diagnostic switch suppresses even a new track's cover request",
                       coverDetail);
+
+                Check(!ShouldRefreshMediaManager(false, false, true) &&
+                          ShouldRefreshMediaManager(false, true, false) &&
+                          ShouldRefreshMediaManager(true, false, true) &&
+                          ShouldRefreshMediaManager(true, true, false),
+                      L"the manager diagnostic keeps event-driven refresh and can disable only the "
+                      L"periodic fallback",
+                      coverDetail);
             }
         }
     }

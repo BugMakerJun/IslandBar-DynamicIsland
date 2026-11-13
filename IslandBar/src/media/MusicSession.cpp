@@ -701,6 +701,14 @@ void MusicSession::Run() {
         LogLine(L"  music: artwork fetch disabled by ISLANDBAR_NO_ARTWORK=1; "
                 L"media state and lyrics remain active");
     }
+    wchar_t noManagerRefreshSetting[8] = {};
+    const bool periodicManagerRefreshEnabled =
+        GetEnvironmentVariableW(L"ISLANDBAR_NO_MANAGER_REFRESH", noManagerRefreshSetting, 8) == 0 ||
+        noManagerRefreshSetting[0] != L'1';
+    if (!periodicManagerRefreshEnabled) {
+        LogLine(L"  music: periodic media-manager refresh disabled by "
+                L"ISLANDBAR_NO_MANAGER_REFRESH=1; event-driven refresh remains active");
+    }
     using MediaSessionManager =
         winrt::Windows::Media::Control::GlobalSystemMediaTransportControlsSessionManager;
     using MediaSession =
@@ -774,8 +782,9 @@ void MusicSession::Run() {
                 manager = MediaSessionManager::RequestAsync().get();
                 if (!manager) continue;
                 LogLine(L"  music: session manager acquired");
-            } else if (playbackChanged ||
-                       GetTickCount() - nextPlaybackRefreshAt < 0x80000000u) {
+            } else if (ShouldRefreshMediaManager(
+                           periodicManagerRefreshEnabled, playbackChanged,
+                           GetTickCount() - nextPlaybackRefreshAt < 0x80000000u)) {
                 // QQ Music can keep serving the previous PlaybackStatus from a cached manager,
                 // and this build does not reliably raise PlaybackInfoChanged for it. Reacquire
                 // on the event and on a two-second fallback, so the worker's one-second polls

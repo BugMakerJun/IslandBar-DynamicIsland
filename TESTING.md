@@ -488,3 +488,27 @@ music: artwork fetch disabled by ISLANDBAR_NO_ARTWORK=1; media state and lyrics 
 验收数字：`island_bar.exe` 线程数稳定在 **90** 以内，且不随切歌持续增长。
 
 若关闭封面后线程仍增长，移除环境变量并重跑；下一组实验只关闭每 2 秒的 media manager 重建。两组不能同时修改，否则无法确定根因。
+
+---
+
+## 10. 媒体 Manager 周期重建 A/B
+
+封面读取保持正常，只关闭每约 2 秒的 `MediaSessionManager::RequestAsync()` 兜底重建；由
+`PlaybackInfoChanged` 触发的事件刷新仍然保留：
+
+```powershell
+$env:ISLANDBAR_NO_MANAGER_REFRESH='1'
+& "$env:USERPROFILE\IslandBar\island_bar.exe"
+```
+
+日志开头必须有：
+
+```text
+music: periodic media-manager refresh disabled by ISLANDBAR_NO_MANAGER_REFRESH=1; event-driven refresh remains active
+```
+
+用 QQMusic 连续切歌并运行至少 30 分钟。验收数字：`island_bar.exe` 线程数保持在 **90** 以内，
+private bytes 不再随运行时间单调增长。
+
+若仍然增长，移除两个诊断变量并改用 `ISLANDBAR_NO_MEDIA=1` 对照整条媒体会话链；若稳定，则正式修复
+应缓存 manager，并只保留低频、可取消的安全兜底。

@@ -14410,3 +14410,25 @@ ChatGPT 与 Gemini 的评审一致认为应先做单变量隔离，不能同时�
 
 回退：该开关默认关闭，不设置环境变量时封面行为与原版完全相同；也可直接撤销本提交。
 
+### 8.184.1 无封面 A/B 结论：封面不是根因
+
+无封面诊断实例从 15:56 运行到约 18:10。日志中 `cover=0B` 从头到尾成立，但资源仍持续增长：
+
+* 16:36：private 100.2 MB / 72 threads
+* 17:06：private 204.5 MB / **416 threads** / 2755 handles
+* 17:36：private 713.1 MB / **850 threads** / 4445 handles
+* 18:07：private 1193.5 MB / **1333 threads** / 6554 handles
+
+这说明 `Thumbnail → OpenReadAsync → DataReader.LoadAsync` 不是充分根因。之后按单变量约定恢复封面，只关闭
+每约 2 秒的 manager 兜底重建：
+
+* `MusicSession.h` 增加纯规则 `ShouldRefreshMediaManager`：`PlaybackInfoChanged` 始终保留立即刷新，
+  诊断开关只关闭周期兜底。
+* `MusicSession.cpp` 增加 `ISLANDBAR_NO_MANAGER_REFRESH=1`，日志为
+  `music: periodic media-manager refresh disabled by ISLANDBAR_NO_MANAGER_REFRESH=1; event-driven refresh remains active`。
+* `TESTING.md` 增加 manager A/B；诊断实例同时设 `ISLANDBAR_MEM_MS=30000` 观察曲线。
+
+该实例启动时为 private 78.0 MB / 70 threads，封面保持正常（`cover=19797B`）。如果仍复现增长，则
+下一组必须用 `ISLANDBAR_NO_MEDIA=1` 隔离整个媒体会话链；如果稳定，正式修复采用缓存 manager 和低频、
+可取消的兜底刷新。
+
