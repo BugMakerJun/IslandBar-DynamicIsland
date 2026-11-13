@@ -344,9 +344,10 @@ inline constexpr int kArtworkRetryLogLimit = 5;
 // the first asked ONLY when the track changed (a late thumbnail was never picked up at all), the second asked
 // for 15 seconds and then gave up (a thumbnail published at 60 seconds was never picked up either). It asks
 // while the current track has nothing, and stops only when there IS something.
-inline bool ShouldFetchArtwork(bool trackChanged, bool artworkMissing,
+inline bool ShouldFetchArtwork(bool artworkEnabled, bool trackChanged, bool artworkMissing,
                               unsigned long long sinceLastTryMs,
                               unsigned long long sinceTrackChangeMs) {
+    if (!artworkEnabled) return false;
     if (trackChanged) return true;
     if (!artworkMissing) return false;
     const unsigned long long cadence = (sinceTrackChangeMs < kArtworkRetryWindowMs)

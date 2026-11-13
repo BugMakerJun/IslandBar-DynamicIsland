@@ -467,3 +467,24 @@ throttle: ... frames=20.0/s ... hud=music cap=20fps
 ```
 
 歌词换句、切歌仍应立即更新；普通桌面帧率不变；全屏来电仍按原来的通话路径显示，不受音乐 HUD 的 20 Hz 限制。
+
+---
+
+## 9. 媒体封面线程泄漏 A/B
+
+这一步只隔离封面缩略图读取，不关闭媒体状态、歌词、音量或播放控制：
+
+```powershell
+$env:ISLANDBAR_NO_ARTWORK='1'
+& "$env:USERPROFILE\IslandBar\island_bar.exe"
+```
+
+在 QQMusic 中连续切歌至少 20 次，每次切歌后等 5 秒，再静置 60 秒。日志开头必须有：
+
+```text
+music: artwork fetch disabled by ISLANDBAR_NO_ARTWORK=1; media state and lyrics remain active
+```
+
+验收数字：`island_bar.exe` 线程数稳定在 **90** 以内，且不随切歌持续增长。
+
+若关闭封面后线程仍增长，移除环境变量并重跑；下一组实验只关闭每 2 秒的 media manager 重建。两组不能同时修改，否则无法确定根因。

@@ -1556,27 +1556,33 @@ void TestMusicCardLayout() {
                 std::swprintf(coverDetail, 224,
                               L"new track %d, missing+1 s %d, missing+0.5 s %d, present+1 s %d, "
                               L"missing+20 s %d",
-                              ShouldFetchArtwork(true, false, 5000, 0) ? 1 : 0,
-                              ShouldFetchArtwork(false, true, kArtworkRetryMs, 1000) ? 1 : 0,
-                              ShouldFetchArtwork(false, true, 500, 1000) ? 1 : 0,
-                              ShouldFetchArtwork(false, false, 5000, 1000) ? 1 : 0,
-                              ShouldFetchArtwork(false, true, 5000, kArtworkRetryWindowMs) ? 1 : 0);
-                Check(ShouldFetchArtwork(true, true, 0, 0),
+                              ShouldFetchArtwork(true, true, false, 5000, 0) ? 1 : 0,
+                              ShouldFetchArtwork(true, false, true, kArtworkRetryMs, 1000) ? 1 : 0,
+                              ShouldFetchArtwork(true, false, true, 500, 1000) ? 1 : 0,
+                              ShouldFetchArtwork(true, false, false, 5000, 1000) ? 1 : 0,
+                              ShouldFetchArtwork(true, false, true, 5000,
+                                                 kArtworkRetryWindowMs)
+                                  ? 1
+                                  : 0);
+                Check(ShouldFetchArtwork(true, true, true, 0, 0),
                       L"a new track always asks for its cover", coverDetail);
-                Check(ShouldFetchArtwork(false, true, kArtworkRetryMs, 1000),
+                Check(ShouldFetchArtwork(true, false, true, kArtworkRetryMs, 1000),
                       L"... and a track whose cover has not arrived is asked again", coverDetail);
-                Check(!ShouldFetchArtwork(false, true, 500, 1000),
+                Check(!ShouldFetchArtwork(true, false, true, 500, 1000),
                       L"... but not more than once a second", coverDetail);
-                Check(!ShouldFetchArtwork(false, false, 5000, 1000),
+                Check(!ShouldFetchArtwork(true, false, false, 5000, 1000),
                       L"a track that has a cover is not asked at all", coverDetail);
                 // THE CASE THAT WAS STILL BROKEN: a player that publishes the thumbnail LATE -- or, as here,
                 // more than a minute in. The previous rule stopped asking after kArtworkRetryWindowMs, so
                 // 《蚂蚁 (Live)》 showed the placeholder for its whole length while the session was carrying
                 // the cover all along ("封面老是查询不到").
-                Check(ShouldFetchArtwork(false, true, kArtworkRetrySlowMs, 60000),
+                Check(ShouldFetchArtwork(true, false, true, kArtworkRetrySlowMs, 60000),
                       L"a cover that arrives a minute late is still picked up", coverDetail);
-                Check(!ShouldFetchArtwork(false, true, kArtworkRetrySlowMs - 1, 60000),
+                Check(!ShouldFetchArtwork(true, false, true, kArtworkRetrySlowMs - 1, 60000),
                       L"... but the late asking is slower than the early one", coverDetail);
+                Check(!ShouldFetchArtwork(false, true, true, kArtworkRetrySlowMs, 60000),
+                      L"the artwork diagnostic switch suppresses even a new track's cover request",
+                      coverDetail);
             }
         }
     }

@@ -693,6 +693,14 @@ void MusicSession::Run() {
     // here keeps the UI thread out of it entirely.
     const HRESULT apartment = RoInitialize(RO_INIT_MULTITHREADED);
     const bool haveApartment = SUCCEEDED(apartment);
+    wchar_t noArtworkSetting[8] = {};
+    const bool artworkEnabled =
+        GetEnvironmentVariableW(L"ISLANDBAR_NO_ARTWORK", noArtworkSetting, 8) == 0 ||
+        noArtworkSetting[0] != L'1';
+    if (!artworkEnabled) {
+        LogLine(L"  music: artwork fetch disabled by ISLANDBAR_NO_ARTWORK=1; "
+                L"media state and lyrics remain active");
+    }
     using MediaSessionManager =
         winrt::Windows::Media::Control::GlobalSystemMediaTransportControlsSessionManager;
     using MediaSession =
@@ -932,9 +940,13 @@ void MusicSession::Run() {
                             lastTrackChange = now;
                         }
                         const bool wantArtwork = ShouldFetchArtwork(
-                            trackChanged, previous.artworkSize == 0, now - lastArtworkTry,
+                            artworkEnabled, trackChanged, previous.artworkSize == 0,
+                            now - lastArtworkTry,
                             lastTrackChange != 0 ? now - lastTrackChange : kArtworkRetryWindowMs);
-                        if (wantArtwork) {
+                        if (!artworkEnabled) {
+                            fresh.artworkSize = 0;
+                            fresh.artworkRevision = 0;
+                        } else if (wantArtwork) {
                             lastArtworkTry = now;
                             fresh.artworkSize = FetchArtwork(properties, fresh.artwork,
                                                              kMusicArtworkCapacity);

@@ -14375,3 +14375,38 @@ ChatGPT 与 Gemini 在内部浏览器分别评审：
 
 回退：撤销本提交即可；部署副本保留 `island_bar.exe.previous`。无配置或数据迁移。
 
+---
+
+## 8.184 **媒体线程池泄漏：封面读取的单变量诊断**（2026-11-13）
+
+用户报告同一进程运行数小时后涨到约 1 GB / 294 线程 / 309% 单核。日志把起点定位在
+14:42–14:47：private 141.7 MB / 83 threads → 270.1 MB / 175 threads，之后继续到
+1028.1 MB / 267 threads。重启同一二进制后立即回到约 103 MB / 74 threads。
+
+新增线程的 Win32StartAddress 集中在 `shcore.dll+0x47FB0`，部分在
+`combase.dll+0x135120`，外层均为 `ntdll.dll+0x24990` 的线程池入口，不是 IslandBar
+自己的 `CreateThread` 入口。线程创建时间与 QQMusic 切歌高度重合；其中一次切歌后约 10
+条系统工作线程同时出现。日志同时是 `hud=none cap=vsync`，因此与全屏 HUD 的 20 Hz
+调度无关。
+
+代码里对应的可疑链路是 `MusicSession` 的长期 MTA worker：
+
+* 每约 2 秒重新执行 `MediaSessionManager::RequestAsync().get()`；
+* 每首歌执行 `TryGetMediaPropertiesAsync().get()`；
+* 封面读取执行 `Thumbnail().OpenReadAsync().get()` 和
+  `DataReader::LoadAsync(...).get()`。
+
+ChatGPT 与 Gemini 的评审一致认为应先做单变量隔离，不能同时改 manager 和封面。第一轮实现只加
+`ISLANDBAR_NO_ARTWORK=1`：跳过缩略图流读取，保留媒体状态、歌词、音量与播放控制；manager
+重建保持原样。`ShouldFetchArtwork` 增加 `artworkEnabled` 参数，自检断言关闭时连换歌也不请求封面。
+
+第一轮 A/B（同一 QQMusic、连续 20 次 SMTC 下一首）：
+
+* 无封面：切歌后 77 threads / 105.8 MB；静置 60 秒后 70 threads / 106.7 MB。
+* 正常封面：20 首中记录 18 次 `cover decoded`；切歌后 76 threads / 106.2 MB。
+
+两组都没有在短时间内复现此前每次切歌累积几十条线程的爆炸，因此“立即因切歌创建线程”不是完整
+解释；仍需要让无封面诊断实例长时间运行，确认 thread/private bytes 是否还会单调上涨。
+
+回退：该开关默认关闭，不设置环境变量时封面行为与原版完全相同；也可直接撤销本提交。
+
