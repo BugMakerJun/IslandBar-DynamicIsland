@@ -126,7 +126,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ".\IslandBar\scripts\regress
 
 - **线程状态不用 `volatile bool`**。后台线程与所有者之间共享的 `running_` 必须是 `std::atomic<bool>`：读用 acquire，写用 release；同一判断需要多次使用状态时先取一次快照。`Start/Stop/析构` 仍由对象所有者串行调用，不做并发启动协议。
 - **停止不能假定成功**。`WorkerThread::Stop()` 返回 `Stopped / Timeout / Failed`；只有 `Stopped` 才能关闭该次尝试的辅助事件。超时后线程与停止事件保留，`Prepare()` 拒绝新旧 worker 重叠。
-- **命名管道的响应不能被断开丢掉**。通知服务器使用 `FILE_FLAG_OVERLAPPED` 的 BYTE 管道；连接、读写和停止都可取消。写完响应后要等到客户端读取并关闭（有 1 秒上限），再 `DisconnectNamedPipe`，否则 Windows 会直接丢掉尚未读取的确认帧。
+- **命名管道的响应不能被断开丢掉**。通知服务器保留 MESSAGE 管道兼容性，同时使用 `FILE_FLAG_OVERLAPPED`；连接、读写和停止都可取消。客户端按长度前缀分帧，并在读取响应时切到 BYTE 模式。写完响应后要等到客户端读取并关闭（有 1 秒上限），再 `DisconnectNamedPipe`，否则 Windows 会直接丢掉尚未读取的确认帧。
 - **窗口图标失败有界重试**。Renderer 对同一 HWND 最多提取 4 次，失败后的等待为 500 / 2000 / 5000 ms；成功即缓存，离场仍由 `PruneWindowIconsForFrame` 释放。不要改成每帧重试。
 - **图标提取暂不后台化**。`ID2D1DeviceContext2::CreateBitmap` 必须在渲染设备上下文执行；真正后台化还需要像素结果队列、HWND+PID 代次校验、设备丢失后重传和退出排空。现有有界 `WM_GETICON`（100 ms）+ 有限退避先控制最坏路径；若以后实测 P95/P99 仍超预算，再按完整后台流水线单独立项。
 - **`island_tray_hook.dll` 的 `DllMain` 只做 `DisableThreadLibraryCalls`**。日志锁使用静态初始化的 `SRWLOCK`；“attached”身份日志与全部文件 I/O 延迟到第一次 `IslandTrayHookProc` 内的 `EnsureHooked()`，不在加载器锁下打开文件。

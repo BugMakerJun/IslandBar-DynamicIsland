@@ -85,9 +85,10 @@ private:
     bool ready_ = false;
 };
 
-// Pipe buffer sizes. A notification is a few hundred bytes; 4 KB each way is
-// generous and keeps the kernel allocation small.
-constexpr DWORD kPipeBufferBytes = 4096;
+// MESSAGE mode keeps compatibility with callers that expect the original Windows named-pipe behaviour.
+// The length-prefixed protocol writes its header, body and response with separate WriteFile calls, so each
+// piece is one message. The kernel buffer must still hold the largest accepted payload.
+constexpr DWORD kPipeBufferBytes = kMaxMessageBytes + sizeof(uint32_t);
 constexpr DWORD kConnectTimeoutMs = 30000;
 constexpr DWORD kFrameTimeoutMs = 5000;
 constexpr DWORD kCancelDrainMs = 2000;
@@ -368,7 +369,7 @@ void NotificationServer::Run() {
         HANDLE pipe = CreateNamedPipeW(
             name_,
             PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
-            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+            PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
             1,                       // one instance: clients are serialised
             kPipeBufferBytes, kPipeBufferBytes,
             0, security.Attributes());

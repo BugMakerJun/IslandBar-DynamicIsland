@@ -14461,9 +14461,11 @@ ChatGPT 与 Gemini 的评审一致认为应先做单变量隔离，不能同时�
 `ConnectNamedPipe`、请求读取和响应写入全部改成 `FILE_FLAG_OVERLAPPED`；停止事件可以取消所有等待。
 连接超时 30 秒，帧读写 5 秒，取消后的 drain 最多 2 秒。无法 drain 时不关闭仍可能被内核使用的句柄。
 
-BYTE 模式暴露出一个 Windows 行为：服务器写完响应后立刻 `DisconnectNamedPipe` 会丢掉客户端尚未读取的
-数据，客户端得到 `win32 233 (ERROR_PIPE_NOT_CONNECTED)`。现在服务器在写完响应后发起一个可取消的
-1 秒读取，等客户端读取并关闭后再断开；客户端不发数据时仍有界退出。自检确认：
+服务器保留 `PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE`，避免破坏仍按原始消息管道工作的调用方；
+仓库内客户端按长度前缀写帧，并在读取响应时切到 BYTE 模式。测试同时暴露一个 Windows 行为：
+服务器写完响应后立刻 `DisconnectNamedPipe` 会丢掉客户端尚未读取的数据，客户端得到
+`win32 233 (ERROR_PIPE_NOT_CONNECTED)`。现在服务器在写完响应后发起一个可取消的 1 秒读取，
+等客户端读取并关闭后再断开；客户端不发数据时仍有界退出。自检确认：
 
 * 连接后不发数据，`Stop()` 在 2 秒内完成；
 * 只发半个长度头，`Stop()` 在 2 秒内完成；
