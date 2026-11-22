@@ -14562,3 +14562,35 @@ hooked pid 37948 exe Explorer.EXE: ...
 全绿版本部署时旧采样器因目标进程短暂不存在而退出；已为 PID `44052` 重新启动采样器 PID `43340`，
 新 CSV 为 `runtime-soak-20261123-022721.csv`。
 
+---
+
+## 8.187 **修复 Git 缺失签名提交与 commit-graph 警告**（2026-11-23）
+
+每次本地提交都会出现：
+
+```text
+Could not read c2099dd13e662382ec9b3f19d96df813a27d1417
+fatal: unable to parse commit c2099dd13e662382ec9b3f19d96df813a27d1417
+failed to write commit-graph
+```
+
+根因是历史上有两个 GitHub 网页签名提交的原始对象不在本地，而项目之前用一个无父提交的占位 replace
+ref 绕过了读取：
+
+* 缺失：`c2099dd13e662382ec9b3f19d96df813a27d1417`
+* 其缺失父提交：`beb75b9f6190b8749ba638b5e7e938395296eaa5`
+* 下一层父提交 `6a013256...` 已存在，断链只有两层。
+
+通过 GitHub API 返回的签名与 verification payload，在内存中逐字节重建 commit object；两个对象写入前
+都先验证 SHA-1 与远端完全相同。随后删除占位 `refs/replace/c2099dd...`。
+
+结果：
+
+```text
+git fsck --full --no-dangling           -> exit 0
+git commit-graph write --reachable      -> exit 0
+git replace -l                          -> empty
+```
+
+分支、工作区与远端引用没有被改写。
+
