@@ -49,6 +49,7 @@
 #include "media/WicImage.h"
 #include "services/Notification.h"
 #include "services/NotificationIcon.h"
+#include "services/NotificationPipe.h"
 #include "services/ToastStore.h"
 #include "services/WeChatWatch.h"
 #include "shell/Weather.h"
@@ -402,6 +403,69 @@ void TestNotifications() {
 
         marks.Clear();
         Check(marks.Count() == 0 && marks.UnreadCount() == 0, L"clear empties the store");
+    }
+
+    // --- cancellable server I/O -------------------------------------------------
+    //
+    // These use a private pipe name so they cannot collide with the running bar. The first client
+    // connects and sends nothing; the second sends only two bytes of the length header. Stop() must
+    // return promptly in both cases because both operations are now overlapped and cancellable.
+    {
+        wchar_t pipeName[80] = {};
+        std::swprintf(pipeName, 80, L"IslandBar.Verify.%lu", GetCurrentProcessId());
+        wchar_t fullName[96] = {};
+        std::swprintf(fullName, 96, L"\\\\.\\pipe\\%s", pipeName);
+        const auto connectClient = [&]() {
+            (void)WaitNamedPipeW(fullName, 2000);
+            return CreateFileW(fullName, GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+                               OPEN_EXISTING, 0, nullptr);
+        };
+
+        NotificationServer server;
+        Check(server.Start(pipeName), L"the notification server starts on a test pipe");
+        HANDLE silentClient = connectClient();
+        Check(silentClient != INVALID_HANDLE_VALUE,
+              L"a test client connects before sending anything");
+        const DWORD silentStarted = GetTickCount();
+        server.Stop();
+        const DWORD silentStoppedMs = GetTickCount() - silentStarted;
+        Check(!server.IsRunning() && silentStoppedMs < 2000,
+              L"Stop() cancels a connected client that sends no data");
+        if (silentClient != INVALID_HANDLE_VALUE) CloseHandle(silentClient);
+
+        Check(server.Start(pipeName), L"the notification server restarts after cancellation");
+        HANDLE partialClient = connectClient();
+        const uint32_t claimedLength = 128;
+        DWORD partialWritten = 0;
+        Check(partialClient != INVALID_HANDLE_VALUE &&
+                  WriteFile(partialClient, &claimedLength, 2, &partialWritten, nullptr) &&
+                  partialWritten == 2,
+              L"a test client sends a deliberately partial frame header");
+        const DWORD partialStarted = GetTickCount();
+        server.Stop();
+        const DWORD partialStoppedMs = GetTickCount() - partialStarted;
+        Check(!server.IsRunning() && partialStoppedMs < 2000,
+              L"Stop() cancels a partially received frame");
+        if (partialClient != INVALID_HANDLE_VALUE) CloseHandle(partialClient);
+
+        Check(server.Start(pipeName), L"the notification server starts for a complete frame");
+        Notification complete;
+        std::snprintf(complete.title, kTitleCapacity, "pipe test");
+        char response[256] = {};
+        wchar_t responseDetail[320] = {};
+        const bool acknowledged =
+            SendNotification(complete, pipeName, response, sizeof(response), 2000);
+        std::swprintf(responseDetail, 320, L"response='%hs'", response);
+        Check(acknowledged, L"a complete framed notification is acknowledged", responseDetail);
+        Notification received;
+        bool took = false;
+        for (int i = 0; i < 50 && !took; ++i) {
+            took = server.Take(&received);
+            if (!took) Sleep(2);
+        }
+        Check(took && std::strcmp(received.title, "pipe test") == 0,
+              L"the acknowledged notification reaches the queue");
+        server.Stop();
     }
 }
 

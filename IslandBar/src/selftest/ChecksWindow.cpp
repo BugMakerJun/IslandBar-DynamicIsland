@@ -2569,53 +2569,59 @@ void TestWorkerThread() {
     GetProcessHandleCount(GetCurrentProcess(), &before);
 
     {
-        WorkerThread worker;
-        for (int i = 0; i < 50; ++i) {
-            // The shape of a start that gives up half-way, then a retry.
-            worker.Prepare();
-            worker.Stop();
-        }
-        Check(!worker.Prepared(), L"after Stop() the worker reports nothing prepared");
-    }
-
-    {
-        // Prepare() WITHOUT a Stop() between, which is the leak the copies really had: each call used to
-        // create an event over the previous handle. Prepare() ends the previous attempt first.
-        WorkerThread worker;
-        for (int i = 0; i < 50; ++i) {
-            worker.Prepare();
-        }
-        Check(worker.Prepared(), L"the last of fifty prepares is the one that is armed");
-    }
-
-    {
-        // And the real thing: a thread that waits on the stop event, told to stop, joined and closed --
-        // three times over against ONE WorkerThread, because that is the sequence Start()/Stop()/Start()
-        // performs when a reader is restarted.
         struct Helper {
             static unsigned long __stdcall Entry(void* self) {
-                auto* worker = static_cast<WorkerThread*>(self);
-                WaitForSingleObject(worker->StopEvent(), 5000);
+                const WorkerThread::Signal signal = WorkerThread::CurrentSignal();
+                HANDLE stopEvent = signal.StopEvent();
+                if (stopEvent) {
+                    WaitForSingleObject(stopEvent, 5000);
+                    *static_cast<bool*>(self) = true;
+                }
                 return 0;
             }
         };
 
         WorkerThread worker;
         for (int i = 0; i < 3; ++i) {
-            const bool prepared = worker.Prepare();
-            HANDLE thread = prepared ? CreateThread(nullptr, 0, &Helper::Entry, &worker, 0, nullptr)
-                                     : nullptr;
-            if (thread) worker.Attach(thread);
-            Check(prepared && thread != nullptr, L"a worker starts a real thread against its stop event");
-            Check(worker.Stop(3000), L"and Stop() sees that thread end rather than giving up on it");
+            std::atomic<bool> sawSignal{false};
+            // The entry receives a pointer to a stack atomic whose lifetime covers Stop().
+            Check(worker.Start(&Helper::Entry, &sawSignal),
+                  L"a worker starts a thread with a shared stop signal");
+            const WorkerThread::StopResult stopped = worker.Stop(3000);
+            Check(stopped == WorkerThread::StopResult::Stopped && sawSignal.load(),
+                  L"Stop() joins the thread and its signal remains valid through exit");
         }
+    }
+
+    {
+        // A non-cooperative thread must not have its handles closed underneath it. Restart stays
+        // blocked until the thread genuinely exits.
+        HANDLE release = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        struct Slow {
+            static unsigned long __stdcall Entry(void* self) {
+                WaitForSingleObject(static_cast<HANDLE>(self), 2000);
+                return 0;
+            }
+        };
+
+        WorkerThread worker;
+        Check(release && worker.Start(&Slow::Entry, release),
+              L"a deliberately slow worker starts");
+        Check(worker.Stop(20) == WorkerThread::StopResult::Timeout,
+              L"Stop() reports a timeout instead of pretending the thread ended");
+        Check(!worker.Start(&Slow::Entry, release),
+              L"a timed-out worker refuses a second thread");
+        SetEvent(release);
+        Check(worker.Stop(3000) == WorkerThread::StopResult::Stopped,
+              L"the retained state joins successfully after the thread exits");
+        if (release) CloseHandle(release);
     }
 
     DWORD after = 0;
     GetProcessHandleCount(GetCurrentProcess(), &after);
 
     wchar_t detail[96] = {};
-    std::swprintf(detail, 96, L"after ~150 prepare/stop cycles: %lu -> %lu handle(s)", before, after);
+    std::swprintf(detail, 96, L"after stop/retry cycles: %lu -> %lu handle(s)", before, after);
     Check(after <= before + 8, L"a retried start leaves no handles behind", detail);
 }
 

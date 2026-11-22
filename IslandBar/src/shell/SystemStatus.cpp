@@ -180,7 +180,7 @@ bool SystemStatusReader::Start(HWND wakeWindow, unsigned long pollMs) {
     if (running_.load(std::memory_order_acquire)) return true;
 
     requestEvent_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
-    if (!requestEvent_ || !worker_.Prepare()) {
+    if (!requestEvent_) {
         Stop();
         return false;
     }
@@ -188,13 +188,10 @@ bool SystemStatusReader::Start(HWND wakeWindow, unsigned long pollMs) {
     pollMs_ = pollMs == 0 ? 2000 : pollMs;
     running_.store(true, std::memory_order_release);
 
-    DWORD threadId = 0;
-    HANDLE thread = CreateThread(nullptr, 0, &SystemStatusReader::ThreadEntry, this, 0, &threadId);
-    if (!thread) {
+    if (!worker_.Start(&SystemStatusReader::ThreadEntry, this)) {
         Stop();
         return false;
     }
-    worker_.Attach(thread);
 
     // One initial reading keeps the first panel frame complete. It is paid only
     // at startup; steady-state sampling is off the UI thread.
@@ -206,7 +203,7 @@ bool SystemStatusReader::Start(HWND wakeWindow, unsigned long pollMs) {
 
 void SystemStatusReader::Stop() {
     running_.store(false, std::memory_order_release);
-    worker_.Stop();
+    if (worker_.Stop() != WorkerThread::StopResult::Stopped) return;
     if (requestEvent_) {
         CloseHandle(requestEvent_);
         requestEvent_ = nullptr;
@@ -231,6 +228,8 @@ unsigned long __stdcall SystemStatusReader::ThreadEntry(void* self) {
 }
 
 void SystemStatusReader::Run() {
+    const WorkerThread::Signal workerSignal = WorkerThread::CurrentSignal();
+    const HANDLE stopEvent = workerSignal.StopEvent();
     const HRESULT apartment = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     const bool haveApartment = SUCCEEDED(apartment) || apartment == RPC_E_CHANGED_MODE;
 
@@ -240,7 +239,7 @@ void SystemStatusReader::Run() {
     if (Publish(current)) PostUiWake(wakeWindow_, kUiWakeStatus);
 
     while (running_.load(std::memory_order_acquire)) {
-        HANDLE waits[2] = {worker_.StopEvent(), requestEvent_};
+        HANDLE waits[2] = {stopEvent, requestEvent_};
         const DWORD signalled = WaitForMultipleObjects(2, waits, FALSE, pollMs_);
         if (signalled == WAIT_OBJECT_0) break;
         if (signalled == WAIT_FAILED) break;

@@ -52,6 +52,26 @@ inline constexpr int kMaxWindowIcons = 32;
 static_assert(kMaxWindowIcons >= kMaxTaskButtons,
               "the window-icon cache must hold every button a frame can draw");
 
+// A window can publish its icon after the first frame that lists it, and WM_GETICON or the executable
+// path can fail transiently while an application is still starting. Keep the retry finite and spaced out:
+// an icon-less window must not run a process query and image decode on every frame.
+inline constexpr int kMaxWindowIconLoadAttempts = 4;
+
+inline ULONGLONG WindowIconRetryDelayMs(int failedAttempts) {
+    switch (failedAttempts) {
+        case 1:  return 500;
+        case 2:  return 2000;
+        case 3:  return 5000;
+        default: return 0;
+    }
+}
+
+inline bool WindowIconRetryDue(int failedAttempts, ULONGLONG retryAfterMs,
+                               ULONGLONG nowMs) {
+    if (failedAttempts >= kMaxWindowIconLoadAttempts) return false;
+    return failedAttempts == 0 || nowMs >= retryAfterMs;
+}
+
 // Who owns the card this frame, given what is asking for one and whether the shape is coming or going.
 //
 // `cardUp` says the shape is a card or on its way to being one; `cardWanted` says the motion is still
@@ -871,6 +891,8 @@ private:
     struct WindowIcon {
         HWND          window = nullptr;
         ID2D1Bitmap1* bitmap = nullptr;
+        int           loadAttempts = 0;
+        ULONGLONG     retryAfterMs = 0;
     };
     WindowIcon windowIcons_[kMaxWindowIcons];
     int windowIconCount_ = 0;
@@ -878,6 +900,8 @@ private:
     // Returns the icon bitmap for a window, fetching and decoding it on first use. Null when the
     // window has no icon, which is normal for a few system windows and not an error.
     ID2D1Bitmap1* IconForWindow(HWND window);
+    ID2D1Bitmap1* LoadWindowIcon(HWND window);
+    void ScheduleWindowIconRetry(WindowIcon& icon, ULONGLONG nowMs);
     // Releases entries that are no longer in the frame's listed-or-leaving window set.
     void PruneWindowIconsForFrame(const HWND* frameWindows, int frameWindowCount);
     void ReleaseWindowIcons();

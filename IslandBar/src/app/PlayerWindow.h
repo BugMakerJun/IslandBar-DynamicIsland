@@ -34,6 +34,7 @@
 
 #include <windows.h>
 
+#include <atomic>
 #include <cstddef>
 
 #include "platform/CriticalSection.h"
@@ -106,7 +107,7 @@ private:
 
     // The stop event, the thread and the rule for ending both. See platform/WorkerThread.h.
     WorkerThread worker_;
-    volatile bool running_ = false;
+    std::atomic<bool> running_{false};
 
     mutable CriticalSection lock_;
     PlayerWindowInfo published_{};

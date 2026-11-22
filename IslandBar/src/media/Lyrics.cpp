@@ -1027,24 +1027,21 @@ LyricsProvider::~LyricsProvider() {
 }
 
 bool LyricsProvider::Start() {
-    if (running_) return true;
+    if (running_.load(std::memory_order_acquire)) return true;
 
     requestEvent_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     // Stop() ends whatever exists rather than unwinding by hand (see platform/WorkerThread.h).
-    if (!worker_.Prepare() || !requestEvent_) {
+    if (!requestEvent_) {
         Stop();
         return false;
     }
 
-    DWORD threadId = 0;
-    HANDLE thread = CreateThread(nullptr, 0, &LyricsProvider::ThreadEntry, this, 0, &threadId);
-    if (!thread) {
+    if (!worker_.Start(&LyricsProvider::ThreadEntry, this)) {
         Stop();
         return false;
     }
-    worker_.Attach(thread);
 
-    running_ = true;
+    running_.store(true, std::memory_order_release);
     return true;
 }
 
@@ -1052,16 +1049,17 @@ void LyricsProvider::Stop() {
     // The worker may be inside a network call. It checks the stop event between requests, and its HTTP
     // timeouts bound how long a single one can take, so this wait is finite rather than a hang -- which is
     // why the timeout here is 5000 ms and not the 3000 ms the local readers use.
-    worker_.Stop(5000);
+    const WorkerThread::StopResult stopped = worker_.Stop(5000);
+    running_.store(false, std::memory_order_release);
+    if (stopped != WorkerThread::StopResult::Stopped) return;
     if (requestEvent_) {
         CloseHandle(requestEvent_);
         requestEvent_ = nullptr;
     }
-    running_ = false;
 }
 
 void LyricsProvider::Request(const char* title, const char* artist) {
-    if (!running_ || !title || title[0] == '\0') return;
+    if (!running_.load(std::memory_order_acquire) || !title || title[0] == '\0') return;
 
     lock_.Enter();
     // Already asked about this track -- but only cache a PERMANENT answer.
@@ -1125,11 +1123,13 @@ unsigned long __stdcall LyricsProvider::ThreadEntry(void* self) {
 }
 
 void LyricsProvider::Run() {
+    const WorkerThread::Signal workerSignal = WorkerThread::CurrentSignal();
+    const HANDLE stopEvent = workerSignal.StopEvent();
     char title[256] = {};
     char artist[256] = {};
 
     while (true) {
-        HANDLE waits[2] = { worker_.StopEvent(), requestEvent_ };
+        HANDLE waits[2] = { stopEvent, requestEvent_ };
         const DWORD signalled = WaitForMultipleObjects(2, waits, FALSE, INFINITE);
         if (signalled == WAIT_OBJECT_0) break;   // stop
         if (signalled != WAIT_OBJECT_0 + 1) break;
@@ -1152,7 +1152,7 @@ void LyricsProvider::Run() {
         const FetchOutcome outcome =
             FetchLyricsDetailed(title, artist, 10000, &fetched, reason, sizeof(reason));
 
-        if (WaitForSingleObject(worker_.StopEvent(), 0) == WAIT_OBJECT_0) break;
+        if (WaitForSingleObject(stopEvent, 0) == WAIT_OBJECT_0) break;
 
         lock_.Enter();
         // Recorded so Request() knows whether this answer may be cached. A transient
@@ -1173,7 +1173,7 @@ void LyricsProvider::Run() {
         lock_.Leave();
     }
 
-    running_ = false;
+    running_.store(false, std::memory_order_release);
 }
 
 } // namespace island

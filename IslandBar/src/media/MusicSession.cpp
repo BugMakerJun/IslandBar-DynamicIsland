@@ -606,22 +606,19 @@ MusicSession::~MusicSession() {
 }
 
 bool MusicSession::Start() {
-    if (running_) return true;
+    if (running_.load(std::memory_order_acquire)) return true;
 
     toggleEvent_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);   // auto-reset
     // Stop() ends whatever exists rather than unwinding by hand (see platform/WorkerThread.h).
-    if (!worker_.Prepare() || !toggleEvent_) {
+    if (!toggleEvent_) {
         Stop();
         return false;
     }
 
-    DWORD threadId = 0;
-    HANDLE thread = CreateThread(nullptr, 0, &MusicSession::ThreadEntry, this, 0, &threadId);
-    if (!thread) {
+    if (!worker_.Start(&MusicSession::ThreadEntry, this)) {
         Stop();
         return false;
     }
-    worker_.Attach(thread);
 
     // Wait for the worker's first poll, so Start() returning true means the media
     // API actually answered.
@@ -636,8 +633,9 @@ bool MusicSession::Start() {
 
     // Any answer, including "nothing is playing", means the API is present. A
     // worker that never polled at all means it could not enter an apartment.
-    running_ = (pollCount_ > 0);
-    if (!running_) {
+    const bool polled = pollCount_ > 0;
+    running_.store(polled, std::memory_order_release);
+    if (!polled) {
         Stop();
         return false;
     }
@@ -645,12 +643,13 @@ bool MusicSession::Start() {
 }
 
 void MusicSession::Stop() {
-    worker_.Stop();
+    const WorkerThread::StopResult stopped = worker_.Stop();
+    running_.store(false, std::memory_order_release);
+    if (stopped != WorkerThread::StopResult::Stopped) return;
     if (toggleEvent_) {
         CloseHandle(toggleEvent_);
         toggleEvent_ = nullptr;
     }
-    running_ = false;
 }
 
 void MusicSession::Snapshot(MusicInfo* out) const {
@@ -669,7 +668,7 @@ long long MusicSession::PollCount() const {
 }
 
 bool MusicSession::RequestTransport(Transport action) {
-    if (!running_ || !toggleEvent_) return false;
+    if (!running_.load(std::memory_order_acquire) || !toggleEvent_) return false;
     // Under the lock so the worker cannot see the pending flag with a stale action.
     lock_.Enter();
     pendingAction_ = action;
@@ -688,6 +687,8 @@ unsigned long __stdcall MusicSession::ThreadEntry(void* self) {
 }
 
 void MusicSession::Run() {
+    const WorkerThread::Signal workerSignal = WorkerThread::CurrentSignal();
+    const HANDLE stopEvent = workerSignal.StopEvent();
     // The worker owns its own apartment. WinRT objects are not usable across
     // apartments unless they are agile, and the session manager is; entering MTA
     // here keeps the UI thread out of it entirely.
@@ -758,7 +759,7 @@ void MusicSession::Run() {
         // Wake for either a toggle request or the next scheduled poll, whichever
         // comes first. Waiting on both is what makes the button responsive without
         // polling faster for everything else.
-        HANDLE waits[3] = { worker_.StopEvent(), toggleEvent_, playbackChangedEvent };
+        HANDLE waits[3] = { stopEvent, toggleEvent_, playbackChangedEvent };
         const DWORD waitCount = playbackChangedEvent ? 3 : 2;
         const DWORD interval =
             static_cast<DWORD>(NextPollIntervalMs(GetTickCount(), lastSkip, lastTrackChange));
@@ -1152,7 +1153,7 @@ void MusicSession::Run() {
     }
     if (playbackChangedEvent) CloseHandle(playbackChangedEvent);
     if (haveApartment) RoUninitialize();
-    running_ = false;
+    running_.store(false, std::memory_order_release);
 }
 
 } // namespace island

@@ -717,7 +717,7 @@ bool StartApps::StartIconWorker() {
         iconWakeEvent_ = nullptr;
     }
     iconWakeEvent_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
-    if (!iconWorker_.Prepare() || !iconWakeEvent_) {
+    if (!iconWakeEvent_) {
         iconWorkerRunning_.store(false);
         if (iconWakeEvent_) {
             CloseHandle(iconWakeEvent_);
@@ -725,21 +725,23 @@ bool StartApps::StartIconWorker() {
         }
         return false;
     }
-    DWORD threadId = 0;
-    HANDLE thread = CreateThread(nullptr, 0, &StartApps::IconThreadEntry, this, 0, &threadId);
-    if (!thread) {
-        iconWorker_.Stop();
-        CloseHandle(iconWakeEvent_);
-        iconWakeEvent_ = nullptr;
+    if (!iconWorker_.Start(&StartApps::IconThreadEntry, this)) {
+        if (iconWorker_.Stop() == WorkerThread::StopResult::Stopped &&
+            iconWakeEvent_) {
+            CloseHandle(iconWakeEvent_);
+            iconWakeEvent_ = nullptr;
+        }
         iconWorkerRunning_.store(false);
         return false;
     }
-    iconWorker_.Attach(thread);
     return true;
 }
 
 void StartApps::StopIconWorker() {
-    iconWorker_.Stop();
+    if (iconWorker_.Stop() != WorkerThread::StopResult::Stopped) {
+        iconWorkerRunning_.store(false);
+        return;
+    }
     if (iconWakeEvent_) {
         CloseHandle(iconWakeEvent_);
         iconWakeEvent_ = nullptr;
@@ -753,6 +755,8 @@ unsigned long __stdcall StartApps::IconThreadEntry(void* self) {
 }
 
 void StartApps::RunIconWorker() {
+    const WorkerThread::Signal workerSignal = WorkerThread::CurrentSignal();
+    const HANDLE stopEvent = workerSignal.StopEvent();
     const HRESULT apartment = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     const bool haveApartment = SUCCEEDED(apartment) || apartment == RPC_E_CHANGED_MODE;
     while (haveApartment) {
@@ -767,7 +771,7 @@ void StartApps::RunIconWorker() {
             }
         }
         if (!haveRequest) {
-            HANDLE waits[2] = {iconWorker_.StopEvent(), iconWakeEvent_};
+            HANDLE waits[2] = {stopEvent, iconWakeEvent_};
             const DWORD signalled = WaitForMultipleObjects(2, waits, FALSE, INFINITE);
             if (signalled == WAIT_OBJECT_0 || signalled == WAIT_FAILED) break;
             std::lock_guard<std::mutex> lock(iconMutex_);

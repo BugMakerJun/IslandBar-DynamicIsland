@@ -20,6 +20,7 @@
 
 #include <windows.h>
 
+#include <atomic>
 #include <cstddef>
 #include <cstring>
 
@@ -325,7 +326,7 @@ private:
     // The stop event, the thread and the rule for ending both. See platform/WorkerThread.h.
     WorkerThread  worker_;
     HANDLE        requestEvent_ = nullptr;   // auto-reset: a new request is waiting
-    volatile bool running_ = false;
+    std::atomic<bool> running_{false};
 
     mutable CriticalSection lock_;
 

@@ -19,6 +19,7 @@
 
 #include <windows.h>
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 
@@ -56,7 +57,7 @@ public:
 
     void Stop();
 
-    bool IsRunning() const { return running_; }
+    bool IsRunning() const { return running_.load(std::memory_order_acquire); }
 
     // Pops one received notification into `out`. Returns false when none are
     // waiting. Non-blocking: call it from the frame loop.
@@ -70,7 +71,7 @@ private:
     // The stop event, the thread and the rule for ending both. See platform/WorkerThread.h.
     WorkerThread  worker_;
     wchar_t       name_[256] = {};   // full \\.\pipe\... path
-    volatile bool running_ = false;
+    std::atomic<bool> running_{false};
 
     // Received notifications awaiting pickup by the UI thread.
     CriticalSection lock_;

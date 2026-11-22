@@ -144,41 +144,40 @@ SoundOutput::~SoundOutput() {
 }
 
 bool SoundOutput::Start() {
-    if (running_) return true;
+    if (running_.load(std::memory_order_acquire)) return true;
 
     workEvent_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);   // auto-reset
     // Stop() ends whatever exists rather than unwinding by hand (see platform/WorkerThread.h).
-    if (!worker_.Prepare() || !workEvent_) {
+    if (!workEvent_) {
         Stop();
         return false;
     }
 
-    DWORD threadId = 0;
-    HANDLE thread = CreateThread(nullptr, 0, &SoundOutput::ThreadEntry, this, 0, &threadId);
-    if (!thread) {
+    if (!worker_.Start(&SoundOutput::ThreadEntry, this)) {
         Stop();
         return false;
     }
-    worker_.Attach(thread);
 
     // Wait for the first reading, so the page has something to draw the first time it is opened rather
     // than filling in a second later.
     for (int i = 0; i < 800 && !haveReading_; ++i) {
         Sleep(5);
     }
-    running_ = haveReading_;
+    const bool haveReading = haveReading_;
+    running_.store(haveReading, std::memory_order_release);
     // NOT stopped when the first reading never came: the worker keeps asking, and the page can still fill
     // in later. What it must not do is leak the attempt -- Prepare() ends it before the next Start().
-    return running_;
+    return haveReading;
 }
 
 void SoundOutput::Stop() {
-    worker_.Stop();
+    const WorkerThread::StopResult stopped = worker_.Stop();
+    running_.store(false, std::memory_order_release);
+    if (stopped != WorkerThread::StopResult::Stopped) return;
     if (workEvent_) {
         CloseHandle(workEvent_);
         workEvent_ = nullptr;
     }
-    running_ = false;
 }
 
 void SoundOutput::Snapshot(SoundOutputSnapshot* out) const {
@@ -231,6 +230,8 @@ unsigned long __stdcall SoundOutput::ThreadEntry(void* self) {
 }
 
 void SoundOutput::Run() {
+    const WorkerThread::Signal workerSignal = WorkerThread::CurrentSignal();
+    const HANDLE stopEvent = workerSignal.StopEvent();
     // This thread owns its own apartment: every interface created here is used here and released here, so
     // none of them crosses into the frame loop's apartment.
     const HRESULT apartment = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
@@ -239,7 +240,7 @@ void SoundOutput::Run() {
     if (haveApartment) ReadAll();
 
     while (true) {
-        HANDLE waits[2] = {worker_.StopEvent(), workEvent_};
+        HANDLE waits[2] = {stopEvent, workEvent_};
         const DWORD signalled = WaitForMultipleObjects(2, waits, FALSE, kSoundPollMs);
         if (signalled == WAIT_OBJECT_0) break;   // stop
         if (!haveApartment) break;

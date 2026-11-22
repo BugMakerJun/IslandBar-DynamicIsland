@@ -111,7 +111,7 @@ private:
     // Auto-reset: IAudioEndpointVolumeCallback reports a change made outside the bar.
     HANDLE        volumeEvent_ = nullptr;
     std::atomic<bool> peakMeterActive_{false};
-    volatile bool running_ = false;
+    std::atomic<bool> running_{false};
 
     mutable CriticalSection lock_;
 

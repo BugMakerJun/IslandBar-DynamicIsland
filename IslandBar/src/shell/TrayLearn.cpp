@@ -53,6 +53,8 @@ struct TrayWakePump {
 TrayWakePump g_trayWakePump;
 
 unsigned long __stdcall TrayWakeThreadEntry(void*) {
+    const WorkerThread::Signal workerSignal = WorkerThread::CurrentSignal();
+    const HANDLE stopEvent = workerSignal.StopEvent();
     HANDLE ring = OpenEventW(SYNCHRONIZE, FALSE, kTrayRingEventName);
     if (!ring) ring = CreateEventW(nullptr, FALSE, FALSE, kTrayRingEventName);
 
@@ -70,7 +72,7 @@ unsigned long __stdcall TrayWakeThreadEntry(void*) {
     };
     armRegistry();
 
-    HANDLE waits[3] = {g_trayWakePump.worker.StopEvent(), nullptr, nullptr};
+    HANDLE waits[3] = {stopEvent, nullptr, nullptr};
     DWORD count = 1;
     DWORD registryIndex = 0;
     if (ring) waits[count++] = ring;
@@ -102,23 +104,17 @@ bool StartTrayWake(HWND wakeWindow) {
     if (!wakeWindow) return false;
     if (g_trayWakePump.running.exchange(true, std::memory_order_acq_rel)) return true;
     g_trayWakePump.window.store(wakeWindow, std::memory_order_release);
-    if (!g_trayWakePump.worker.Prepare()) {
-        g_trayWakePump.running.store(false, std::memory_order_release);
-        return false;
-    }
-    HANDLE thread = CreateThread(nullptr, 0, &TrayWakeThreadEntry, nullptr, 0, nullptr);
-    if (!thread) {
+    if (!g_trayWakePump.worker.Start(&TrayWakeThreadEntry, nullptr)) {
         g_trayWakePump.running.store(false, std::memory_order_release);
         g_trayWakePump.worker.Stop();
         return false;
     }
-    g_trayWakePump.worker.Attach(thread);
     return true;
 }
 
 void StopTrayWake() {
     g_trayWakePump.running.store(false, std::memory_order_release);
-    g_trayWakePump.worker.Stop();
+    if (g_trayWakePump.worker.Stop() != WorkerThread::StopResult::Stopped) return;
     g_trayWakePump.window.store(nullptr, std::memory_order_release);
 }
 
@@ -131,6 +127,7 @@ int DrainTrayRing(TrayLearnResult* result);
 // resident keeps feeding the ledger, while a pass that could not land one leaves it a snapshot. Read on the
 // frame loop's tray tick while a pass writes it on the learning worker, hence atomic.
 std::atomic<bool> g_liveTrayObserverResident{false};
+std::mutex g_trayRingDrainLock;
 
 // Defined with the ledger further down, and called by the pass when it has asked every application to
 // register again -- which is the moment the ledger stops being a partial picture (see TrayLearn.h).
@@ -1213,6 +1210,7 @@ void ForgetDeadTrayWindows() {
 // an optimisation: it means the ring carries only what the shell actually told the application (the decoded
 // registration) and the bar derives the rest the same way it does for a card cell.
 int DrainTrayRing(TrayLearnResult* result) {
+    std::lock_guard<std::mutex> drainLock(g_trayRingDrainLock);
     static TrayRingReader reader;
     static unsigned cursor = 0;
     // THE TWO NUMBERS THAT SAY WHERE A RECORD WAS LOST, reported the first few times they are asked for. This

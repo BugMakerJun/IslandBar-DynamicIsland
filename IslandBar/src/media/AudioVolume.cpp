@@ -79,7 +79,7 @@ AudioVolume::~AudioVolume() {
 }
 
 bool AudioVolume::Start() {
-    if (running_) return true;
+    if (running_.load(std::memory_order_acquire)) return true;
 
     writeEvent_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);   // auto-reset
     peakEvent_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);    // auto-reset
@@ -87,18 +87,15 @@ bool AudioVolume::Start() {
     // Stop() rather than a bare return: it is the one place that ends whatever exists, whether that is
     // nothing, one event, or a thread that is already running. The copies this class used to have each
     // unwound a different part of this by hand (see platform/WorkerThread.h).
-    if (!worker_.Prepare() || !writeEvent_ || !peakEvent_ || !volumeEvent_) {
+    if (!writeEvent_ || !peakEvent_ || !volumeEvent_) {
         Stop();
         return false;
     }
 
-    DWORD threadId = 0;
-    HANDLE thread = CreateThread(nullptr, 0, &AudioVolume::ThreadEntry, this, 0, &threadId);
-    if (!thread) {
+    if (!worker_.Start(&AudioVolume::ThreadEntry, this)) {
         Stop();
         return false;
     }
-    worker_.Attach(thread);
     LogLine(L"  volume: peak meter demand=off cadence=%lu ms", kPollIntervalMs);
 
     // Wait for the first read, so Start() returning true means the level is known and the
@@ -107,8 +104,9 @@ bool AudioVolume::Start() {
         Sleep(5);
     }
 
-    running_ = haveLevel_;
-    if (!running_) {
+    const bool haveLevel = haveLevel_;
+    running_.store(haveLevel, std::memory_order_release);
+    if (!haveLevel) {
         Stop();
         return false;
     }
@@ -116,7 +114,10 @@ bool AudioVolume::Start() {
 }
 
 void AudioVolume::Stop() {
-    worker_.Stop();
+    const WorkerThread::StopResult stopped = worker_.Stop();
+    running_.store(false, std::memory_order_release);
+    peakMeterActive_.store(false, std::memory_order_relaxed);
+    if (stopped != WorkerThread::StopResult::Stopped) return;
     if (writeEvent_) {
         CloseHandle(writeEvent_);
         writeEvent_ = nullptr;
@@ -129,8 +130,6 @@ void AudioVolume::Stop() {
         CloseHandle(volumeEvent_);
         volumeEvent_ = nullptr;
     }
-    peakMeterActive_.store(false, std::memory_order_relaxed);
-    running_ = false;
 }
 
 bool AudioVolume::Available() const {
@@ -326,6 +325,8 @@ unsigned long __stdcall AudioVolume::ThreadEntry(void* self) {
 }
 
 void AudioVolume::Run() {
+    const WorkerThread::Signal workerSignal = WorkerThread::CurrentSignal();
+    const HANDLE stopEvent = workerSignal.StopEvent();
     // This thread owns its own apartment. `IAudioEndpointVolume` is created here and used
     // here, so it never crosses into the frame loop's apartment.
     const HRESULT apartment = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
@@ -339,7 +340,7 @@ void AudioVolume::Run() {
     if (haveApartment) ReadFromDevice(callback);
 
     while (true) {
-        HANDLE waits[4] = {worker_.StopEvent(), writeEvent_, peakEvent_, volumeEvent_};
+        HANDLE waits[4] = {stopEvent, writeEvent_, peakEvent_, volumeEvent_};
         // A visible meter needs the fast interval; otherwise the worker sleeps until the next volume read.
         // The volume re-read (which opens the device) stays on its own slower clock in either mode.
         const bool peakDemand = peakMeterActive_.load(std::memory_order_relaxed);
@@ -425,7 +426,7 @@ void AudioVolume::Run() {
     ReleaseEndpointVolume();
     if (callback) callback->Release();
     if (haveApartment) CoUninitialize();
-    running_ = false;
+    running_.store(false, std::memory_order_release);
 }
 
 } // namespace island

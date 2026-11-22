@@ -61,8 +61,9 @@ struct ScreenInk::State {
 
 ScreenInk::~ScreenInk() {
     if (state_) {
-        state_->worker.Stop();
-        delete state_;
+        if (state_->worker.Stop() == WorkerThread::StopResult::Stopped) {
+            delete state_;
+        }
         state_ = nullptr;
     }
 }
@@ -71,20 +72,12 @@ bool ScreenInk::Start() {
     if (state_) return true;
     state_ = new (std::nothrow) State();
     if (!state_) return false;
-    if (!state_->worker.Prepare()) {
-        delete state_;
-        state_ = nullptr;
-        return false;
-    }
-    DWORD threadId = 0;
-    HANDLE thread = CreateThread(nullptr, 0, &ScreenInk::ThreadEntry, this, 0, &threadId);
-    if (!thread) {
+    if (!state_->worker.Start(&ScreenInk::ThreadEntry, this)) {
         state_->worker.Stop();
         delete state_;
         state_ = nullptr;
         return false;
     }
-    state_->worker.Attach(thread);
     return true;
 }
 
@@ -123,13 +116,15 @@ unsigned long __stdcall ScreenInk::ThreadEntry(void* self) {
 }
 
 void ScreenInk::Run() {
+    const WorkerThread::Signal workerSignal = WorkerThread::CurrentSignal();
+    const HANDLE stopEvent = workerSignal.StopEvent();
     State& state = *state_;
 
     // The first reading is taken at once rather than after a full interval: the bar draws its first
     // frame before the thread would otherwise wake, and until then the ink falls back to the lens.
     while (true) {
         if (paused_.load(std::memory_order_relaxed)) {
-            if (WaitForSingleObject(state.worker.StopEvent(), kSampleIntervalMs) != WAIT_TIMEOUT) break;
+            if (WaitForSingleObject(stopEvent, kSampleIntervalMs) != WAIT_TIMEOUT) break;
             continue;
         }
 
@@ -231,7 +226,7 @@ void ScreenInk::Run() {
             for (int i = 0; i < kMaxRects; ++i) state.grey[i] = grey[i];
         }
 
-        if (WaitForSingleObject(state.worker.StopEvent(), kSampleIntervalMs) != WAIT_TIMEOUT) break;
+        if (WaitForSingleObject(stopEvent, kSampleIntervalMs) != WAIT_TIMEOUT) break;
     }
 }
 

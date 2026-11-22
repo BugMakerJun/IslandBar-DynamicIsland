@@ -195,8 +195,10 @@ struct AsyncRead {
     int percent = 0;
 
     ~AsyncRead() {
-        worker.Stop();
-        if (wake) CloseHandle(wake);
+        if (worker.Stop() == WorkerThread::StopResult::Stopped && wake) {
+            CloseHandle(wake);
+            wake = nullptr;
+        }
     }
 };
 
@@ -206,8 +208,10 @@ AsyncRead& Reader() {
 }
 
 unsigned long __stdcall ReadThread(void* self) {
+    const WorkerThread::Signal workerSignal = WorkerThread::CurrentSignal();
+    const HANDLE stopEvent = workerSignal.StopEvent();
     auto& state = *static_cast<AsyncRead*>(self);
-    const HANDLE events[2] = {state.worker.StopEvent(), state.wake};
+    const HANDLE events[2] = {stopEvent, state.wake};
     while (true) {
         if (WaitForMultipleObjects(2, events, FALSE, INFINITE) != WAIT_OBJECT_0 + 1) break;
         HMONITOR monitor = nullptr;
@@ -229,21 +233,19 @@ unsigned long __stdcall ReadThread(void* self) {
 
 bool StartReader(AsyncRead& state) {
     if (state.worker.Started()) return true;
-    if (!state.worker.Prepare()) return false;
     state.wake = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     if (!state.wake) {
         state.worker.Stop();
         return false;
     }
-    DWORD threadId = 0;
-    HANDLE thread = CreateThread(nullptr, 0, &ReadThread, &state, 0, &threadId);
-    if (!thread) {
-        state.worker.Stop();
-        CloseHandle(state.wake);
-        state.wake = nullptr;
+    if (!state.worker.Start(&ReadThread, &state)) {
+        if (state.worker.Stop() == WorkerThread::StopResult::Stopped &&
+            state.wake) {
+            CloseHandle(state.wake);
+            state.wake = nullptr;
+        }
         return false;
     }
-    state.worker.Attach(thread);
     return true;
 }
 

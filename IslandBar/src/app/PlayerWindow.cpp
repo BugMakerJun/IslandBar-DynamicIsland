@@ -164,25 +164,21 @@ PlayerWindowWatch::~PlayerWindowWatch() {
 }
 
 bool PlayerWindowWatch::Start() {
-    if (running_) return true;
+    if (running_.load(std::memory_order_acquire)) return true;
 
-    if (!worker_.Prepare()) return false;
-
-    HANDLE thread = ::CreateThread(nullptr, 0, &PlayerWindowWatch::ThreadEntry, this, 0, nullptr);
-    if (!thread) {
+    if (!worker_.Start(&PlayerWindowWatch::ThreadEntry, this)) {
         worker_.Stop();
         return false;
     }
-    worker_.Attach(thread);
-    running_ = true;
+    running_.store(true, std::memory_order_release);
     return true;
 }
 
 void PlayerWindowWatch::Stop() {
     // NO early return when running_ is false, which is what this used to do: the handles belong to the
     // attempt, not to the flag, and a Start() that failed after preparing the event left it open forever.
-    running_ = false;
-    worker_.Stop();
+    running_.store(false, std::memory_order_release);
+    (void)worker_.Stop();
 }
 
 unsigned long __stdcall PlayerWindowWatch::ThreadEntry(void* self) {
@@ -191,13 +187,15 @@ unsigned long __stdcall PlayerWindowWatch::ThreadEntry(void* self) {
 }
 
 void PlayerWindowWatch::Run() {
+    const WorkerThread::Signal workerSignal = WorkerThread::CurrentSignal();
+    const HANDLE stopEvent = workerSignal.StopEvent();
     // The FIRST pass runs at once: a bar started while a song is playing should have the words
     // straight away, not one poll interval later.
     while (true) {
         Poll();
         ::InterlockedIncrement(&pollCount_);
-        if (::WaitForSingleObject(worker_.StopEvent(), kPlayerWindowPollMs) != WAIT_TIMEOUT) break;
-        if (!running_) break;
+        if (::WaitForSingleObject(stopEvent, kPlayerWindowPollMs) != WAIT_TIMEOUT) break;
+        if (!running_.load(std::memory_order_acquire)) break;
     }
 }
 

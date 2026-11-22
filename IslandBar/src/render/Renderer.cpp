@@ -1959,7 +1959,31 @@ ID2D1Bitmap1* Renderer::IconForWindow(HWND window) {
     if (!window || !d2dContext_) return nullptr;
 
     for (int i = 0; i < windowIconCount_; ++i) {
-        if (windowIcons_[i].window == window) return windowIcons_[i].bitmap;
+        if (windowIcons_[i].window != window) continue;
+
+        WindowIcon& cached = windowIcons_[i];
+        if (cached.bitmap) return cached.bitmap;
+        if (!IsWindow(window)) return nullptr;
+
+        const ULONGLONG now = GetTickCount64();
+        if (!WindowIconRetryDue(cached.loadAttempts, cached.retryAfterMs, now)) {
+            return nullptr;
+        }
+
+        cached.bitmap = LoadWindowIcon(window);
+        ++cached.loadAttempts;
+        if (cached.bitmap) {
+            cached.retryAfterMs = 0;
+            if (cached.loadAttempts > 1) {
+                LogLine(L"  window icon: hwnd %p recovered on attempt %d/%d",
+                        reinterpret_cast<void*>(window), cached.loadAttempts,
+                        kMaxWindowIconLoadAttempts);
+            }
+            return cached.bitmap;
+        }
+
+        ScheduleWindowIconRetry(cached, now);
+        return nullptr;
     }
     // ... and only now is a window that has CLOSED refused.
     //
@@ -1972,7 +1996,35 @@ ID2D1Bitmap1* Renderer::IconForWindow(HWND window) {
     WindowIcon& slot = windowIcons_[windowIconCount_];
     slot.window = window;
     slot.bitmap = nullptr;
+    slot.loadAttempts = 0;
+    slot.retryAfterMs = 0;
     ++windowIconCount_;
+
+    const ULONGLONG now = GetTickCount64();
+    slot.bitmap = LoadWindowIcon(window);
+    ++slot.loadAttempts;
+    if (!slot.bitmap) ScheduleWindowIconRetry(slot, now);
+    return slot.bitmap;
+}
+
+void Renderer::ScheduleWindowIconRetry(WindowIcon& icon, ULONGLONG nowMs) {
+    const ULONGLONG delayMs = WindowIconRetryDelayMs(icon.loadAttempts);
+    if (delayMs == 0) {
+        icon.retryAfterMs = 0;
+        LogLine(L"  window icon: hwnd %p no icon after %d attempts; retries exhausted",
+                reinterpret_cast<void*>(icon.window), icon.loadAttempts);
+        return;
+    }
+
+    icon.retryAfterMs = nowMs + delayMs;
+    if (icon.loadAttempts == 1) {
+        LogLine(L"  window icon: hwnd %p attempt 1/%d failed; retry in %llu ms",
+                reinterpret_cast<void*>(icon.window), kMaxWindowIconLoadAttempts, delayMs);
+    }
+}
+
+ID2D1Bitmap1* Renderer::LoadWindowIcon(HWND window) {
+    ID2D1Bitmap1* bitmap = nullptr;
 
     // The window's OWN icon, in preference to its executable's.
     //
@@ -2035,10 +2087,10 @@ ID2D1Bitmap1* Renderer::IconForWindow(HWND window) {
                 d2dContext_->CreateBitmap(
                     D2D1::SizeU(static_cast<UINT32>(decoded.width),
                                 static_cast<UINT32>(decoded.height)),
-                    decoded.pixels, stride, &props, &slot.bitmap);
+                    decoded.pixels, stride, &props, &bitmap);
             }
         }
-        return slot.bitmap;
+        return bitmap;
     }
 
     // An HICON has to be turned into pixels. The shared rasterizer draws it into a top-down BGRA buffer
@@ -2051,10 +2103,10 @@ ID2D1Bitmap1* Renderer::IconForWindow(HWND window) {
             D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED),
             96.0f, 96.0f);
         d2dContext_->CreateBitmap(D2D1::SizeU(kIconRasterSide, kIconRasterSide), pixels.data(),
-                                  kIconRasterSide * 4, &props, &slot.bitmap);
+                                  kIconRasterSide * 4, &props, &bitmap);
     }
 
-    return slot.bitmap;
+    return bitmap;
 }
 
 void Renderer::PruneWindowIconsForFrame(const HWND* frameWindows, int frameWindowCount) {

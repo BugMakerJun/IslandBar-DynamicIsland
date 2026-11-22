@@ -116,6 +116,17 @@ void TestCardLayout() {
               L"the window-icon cache keeps listed and departing icons, and drops only the rest");
         Check(kMaxWindowIcons >= FrameState::kMaxTaskButtons,
               L"the window-icon cache capacity covers the largest frame the row can request");
+        const ULONGLONG firstFailure = 10000;
+        Check(WindowIconRetryDue(0, 0, firstFailure) &&
+                  WindowIconRetryDelayMs(1) == 500 &&
+                  WindowIconRetryDelayMs(2) == 2000 &&
+                  WindowIconRetryDelayMs(3) == 5000 &&
+                  WindowIconRetryDelayMs(kMaxWindowIconLoadAttempts) == 0,
+              L"a failed window icon retries with finite 500/2000/5000 ms backoff");
+        Check(!WindowIconRetryDue(1, firstFailure + 500, firstFailure + 499) &&
+                  WindowIconRetryDue(1, firstFailure + 500, firstFailure + 500) &&
+                  !WindowIconRetryDue(kMaxWindowIconLoadAttempts, 0, firstFailure),
+              L"window-icon retries wait for their deadline and stop at the attempt limit");
 
         const RoundedBox motionCard =
             BoxForState(IslandState::Expanded,

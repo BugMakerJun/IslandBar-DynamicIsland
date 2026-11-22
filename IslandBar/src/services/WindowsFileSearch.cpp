@@ -223,20 +223,17 @@ WindowsFileSearch::~WindowsFileSearch() {
 }
 
 bool WindowsFileSearch::Start() {
-    if (running_) return true;
+    if (running_.load(std::memory_order_acquire)) return true;
     wakeEvent_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
-    if (!worker_.Prepare() || !wakeEvent_) {
+    if (!wakeEvent_) {
         Stop();
         return false;
     }
-    DWORD threadId = 0;
-    HANDLE thread = CreateThread(nullptr, 0, &WindowsFileSearch::ThreadEntry, this, 0, &threadId);
-    if (!thread) {
+    if (!worker_.Start(&WindowsFileSearch::ThreadEntry, this)) {
         Stop();
         return false;
     }
-    worker_.Attach(thread);
-    running_ = true;
+    running_.store(true, std::memory_order_release);
     return true;
 }
 
@@ -269,8 +266,10 @@ bool WindowsFileSearch::Take(std::uint64_t* sequence, std::vector<StartSearchRes
 }
 
 void WindowsFileSearch::Stop() {
-    const bool wasRunning = running_;
-    worker_.Stop();
+    const bool wasRunning = running_.load(std::memory_order_acquire);
+    const WorkerThread::StopResult stopped = worker_.Stop();
+    running_.store(false, std::memory_order_release);
+    if (stopped != WorkerThread::StopResult::Stopped) return;
     if (wakeEvent_) {
         CloseHandle(wakeEvent_);
         wakeEvent_ = nullptr;
@@ -280,7 +279,6 @@ void WindowsFileSearch::Stop() {
     pendingSequence_ = 0;
     requestedSequence_ = 0;
     published_ = false;
-    running_ = false;
     if (wasRunning) {
         LogLine(L"  start.search.closed workers=0 pending_search=0 pending_icons=0");
     }
@@ -292,10 +290,12 @@ unsigned long __stdcall WindowsFileSearch::ThreadEntry(void* self) {
 }
 
 void WindowsFileSearch::Run() {
+    const WorkerThread::Signal workerSignal = WorkerThread::CurrentSignal();
+    const HANDLE stopEvent = workerSignal.StopEvent();
     const HRESULT apartment = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     const bool haveApartment = SUCCEEDED(apartment) || apartment == RPC_E_CHANGED_MODE;
     while (haveApartment) {
-        HANDLE waits[2] = {worker_.StopEvent(), wakeEvent_};
+        HANDLE waits[2] = {stopEvent, wakeEvent_};
         const DWORD signalled = WaitForMultipleObjects(2, waits, FALSE, INFINITE);
         if (signalled == WAIT_OBJECT_0) break;
         if (signalled == WAIT_FAILED) break;
@@ -321,7 +321,7 @@ void WindowsFileSearch::Run() {
         }
     }
     if (haveApartment) CoUninitialize();
-    running_ = false;
+    running_.store(false, std::memory_order_release);
 }
 
 } // namespace island

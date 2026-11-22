@@ -1055,7 +1055,42 @@ static void StartWeatherAndPreview(bool& previewReady, island::BarSystems& syste
 //
 // Moved out of RunBar verbatim, both blocks together: the first count is the one the second reports against,
 // and nothing outside asks about it, so it stays local.
-static void ReadTrayAndStartLearning(island::BarSystems& systems) {
+static bool LaunchTrayLearning(const std::shared_ptr<std::atomic<bool>>& inFlight) {
+    if (!inFlight) return false;
+    bool expected = false;
+    if (!inFlight->compare_exchange_strong(expected, true, std::memory_order_acq_rel)) return false;
+
+    try {
+        std::thread([inFlight]() {
+            struct ClearInFlight {
+                std::shared_ptr<std::atomic<bool>> flag;
+                ~ClearInFlight() { flag->store(false, std::memory_order_release); }
+            } clear{inFlight};
+            try {
+                island::TrayIcons icons;
+                icons.Refresh();
+                const island::TrayLearnResult learned = island::LearnTrayCallbacks(icons, true);
+                const std::wstring observer = island::ObserverClause(learned);
+                island::LogAndPrint(
+                    "  tray learn: the shell (%d process(es) offered) was %s, %d registration(s) "
+                    "captured, %d new entr(ies) -- %d of %d icon(s) have a callback entry "
+                    "(in %lld ms) -- %ls",
+                    learned.appsTried,
+                    learned.appsAlreadyWatched > 0 ? "already carrying the module" : "given the module",
+                    learned.captured, learned.newEntries, learned.covered, learned.icons, learned.ms,
+                    observer.c_str());
+            } catch (...) {
+                island::LogAndPrint("  tray learn: worker failed unexpectedly; in-flight flag released");
+            }
+        }).detach();
+        return true;
+    } catch (...) {
+        inFlight->store(false, std::memory_order_release);
+        return false;
+    }
+}
+
+static void ReadTrayAndStartLearning(island::BarState& bar, island::BarSystems& systems) {
     // --- the system tray ------------------------------------------------------
     //
     // Read from the registry rather than from the shell's tray: the classic route through
@@ -1092,26 +1127,19 @@ static void ReadTrayAndStartLearning(island::BarSystems& systems) {
         // new application starts.
         island::InstallTrayHook();
         const int coveredNow = island::CountCoveredIcons(systems.trayIcons);
+        bar.lastShellPid = island::TrayShellProcessId();
+        bar.lastLearnAttempt = GetTickCount64();
         if (coveredNow >= trayAtStart) {
             island::LogAndPrint("  tray learn: %d of %d icon(s) already have a callback entry -- not asking "
                                 "again", coveredNow, trayAtStart);
         } else {
-            island::LogAndPrint("  tray learn: %d of %d icon(s) known; asking the applications to register "
-                                "again (background)", coveredNow, trayAtStart);
-            std::thread([]() {
-                island::TrayIcons icons;
-                icons.Refresh();
-                const island::TrayLearnResult learned = island::LearnTrayCallbacks(icons, true);
-                const std::wstring observer = island::ObserverClause(learned);
-                island::LogAndPrint("  tray learn: the shell (%d process(es) offered) was %s, %d "
-                                    "registration(s) captured, %d new entr(ies) -- %d of %d icon(s) have a "
-                                    "callback entry (in %lld ms) -- %ls",
-                                    learned.appsTried,
-                                    learned.appsAlreadyWatched > 0 ? "already carrying the module"
-                                                                   : "given the module",
-                                    learned.captured, learned.newEntries, learned.covered, learned.icons,
-                                    learned.ms, observer.c_str());
-            }).detach();
+            if (LaunchTrayLearning(bar.learnInFlight)) {
+                island::LogAndPrint("  tray learn: %d of %d icon(s) known; asking the applications to "
+                                    "register again (background)",
+                                    coveredNow, trayAtStart);
+            } else {
+                island::LogAndPrint("  tray learn: another learning pass is already in flight");
+            }
         }
         std::fflush(stdout);
     }
@@ -6392,37 +6420,19 @@ static void TickTray(island::BarState& bar, island::BarSystems& systems,
         const DWORD shellNow = island::TrayShellProcessId();
         if (shellNow != 0 && shellNow != bar.lastShellPid && !bar.learnInFlight->load() &&
             GetTickCount64() - bar.lastLearnAttempt >= 15000) {
-            bar.lastShellPid = shellNow;
-            bar.lastLearnAttempt = GetTickCount64();
-            // THE NEW SHELL HOLDS NONE OF THEM. Every registration the old one was holding died
-            // with it, so the ledger is emptied before the module is offered again: until it
-            // reports back the card falls back to the registry list (see shell/TrayIcons.h)
-            // instead of drawing registrations no shell is holding any more.
-            island::ResetLiveTray();
-            bar.learnInFlight->store(true);
-            island::LogAndPrint("  tray learn: the shell is a new process (pid %lu) -- offering "
-                                "the module to it again (background)\n",
-                                static_cast<unsigned long>(shellNow));
-            std::fflush(stdout);
-            // The flag is captured INTO A LOCAL NAME: a capture list takes names, not members, and
-            // the worker outlives this scope -- it is detached, which is exactly why the flag is a
-            // shared_ptr on the heap (see app/BarState.h).
-            const std::shared_ptr<std::atomic<bool>> learnFlight = bar.learnInFlight;
-            std::thread([learnFlight]() {
-                island::TrayIcons icons;
-                icons.Refresh();
-                const island::TrayLearnResult learned = island::LearnTrayCallbacks(icons, true);
-                const std::wstring observer = island::ObserverClause(learned);
-                island::LogAndPrint("  tray learn: the shell (%d process(es) offered) was "
-                                    "%s, %d registration(s) captured, %d new entr(ies) -- %d of "
-                                    "%d icon(s) have a callback entry (in %lld ms) -- %ls",
-                                    learned.appsTried,
-                                    learned.appsAlreadyWatched > 0 ? "already carrying the module"
-                                                                   : "given the module",
-                                    learned.captured, learned.newEntries, learned.covered,
-                                    learned.icons, learned.ms, observer.c_str());
-                learnFlight->store(false);
-            }).detach();
+            if (LaunchTrayLearning(bar.learnInFlight)) {
+                bar.lastShellPid = shellNow;
+                bar.lastLearnAttempt = GetTickCount64();
+                // THE NEW SHELL HOLDS NONE OF THEM. Every registration the old one was holding died
+                // with it, so the ledger is emptied before the module is offered again: until it
+                // reports back the card falls back to the registry list (see shell/TrayIcons.h)
+                // instead of drawing registrations no shell is holding any more.
+                island::ResetLiveTray();
+                island::LogAndPrint("  tray learn: the shell is a new process (pid %lu) -- offering "
+                                    "the module to it again (background)\n",
+                                    static_cast<unsigned long>(shellNow));
+                std::fflush(stdout);
+            }
         }
     }
 }
@@ -6757,7 +6767,7 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
     // pass). The phases live above RunBar; the order is unchanged. Only the preview's flag is read later.
     bool previewReady = false;
     StartWeatherAndPreview(previewReady, systems);
-    ReadTrayAndStartLearning(systems);
+    ReadTrayAndStartLearning(bar, systems);
 
     // The Start card's own state. The phase lives above RunBar; the order is unchanged (see the note on the
     // phase functions).

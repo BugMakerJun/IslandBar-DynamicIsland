@@ -57,8 +57,9 @@ namespace {
 // The ring this module publishes on. One per process, opened on the first registration.
 island::TrayRingPublisher g_ring;
 
-CRITICAL_SECTION g_lock;
-bool g_lockReady = false;
+// SRWLOCK has a constant initializer, so the report path needs no setup from DllMain. The critical section
+// this replaced was created under the loader lock, and the first log line then performed file I/O there.
+SRWLOCK g_lock = SRWLOCK_INIT;
 volatile LONG g_state = 0;   // 0 = not tried yet
 volatile LONG g_hooked = 0;  // how many import slots were redirected
 void* g_realW = nullptr;
@@ -167,8 +168,7 @@ HANDLE ReportHandle(const wchar_t* path) {
 }
 
 void ReportLine(const wchar_t* format, ...) {
-    if (!g_lockReady) return;
-    EnterCriticalSection(&g_lock);
+    AcquireSRWLockExclusive(&g_lock);
     wchar_t path[MAX_PATH] = {};
     ReportPath(path, MAX_PATH);
     wchar_t line[2048] = {};
@@ -194,7 +194,7 @@ void ReportLine(const wchar_t* format, ...) {
         DWORD written = 0;
         WriteFile(handle, utf8, static_cast<DWORD>(bytes), &written, nullptr);
     }
-    LeaveCriticalSection(&g_lock);
+    ReleaseSRWLockExclusive(&g_lock);
 }
 
 // =====================================================================
@@ -934,6 +934,7 @@ void EnsureHooked() {
     GetModuleFileNameW(nullptr, self, MAX_PATH);
     const wchar_t* leaf = wcsrchr(self, L'\\');
     const wchar_t* exe = leaf ? leaf + 1 : self;
+    ReportLine(L"attached pid %lu exe %ls", GetCurrentProcessId(), exe);
 
     // ---- PIN THIS MODULE IN THIS PROCESS, BEFORE THE FIRST SLOT IS TOUCHED ---------------------------------
     //
@@ -1081,12 +1082,6 @@ extern "C" __declspec(dllexport) LRESULT CALLBACK IslandTrayHookProc(int code, W
 BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(module);
-        InitializeCriticalSection(&g_lock);
-        g_lockReady = true;
-        wchar_t self[MAX_PATH] = {};
-        GetModuleFileNameW(nullptr, self, MAX_PATH);
-        const wchar_t* leaf = wcsrchr(self, L'\\');
-        ReportLine(L"attached pid %lu exe %ls", GetCurrentProcessId(), leaf ? leaf + 1 : self);
     }
     return TRUE;
 }

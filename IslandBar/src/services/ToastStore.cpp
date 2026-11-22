@@ -313,7 +313,7 @@ bool ToastReader::Start(const wchar_t* databasePath) {
 
 void ToastReader::Stop() {
     running_.store(false, std::memory_order_release);
-    worker_.Stop();
+    if (worker_.Stop() != WorkerThread::StopResult::Stopped) return;
     if (database_ && sqlite_ && sqlite_->api.close) {
         sqlite_->api.close(reinterpret_cast<sqlite3*>(database_));
     }
@@ -327,19 +327,14 @@ void ToastReader::Stop() {
 
 bool ToastReader::StartPolling(HWND wakeWindow, unsigned long pollMs) {
     if (!database_ || !sqlite_ || running_.load(std::memory_order_acquire)) return false;
-    if (!worker_.Prepare()) return false;
-
     wakeWindow_ = wakeWindow;
     pollMs_ = pollMs == 0 ? 2000 : pollMs;
     running_.store(true, std::memory_order_release);
-    DWORD threadId = 0;
-    HANDLE thread = CreateThread(nullptr, 0, &ToastReader::ThreadEntry, this, 0, &threadId);
-    if (!thread) {
+    if (!worker_.Start(&ToastReader::ThreadEntry, this)) {
         running_.store(false, std::memory_order_release);
         worker_.Stop();
         return false;
     }
-    worker_.Attach(thread);
     LogLine(L"  toasts: background reader started (fallback cadence=%lu ms)", pollMs_);
     return true;
 }
@@ -350,8 +345,10 @@ unsigned long __stdcall ToastReader::ThreadEntry(void* self) {
 }
 
 void ToastReader::Run() {
+    const WorkerThread::Signal workerSignal = WorkerThread::CurrentSignal();
+    const HANDLE stopEvent = workerSignal.StopEvent();
     while (running_.load(std::memory_order_acquire)) {
-        if (WaitForSingleObject(worker_.StopEvent(), pollMs_) != WAIT_TIMEOUT) break;
+        if (WaitForSingleObject(stopEvent, pollMs_) != WAIT_TIMEOUT) break;
 
         NotificationStore batch;
         const int added = Poll(&batch);

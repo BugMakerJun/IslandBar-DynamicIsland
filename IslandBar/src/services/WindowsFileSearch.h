@@ -8,6 +8,7 @@
 
 #include <windows.h>
 
+#include <atomic>
 #include <cstdint>
 #include <mutex>
 #include <string>
@@ -44,7 +45,7 @@ private:
     std::uint64_t consumedSequence_ = 0;
     std::vector<StartSearchResult> publishedResults_;
     bool published_ = false;
-    volatile bool running_ = false;
+    std::atomic<bool> running_{false};
 };
 
 } // namespace island

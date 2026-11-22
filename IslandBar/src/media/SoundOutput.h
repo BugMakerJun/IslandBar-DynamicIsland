@@ -28,6 +28,7 @@
 
 #include <windows.h>
 
+#include <atomic>
 #include <cstddef>
 
 #include "domain/CardLayout.h"   // kMaxSoundDevices, kMaxSoundSessions
@@ -129,7 +130,7 @@ private:
     // The stop event, the thread and the rule for ending both. See platform/WorkerThread.h.
     WorkerThread worker_;
     HANDLE workEvent_ = nullptr;    // auto-reset: a write or a refresh request
-    volatile bool running_ = false;
+    std::atomic<bool> running_{false};
 
     mutable CriticalSection lock_;
 

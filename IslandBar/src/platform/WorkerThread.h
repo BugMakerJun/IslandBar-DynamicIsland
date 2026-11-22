@@ -27,72 +27,153 @@
 
 #include <windows.h>
 
+#include <atomic>
+#include <memory>
+#include <new>
+
+#include "core/Log.h"
+
 namespace island {
 
 class WorkerThread {
+private:
+    struct State {
+        HANDLE stopEvent = nullptr;
+        HANDLE thread = nullptr;
+        std::atomic<bool> stopping{false};
+
+        ~State() {
+            if (thread) CloseHandle(thread);
+            if (stopEvent) CloseHandle(stopEvent);
+        }
+    };
+
 public:
+    enum class StopResult {
+        Stopped,
+        Timeout,
+        Failed,
+    };
+
+    using EntryPoint = unsigned long (__stdcall*)(void*);
+
+    class Signal {
+    public:
+        HANDLE StopEvent() const { return state_ ? state_->stopEvent : nullptr; }
+
+    private:
+        friend class WorkerThread;
+        explicit Signal(std::shared_ptr<State> state) : state_(std::move(state)) {}
+        std::shared_ptr<State> state_;
+    };
+
     WorkerThread() = default;
-    ~WorkerThread() { Stop(); }
+    ~WorkerThread() { (void)Stop(0); }
 
     WorkerThread(const WorkerThread&) = delete;
     WorkerThread& operator=(const WorkerThread&) = delete;
 
-    // Manual-reset, so every waiter sees it and the thread does not have to re-arm anything.
-    //
-    // It stops first, and that line is the fix for the leak the copies had: a Start() that gave up
-    // half-way left the event (and often the thread) behind, and the retry -- the callers do retry --
-    // overwrote the handle with a fresh one. Ending the previous attempt here makes a retry start from
-    // nothing rather than from a corpse.
-    bool Prepare() {
-        Stop();
-        stopEvent_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-        return stopEvent_ != nullptr;
-    }
+    // Creates the thread and gives its entry point a shared State lease before user code runs.
+    bool Start(EntryPoint entry, void* context);
 
-    // Hands over a thread the caller has already started, after Prepare(). It does NOT stop anything: the
-    // stop event Prepare() just created has to survive, and signalling it here is exactly the way to lose
-    // it. Every caller pairs one Prepare() with one Attach() and calls Stop() in between if it is retrying.
-    void Attach(HANDLE thread) { thread_ = thread; }
+    bool Started() const { return state_ && state_->thread != nullptr; }
+    bool Prepared() const { return state_ && state_->stopEvent != nullptr; }
 
-    // The handle the worker waits on beside its own wake-up event.
-    HANDLE StopEvent() const { return stopEvent_; }
+    // The thread itself acquires this before running the owner's entry point. It stays valid even if
+    // WorkerThread and the owner are released while a non-cooperative call is still returning.
+    static Signal CurrentSignal() { return Signal(g_currentState); }
 
-    bool Started() const { return thread_ != nullptr; }
-
-    // True from the moment Prepare() succeeded until Stop() has finished: "there is a worker being run".
-    //
-    // This is the question the readers used to keep a flag of their own for (`lockReady_`), and the mapping
-    // is deliberate rather than approximate -- Start() set that flag before creating the event and Stop()
-    // cleared it after closing it, which is the same window this describes. It exists so the callers that
-    // turn a request away when the worker is not there ("nothing can be written, so do nothing") keep
-    // saying exactly what they said before.
-    bool Prepared() const { return stopEvent_ != nullptr; }
-
-    // Signals, waits with a timeout, closes what exists. Safe to call when nothing was ever prepared, safe
-    // to call twice, and safe on a thread that has already ended: a thread that is gone is signalled by
-    // WAIT_OBJECT_0 and a thread that ignores the stop event is given up on after `timeoutMs` rather than
-    // hanging the caller. The handle is closed either way -- CloseHandle on a running thread detaches it,
-    // which is the documented way to stop waiting without the thread deadlocking at exit.
-    bool Stop(unsigned long timeoutMs = 3000) {
-        bool ended = true;
-        if (stopEvent_) SetEvent(stopEvent_);
-
-        if (thread_) {
-            ended = WaitForSingleObject(thread_, timeoutMs) == WAIT_OBJECT_0;
-            CloseHandle(thread_);
-            thread_ = nullptr;
-        }
-
-        if (stopEvent_) {
-            CloseHandle(stopEvent_);
-            stopEvent_ = nullptr;
-        }
-        return ended;
-    }
+    StopResult Stop(unsigned long timeoutMs = 3000);
 
 private:
-    HANDLE stopEvent_ = nullptr;
-    HANDLE thread_ = nullptr;
+    struct Launch {
+        std::shared_ptr<State> state;
+        EntryPoint entry = nullptr;
+        void* context = nullptr;
+    };
+
+    static unsigned long __stdcall Bootstrap(void* argument) {
+        std::unique_ptr<Launch> launch(static_cast<Launch*>(argument));
+        g_currentState = launch->state;
+        launch->entry(launch->context);
+        g_currentState.reset();
+        return 0;
+    }
+
+    bool Prepare();
+
+    std::shared_ptr<State> state_;
+    inline static thread_local std::shared_ptr<State> g_currentState;
 };
+
+inline bool WorkerThread::Prepare() {
+    if (state_) {
+        if (!state_->thread) {
+            state_.reset();
+        } else {
+            const DWORD status = WaitForSingleObject(state_->thread, 0);
+            if (status == WAIT_TIMEOUT) {
+                LogLine(L"  worker thread: start refused while the previous thread is alive");
+                return false;
+            }
+            if (status != WAIT_OBJECT_0) {
+                LogLine(L"  worker thread: previous thread state could not be joined");
+                return false;
+            }
+            state_.reset();
+        }
+    }
+
+    std::shared_ptr<State> state = std::make_shared<State>();
+    state->stopEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (!state->stopEvent) return false;
+    state_ = std::move(state);
+    return true;
+}
+
+inline bool WorkerThread::Start(EntryPoint entry, void* context) {
+    if (!entry || !Prepare()) return false;
+
+    auto* launch = new (std::nothrow) Launch{state_, entry, context};
+    if (!launch) {
+        state_.reset();
+        return false;
+    }
+
+    const HANDLE thread = CreateThread(nullptr, 0, &WorkerThread::Bootstrap, launch, 0, nullptr);
+    if (!thread) {
+        delete launch;
+        state_.reset();
+        return false;
+    }
+    state_->thread = thread;
+    return true;
+}
+
+inline WorkerThread::StopResult WorkerThread::Stop(unsigned long timeoutMs) {
+    if (!state_) return StopResult::Stopped;
+
+    std::shared_ptr<State> state = state_;
+    if (state->stopEvent) SetEvent(state->stopEvent);
+    if (!state->thread) {
+        state_.reset();
+        return StopResult::Stopped;
+    }
+
+    const DWORD status = WaitForSingleObject(state->thread, timeoutMs);
+    if (status == WAIT_OBJECT_0) {
+        state_.reset();
+        return StopResult::Stopped;
+    }
+    if (status == WAIT_TIMEOUT) {
+        state->stopping.store(true, std::memory_order_release);
+        LogLine(L"  worker thread: stop timeout state=retained thread=alive prepare=blocked");
+        return StopResult::Timeout;
+    }
+
+    state->stopping.store(true, std::memory_order_release);
+    LogLine(L"  worker thread: stop failed status=%lu state=retained", status);
+    return StopResult::Failed;
+}
 
 }  // namespace island

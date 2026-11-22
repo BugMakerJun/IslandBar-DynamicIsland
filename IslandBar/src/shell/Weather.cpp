@@ -672,27 +672,25 @@ WeatherReader::~WeatherReader() {
 }
 
 bool WeatherReader::Start() {
-    if (running_) return true;
+    if (running_.load(std::memory_order_acquire)) return true;
 
     // This Start() was the one that unwound correctly by hand -- Stop() now owns that unwinding for every
     // reader, which is why the hand-written version above it is gone (see platform/WorkerThread.h).
-    if (!worker_.Prepare()) return false;
-
-    HANDLE thread = CreateThread(nullptr, 0, &WeatherReader::ThreadEntry, this, 0, nullptr);
-    if (!thread) {
+    if (!worker_.Start(&WeatherReader::ThreadEntry, this)) {
         worker_.Stop();
         return false;
     }
-    worker_.Attach(thread);
 
-    running_ = true;
+    running_.store(true, std::memory_order_release);
     return true;
 }
 
 void WeatherReader::Stop() {
     // The worker may be inside a network call, so the timeout is the 5000 ms the reader chose for itself.
-    worker_.Stop(5000);
-    running_ = false;
+    const WorkerThread::StopResult stopped = worker_.Stop(5000);
+    if (stopped == WorkerThread::StopResult::Stopped) {
+        running_.store(false, std::memory_order_release);
+    }
 }
 
 bool WeatherReader::Get(double* temperatureC, int* code, int* sunriseMinutes,
@@ -756,6 +754,8 @@ unsigned long __stdcall WeatherReader::ThreadEntry(void* self) {
 }
 
 void WeatherReader::Run() {
+    const WorkerThread::Signal workerSignal = WorkerThread::CurrentSignal();
+    const HANDLE stopEvent = workerSignal.StopEvent();
     // The worker owns its own apartment, exactly as the media session's does and for the same
     // reason: a WinRT call has to be made from inside one, and the frame loop's apartment is not
     // this thread's. Entering MTA keeps the UI thread out of the location call entirely -- which
@@ -772,9 +772,9 @@ void WeatherReader::Run() {
     unsigned waitMs = 0;
     while (true) {
         if (waitMs > 0) {
-            if (WaitForSingleObject(worker_.StopEvent(), static_cast<DWORD>(waitMs)) == WAIT_OBJECT_0) break;
+            if (WaitForSingleObject(stopEvent, static_cast<DWORD>(waitMs)) == WAIT_OBJECT_0) break;
         }
-        if (WaitForSingleObject(worker_.StopEvent(), 0) == WAIT_OBJECT_0) break;
+        if (WaitForSingleObject(stopEvent, 0) == WAIT_OBJECT_0) break;
 
         if (!haveApartment) {
             LogAndPrint(L"  weather: no Windows Runtime apartment -- location cannot be asked for; "
