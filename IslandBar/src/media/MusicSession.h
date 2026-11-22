@@ -20,6 +20,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <memory>
 
 #include "platform/CriticalSection.h"
 #include "platform/WorkerThread.h"
@@ -204,7 +205,7 @@ inline bool TimelineTrustedForEpoch(bool trackChanged, bool hadPreviousSession,
     return timeAdvanced || positionAdvanced;
 }
 
-class MusicSession {
+class MusicSession : public std::enable_shared_from_this<MusicSession> {
 public:
     MusicSession() = default;
     ~MusicSession();

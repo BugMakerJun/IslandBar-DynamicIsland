@@ -36,6 +36,7 @@
 
 #include <atomic>
 #include <cstddef>
+#include <memory>
 
 #include "platform/CriticalSection.h"
 #include "platform/WorkerThread.h"
@@ -75,7 +76,7 @@ bool IsKnownPlayerExecutable(const wchar_t* executableName);
 bool ParsePlayerWindowTitle(const wchar_t* windowTitle, char* titleOut, size_t titleCapacity,
                             char* artistOut, size_t artistCapacity);
 
-class PlayerWindowWatch {
+class PlayerWindowWatch : public std::enable_shared_from_this<PlayerWindowWatch> {
 public:
     PlayerWindowWatch() = default;
     ~PlayerWindowWatch();

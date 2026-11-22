@@ -92,7 +92,7 @@ bool AudioVolume::Start() {
         return false;
     }
 
-    if (!worker_.Start(&AudioVolume::ThreadEntry, this)) {
+    if (!worker_.Start(&AudioVolume::ThreadEntry, weak_from_this().lock())) {
         Stop();
         return false;
     }

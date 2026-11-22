@@ -41,6 +41,7 @@ private:
         HANDLE stopEvent = nullptr;
         HANDLE thread = nullptr;
         std::atomic<bool> stopping{false};
+        std::atomic<DWORD> threadId{0};
 
         ~State() {
             if (thread) CloseHandle(thread);
@@ -73,8 +74,14 @@ public:
     WorkerThread(const WorkerThread&) = delete;
     WorkerThread& operator=(const WorkerThread&) = delete;
 
-    // Creates the thread and gives its entry point a shared State lease before user code runs.
-    bool Start(EntryPoint entry, void* context);
+    // Creates the thread and keeps `owner` alive until the entry point has returned. This is the
+    // path every worker-owning object must use: a Stop timeout may let the UI release its last
+    // reference while a non-cooperative call is still returning, and the owner must survive that.
+    bool Start(EntryPoint entry, std::shared_ptr<void> owner);
+
+    // For contexts whose lifetime is independently guaranteed (a process-lifetime static, or no
+    // context at all). Do not pass an object's `this` here.
+    bool StartUnmanaged(EntryPoint entry, void* context);
 
     bool Started() const { return state_ && state_->thread != nullptr; }
     bool Prepared() const { return state_ && state_->stopEvent != nullptr; }
@@ -88,6 +95,7 @@ public:
 private:
     struct Launch {
         std::shared_ptr<State> state;
+        std::shared_ptr<void> owner;
         EntryPoint entry = nullptr;
         void* context = nullptr;
     };
@@ -95,6 +103,7 @@ private:
     static unsigned long __stdcall Bootstrap(void* argument) {
         std::unique_ptr<Launch> launch(static_cast<Launch*>(argument));
         g_currentState = launch->state;
+        launch->state->threadId.store(GetCurrentThreadId(), std::memory_order_release);
         launch->entry(launch->context);
         g_currentState.reset();
         return 0;
@@ -131,10 +140,30 @@ inline bool WorkerThread::Prepare() {
     return true;
 }
 
-inline bool WorkerThread::Start(EntryPoint entry, void* context) {
+inline bool WorkerThread::Start(EntryPoint entry, std::shared_ptr<void> owner) {
     if (!entry || !Prepare()) return false;
 
-    auto* launch = new (std::nothrow) Launch{state_, entry, context};
+    void* context = owner.get();
+    auto* launch = new (std::nothrow) Launch{state_, std::move(owner), entry, context};
+    if (!launch) {
+        state_.reset();
+        return false;
+    }
+
+    const HANDLE thread = CreateThread(nullptr, 0, &WorkerThread::Bootstrap, launch, 0, nullptr);
+    if (!thread) {
+        delete launch;
+        state_.reset();
+        return false;
+    }
+    state_->thread = thread;
+    return true;
+}
+
+inline bool WorkerThread::StartUnmanaged(EntryPoint entry, void* context) {
+    if (!entry || !Prepare()) return false;
+
+    auto* launch = new (std::nothrow) Launch{state_, {}, entry, context};
     if (!launch) {
         state_.reset();
         return false;
@@ -156,6 +185,11 @@ inline WorkerThread::StopResult WorkerThread::Stop(unsigned long timeoutMs) {
     std::shared_ptr<State> state = state_;
     if (state->stopEvent) SetEvent(state->stopEvent);
     if (!state->thread) {
+        state_.reset();
+        return StopResult::Stopped;
+    }
+
+    if (state->threadId.load(std::memory_order_acquire) == GetCurrentThreadId()) {
         state_.reset();
         return StopResult::Stopped;
     }

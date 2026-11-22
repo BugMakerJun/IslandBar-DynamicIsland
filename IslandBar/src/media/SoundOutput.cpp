@@ -153,7 +153,7 @@ bool SoundOutput::Start() {
         return false;
     }
 
-    if (!worker_.Start(&SoundOutput::ThreadEntry, this)) {
+    if (!worker_.Start(&SoundOutput::ThreadEntry, weak_from_this().lock())) {
         Stop();
         return false;
     }

@@ -10,6 +10,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -19,7 +20,7 @@
 
 namespace island {
 
-class WindowsFileSearch {
+class WindowsFileSearch : public std::enable_shared_from_this<WindowsFileSearch> {
 public:
     WindowsFileSearch() = default;
     ~WindowsFileSearch();

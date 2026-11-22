@@ -17,6 +17,7 @@
 #include <windows.h>
 
 #include <d2d1_3.h>
+#include <array>
 #include <string>
 #include <d3d11_4.h>
 #include <dcomp.h>
@@ -70,6 +71,19 @@ inline bool WindowIconRetryDue(int failedAttempts, ULONGLONG retryAfterMs,
                                ULONGLONG nowMs) {
     if (failedAttempts >= kMaxWindowIconLoadAttempts) return false;
     return failedAttempts == 0 || nowMs >= retryAfterMs;
+}
+
+inline bool WindowIconIdentityMatches(DWORD cachedPid, DWORD currentPid) {
+    // A closed/departing window has no current PID: keep its bitmap until the exit animation ends.
+    return cachedPid == 0 || currentPid == 0 || cachedPid == currentPid;
+}
+
+inline int WindowIconPercentileIndex(int count, int percentile) {
+    if (count <= 0) return -1;
+    if (percentile <= 0) return 0;
+    if (percentile >= 100) return count - 1;
+    const int index = (percentile * count + 99) / 100 - 1;
+    return index < 0 ? 0 : (index >= count ? count - 1 : index);
 }
 
 // Who owns the card this frame, given what is asking for one and whether the shape is coming or going.
@@ -890,12 +904,18 @@ private:
     // icon -- the reported long-session failure.
     struct WindowIcon {
         HWND          window = nullptr;
+        DWORD         processId = 0;
         ID2D1Bitmap1* bitmap = nullptr;
         int           loadAttempts = 0;
         ULONGLONG     retryAfterMs = 0;
     };
     WindowIcon windowIcons_[kMaxWindowIcons];
     int windowIconCount_ = 0;
+    static constexpr int kWindowIconTimingSamples = 16;
+    std::array<unsigned long long, kWindowIconTimingSamples> windowIconLoadTimesUs_{};
+    int windowIconTimingCount_ = 0;
+    int windowIconLoadsThisFrame_ = 0;
+    ULONGLONG windowIconTimingSinceMs_ = 0;
 
     // Returns the icon bitmap for a window, fetching and decoding it on first use. Null when the
     // window has no icon, which is normal for a few system windows and not an error.

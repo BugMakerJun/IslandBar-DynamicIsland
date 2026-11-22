@@ -188,7 +188,7 @@ bool SystemStatusReader::Start(HWND wakeWindow, unsigned long pollMs) {
     pollMs_ = pollMs == 0 ? 2000 : pollMs;
     running_.store(true, std::memory_order_release);
 
-    if (!worker_.Start(&SystemStatusReader::ThreadEntry, this)) {
+    if (!worker_.Start(&SystemStatusReader::ThreadEntry, weak_from_this().lock())) {
         Stop();
         return false;
     }

@@ -238,7 +238,7 @@ bool StartReader(AsyncRead& state) {
         state.worker.Stop();
         return false;
     }
-    if (!state.worker.Start(&ReadThread, &state)) {
+    if (!state.worker.StartUnmanaged(&ReadThread, &state)) {
         if (state.worker.Stop() == WorkerThread::StopResult::Stopped &&
             state.wake) {
             CloseHandle(state.wake);

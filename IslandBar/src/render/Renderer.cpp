@@ -598,6 +598,12 @@ void Renderer::DrawDecks(const RoundedBox& island, const FrameState& frame) {
 }
 
 void Renderer::PrepareTaskButtons(const FrameState& frame) {
+    LARGE_INTEGER prepareStart = {};
+    LARGE_INTEGER prepareFrequency = {};
+    QueryPerformanceCounter(&prepareStart);
+    QueryPerformanceFrequency(&prepareFrequency);
+    windowIconLoadsThisFrame_ = 0;
+
     PruneWindowIconsForFrame(frame.taskButtonWindow, frame.taskButtonCount);
     for (int i = 0; i < frame.taskButtonCount && i < FrameState::kMaxTaskButtons; ++i) {
         taskButtons_[i] = frame.taskButtons[i];
@@ -617,6 +623,33 @@ void Renderer::PrepareTaskButtons(const FrameState& frame) {
                     reinterpret_cast<void*>(frame.taskButtonWindow[i]),
                     taskButtons_[i].icon ? L"ok" : L"NONE");
         }
+    }
+
+    if (windowIconLoadsThisFrame_ > 0 && prepareFrequency.QuadPart > 0) {
+        LARGE_INTEGER prepareEnd = {};
+        QueryPerformanceCounter(&prepareEnd);
+        const unsigned long long elapsedUs =
+            static_cast<unsigned long long>(
+                (prepareEnd.QuadPart - prepareStart.QuadPart) * 1000000 /
+                prepareFrequency.QuadPart);
+        windowIconLoadTimesUs_[windowIconTimingCount_++] = elapsedUs;
+        if (windowIconTimingSinceMs_ == 0) windowIconTimingSinceMs_ = GetTickCount64();
+    }
+
+    const ULONGLONG now = GetTickCount64();
+    if (windowIconTimingCount_ == kWindowIconTimingSamples ||
+        (windowIconTimingCount_ > 0 && now - windowIconTimingSinceMs_ >= 60000)) {
+        std::array<unsigned long long, kWindowIconTimingSamples> sorted =
+            windowIconLoadTimesUs_;
+        std::sort(sorted.begin(), sorted.begin() + windowIconTimingCount_);
+        const unsigned long long p50 = sorted[WindowIconPercentileIndex(windowIconTimingCount_, 50)];
+        const unsigned long long p95 = sorted[WindowIconPercentileIndex(windowIconTimingCount_, 95)];
+        const unsigned long long p99 = sorted[WindowIconPercentileIndex(windowIconTimingCount_, 99)];
+        LogLine(L"  window icon load: samples=%d p50=%lluus p95=%lluus p99=%lluus max=%lluus",
+                windowIconTimingCount_, p50, p95, p99,
+                sorted[windowIconTimingCount_ - 1]);
+        windowIconTimingCount_ = 0;
+        windowIconTimingSinceMs_ = 0;
     }
 }
 
@@ -1962,6 +1995,18 @@ ID2D1Bitmap1* Renderer::IconForWindow(HWND window) {
         if (windowIcons_[i].window != window) continue;
 
         WindowIcon& cached = windowIcons_[i];
+        DWORD currentPid = 0;
+        GetWindowThreadProcessId(window, &currentPid);
+        if (!WindowIconIdentityMatches(cached.processId, currentPid)) {
+            SafeRelease(&cached.bitmap);
+            cached.loadAttempts = 0;
+            cached.retryAfterMs = 0;
+            LogLine(L"  window icon: hwnd %p reused by pid %lu (was %lu); reloading",
+                    reinterpret_cast<void*>(window),
+                    static_cast<unsigned long>(currentPid),
+                    static_cast<unsigned long>(cached.processId));
+        }
+        if (currentPid != 0) cached.processId = currentPid;
         if (cached.bitmap) return cached.bitmap;
         if (!IsWindow(window)) return nullptr;
 
@@ -1971,6 +2016,7 @@ ID2D1Bitmap1* Renderer::IconForWindow(HWND window) {
         }
 
         cached.bitmap = LoadWindowIcon(window);
+        ++windowIconLoadsThisFrame_;
         ++cached.loadAttempts;
         if (cached.bitmap) {
             cached.retryAfterMs = 0;
@@ -1993,8 +2039,11 @@ ID2D1Bitmap1* Renderer::IconForWindow(HWND window) {
     if (!IsWindow(window)) return nullptr;
     if (windowIconCount_ >= kMaxWindowIcons) return nullptr;   // full; see the header for why
 
+    DWORD processId = 0;
+    GetWindowThreadProcessId(window, &processId);
     WindowIcon& slot = windowIcons_[windowIconCount_];
     slot.window = window;
+    slot.processId = processId;
     slot.bitmap = nullptr;
     slot.loadAttempts = 0;
     slot.retryAfterMs = 0;
@@ -2002,6 +2051,7 @@ ID2D1Bitmap1* Renderer::IconForWindow(HWND window) {
 
     const ULONGLONG now = GetTickCount64();
     slot.bitmap = LoadWindowIcon(window);
+    ++windowIconLoadsThisFrame_;
     ++slot.loadAttempts;
     if (!slot.bitmap) ScheduleWindowIconRetry(slot, now);
     return slot.bitmap;

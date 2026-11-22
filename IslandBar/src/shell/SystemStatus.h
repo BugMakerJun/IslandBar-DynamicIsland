@@ -26,6 +26,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <memory>
 
 #include "platform/CriticalSection.h"
 #include "platform/WorkerThread.h"
@@ -174,7 +175,7 @@ bool ShouldDrawInputMethod(const SystemStatus& status, int installedLayoutCount)
 // Reads the machine. Never fails as a whole: a value that cannot be read keeps its previous
 // meaning rather than being zeroed, because "the API failed" and "the value is zero" look
 // identical on screen and only one of them is worth showing.
-class SystemStatusReader {
+class SystemStatusReader : public std::enable_shared_from_this<SystemStatusReader> {
 public:
     SystemStatusReader() = default;
     ~SystemStatusReader();

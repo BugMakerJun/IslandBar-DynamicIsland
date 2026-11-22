@@ -22,6 +22,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 
 #include "services/Notification.h"
 #include "platform/CriticalSection.h"
@@ -42,7 +43,7 @@ inline constexpr uint32_t kMaxMessageBytes = 64 * 1024;
 // Threading note: the caller's UI thread must never block on a client, so the
 // listener runs on its own thread and hands finished notifications over through a
 // small lock-protected queue. That is the only synchronisation in the class.
-class NotificationServer {
+class NotificationServer : public std::enable_shared_from_this<NotificationServer> {
 public:
     NotificationServer() = default;
     ~NotificationServer();
@@ -93,7 +94,8 @@ bool SendNotification(const Notification& notification,
                       const wchar_t* pipeName = kPipeName,
                       char* responseOut = nullptr,
                       size_t responseCapacity = 0,
-                      DWORD connectTimeoutMs = 1500);
+                      DWORD connectTimeoutMs = 1500,
+                      DWORD responseTimeoutMs = 5000);
 
 // Reads the framed response from a connected pipe. Exposed for tests.
 bool ReadFrame(HANDLE pipe, char* out, size_t capacity);

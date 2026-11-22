@@ -27,6 +27,7 @@
 #include <cmath>
 #include <cstring>
 #include <cstdlib>   // strtoul: unpacking the hex of a captured registration in the tray checks
+#include <memory>
 #include <vector>
 #include <cwchar>
 #include <string>
@@ -2575,7 +2576,8 @@ void TestWorkerThread() {
                 HANDLE stopEvent = signal.StopEvent();
                 if (stopEvent) {
                     WaitForSingleObject(stopEvent, 5000);
-                    *static_cast<bool*>(self) = true;
+                    static_cast<std::atomic<bool>*>(self)->store(
+                        true, std::memory_order_release);
                 }
                 return 0;
             }
@@ -2585,12 +2587,64 @@ void TestWorkerThread() {
         for (int i = 0; i < 3; ++i) {
             std::atomic<bool> sawSignal{false};
             // The entry receives a pointer to a stack atomic whose lifetime covers Stop().
-            Check(worker.Start(&Helper::Entry, &sawSignal),
+            Check(worker.StartUnmanaged(&Helper::Entry, &sawSignal),
                   L"a worker starts a thread with a shared stop signal");
             const WorkerThread::StopResult stopped = worker.Stop(3000);
-            Check(stopped == WorkerThread::StopResult::Stopped && sawSignal.load(),
+            Check(stopped == WorkerThread::StopResult::Stopped &&
+                      sawSignal.load(std::memory_order_acquire),
                   L"Stop() joins the thread and its signal remains valid through exit");
         }
+    }
+
+    {
+        // A timed-out worker keeps its shared owner alive until the blocking call returns. This is
+        // the owner-lifetime half of the rule; the check above only proves the WorkerThread state.
+        std::atomic<bool> touchedAfterRelease{false};
+        std::atomic<int> destroyed{0};
+        HANDLE release = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        struct SharedOwner : std::enable_shared_from_this<SharedOwner> {
+            HANDLE release = nullptr;
+            std::atomic<bool>* touched = nullptr;
+            std::atomic<int>* destroyed = nullptr;
+            WorkerThread worker;
+
+            static unsigned long __stdcall Entry(void* self) {
+                auto* owner = static_cast<SharedOwner*>(self);
+                WaitForSingleObject(owner->release, 5000);
+                owner->touched->store(true, std::memory_order_release);
+                return 0;
+            }
+
+            bool Start() {
+                return worker.Start(&Entry, weak_from_this().lock());
+            }
+
+            ~SharedOwner() {
+                destroyed->fetch_add(1, std::memory_order_release);
+                (void)worker.Stop();
+            }
+        };
+
+        auto owner = std::make_shared<SharedOwner>();
+        owner->release = release;
+        owner->touched = &touchedAfterRelease;
+        owner->destroyed = &destroyed;
+        std::weak_ptr<SharedOwner> lease = owner;
+        Check(release && owner->Start() &&
+                  owner->worker.Stop(20) == WorkerThread::StopResult::Timeout,
+              L"a timed-out owner reports the timeout");
+        owner.reset();
+        Check(!lease.expired() && destroyed.load(std::memory_order_acquire) == 0,
+              L"the worker keeps its shared owner alive after the UI releases it");
+        SetEvent(release);
+        for (int i = 0; i < 200 && !lease.expired(); ++i) {
+            Sleep(5);
+            if (auto current = lease.lock()) (void)current->worker.Stop(10);
+        }
+        Check(lease.expired() && touchedAfterRelease.load(std::memory_order_acquire) &&
+                  destroyed.load(std::memory_order_acquire) == 1,
+              L"the owner is destroyed exactly once after the worker resumes");
+        if (release) CloseHandle(release);
     }
 
     {
@@ -2605,11 +2659,11 @@ void TestWorkerThread() {
         };
 
         WorkerThread worker;
-        Check(release && worker.Start(&Slow::Entry, release),
+        Check(release && worker.StartUnmanaged(&Slow::Entry, release),
               L"a deliberately slow worker starts");
         Check(worker.Stop(20) == WorkerThread::StopResult::Timeout,
               L"Stop() reports a timeout instead of pretending the thread ended");
-        Check(!worker.Start(&Slow::Entry, release),
+        Check(!worker.StartUnmanaged(&Slow::Entry, release),
               L"a timed-out worker refuses a second thread");
         SetEvent(release);
         Check(worker.Stop(3000) == WorkerThread::StopResult::Stopped,

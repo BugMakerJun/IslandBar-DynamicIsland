@@ -14595,3 +14595,55 @@ git replace -l                          -> empty
 
 分支、工作区与远端引用没有被改写。
 
+---
+
+## 8.188 **第二轮复审 P1/P2：owner 生命周期、异步 I/O、图标身份**（2026-11-23）
+
+基线：`d1aca0d`。本轮先确认任务书中的问题，再修改。
+
+### 8.188.1 WorkerThread owner lease
+
+原实现只让线程持有 stop event/thread State，入口的 `void* context` 仍是裸 `this`。Stop 超时后
+UI 可析构宿主，worker 恢复后继续访问已释放成员。
+
+修法：
+
+* `WorkerThread::Start()` 现在接收 `std::shared_ptr<void>`，Launch 在入口执行期间持有宿主引用。
+* 所有 worker-owning 类型继承 `enable_shared_from_this`，Start 通过 `weak_from_this().lock()`。
+* `BarSystems` 用 shared owner + 同名 reference 保存这些对象，现有 `systems.music.Start()` 调用形式不变。
+* 仅静态生命周期/无 context 的线程使用显式 `StartUnmanaged()`。
+* WorkerThread 在线程自己的入口释放最后一份 owner 时识别同线程 Stop，不再让宿主析构等待自己。
+
+自检新增 owner 生命周期故障测试：Stop 超时、UI 释放 owner、后台恢复后访问、最终恰好析构一次。
+
+### 8.188.2 Notification operation context
+
+`OVERLAPPED` 不再放在 Connect/Read/Write 的普通栈路径上。每个操作由 `OverlappedOperation` 独立持有
+event 和 OVERLAPPED；buffer 与 pipe 在调用帧内保持，直到操作完成。`WAIT_FAILED`、Stop 和 timeout
+都进入 `CancelIoEx`；2 秒 drain 不足时线程继续等待完成，绝不返回并释放内核仍可能访问的内存。
+
+客户端 `SendNotification()` 也改为 Overlapped；连接 1.5 秒、单次请求读写 5 秒上限。
+新增“服务端连接但不回应”测试，客户端在有界时间内返回失败。
+
+### 8.188.3 P2
+
+* `TestWorkerThread()` 的 `std::atomic<bool>*` 不再错误强转成 `bool*`。
+* Renderer 图标缓存增加 PID；HWND+PID 不一致时释放旧 bitmap 并重建。离场窗口仍可依靠旧 bitmap。
+* 图标缓存 miss 增加 P50/P95/P99/max 采样日志，16 个样本或 60 秒输出一次。
+* Explorer 新 shell 时，`ResetLiveTray()` 移到 `LaunchTrayLearning()` 之前，避免 worker 先写 ledger、
+  UI 随后清空的有效记录。
+
+### 8.188.4 验证
+
+* Debug、Release `/WX`：零告警。
+* Debug/Release `--self-test`：`1223 OK / 0 FAIL`。
+* Debug/Release `island_smoke`：PASS。
+* 真实 `--notify`：退出码 0，通知进入队列。
+* Explorer：旧 PID `37948` -> 新 PID `47264`；一次新 shell learning，17 registrations captured。
+* 新 Release 已部署并运行，PID `32924`。
+* 首轮单显示器图标采样：2 个真实 cache miss，P50/P99 `4.871 ms`，max `32.744 ms`。
+  nearest-rank P99 已修正为包含 small-sample 最大值；当前最坏值超过 16.7 ms 帧预算，
+  因此后台像素提取列为下一步独立性能改造，当前先保留已部署的有界同步路径。
+* 8 小时采样：IslandBar PID `15528` -> 最终全绿 PID `32924`；最终采样器 PID `21024`，CSV
+  `C:\Users\18340\IslandBar\runtime-soak-20261123-030355.csv`。
+

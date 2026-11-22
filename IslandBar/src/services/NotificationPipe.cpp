@@ -101,80 +101,120 @@ enum class IoStatus {
     Failed,
 };
 
-// A cancelled overlapped operation must finish before its OVERLAPPED and buffer leave the stack.
-// `safeToClose` is false only when the kernel did not acknowledge the cancellation in time; the
-// caller then deliberately leaves the pipe open instead of closing storage under a pending I/O.
-IoStatus DrainOverlapped(HANDLE pipe, HANDLE ioEvent, OVERLAPPED* overlapped, bool* safeToClose) {
-    *safeToClose = false;
-    CancelIoEx(pipe, overlapped);
-    if (WaitForSingleObject(ioEvent, kCancelDrainMs) != WAIT_OBJECT_0) return IoStatus::Failed;
-    DWORD transferred = 0;
-    (void)GetOverlappedResult(pipe, overlapped, &transferred, FALSE);
-    *safeToClose = true;
-    return IoStatus::Stopped;
-}
+class OverlappedOperation {
+public:
+    OverlappedOperation() {
+        event_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        overlapped_.hEvent = event_;
+    }
 
-IoStatus CompleteOverlapped(HANDLE pipe, HANDLE ioEvent, HANDLE stopEvent,
-                            OVERLAPPED* overlapped, BOOL started, DWORD timeoutMs,
-                            DWORD* transferred, bool* safeToClose) {
-    *safeToClose = true;
-    if (started) return IoStatus::Done;
+    ~OverlappedOperation() {
+        if (event_) CloseHandle(event_);
+    }
 
-    const DWORD error = GetLastError();
-    if (error != ERROR_IO_PENDING) return IoStatus::Failed;
+    OverlappedOperation(const OverlappedOperation&) = delete;
+    OverlappedOperation& operator=(const OverlappedOperation&) = delete;
 
-    const HANDLE waits[2] = {stopEvent, ioEvent};
-    const DWORD signalled = WaitForMultipleObjects(2, waits, FALSE, timeoutMs);
-    if (signalled == WAIT_OBJECT_0) return DrainOverlapped(pipe, ioEvent, overlapped, safeToClose);
-    if (signalled == WAIT_TIMEOUT) {
-        *safeToClose = false;
-        CancelIoEx(pipe, overlapped);
-        if (WaitForSingleObject(ioEvent, kCancelDrainMs) != WAIT_OBJECT_0) {
+    bool Valid() const { return event_ != nullptr; }
+    DWORD Error() const { return lastError_; }
+
+    OVERLAPPED* Begin() {
+        ResetEvent(event_);
+        return &overlapped_;
+    }
+
+    IoStatus Wait(HANDLE pipe, HANDLE stopEvent, BOOL started, DWORD timeoutMs,
+                  DWORD* transferred) {
+        lastError_ = ERROR_SUCCESS;
+        if (started) return IoStatus::Done;
+
+        const DWORD error = GetLastError();
+        if (error != ERROR_IO_PENDING) {
+            lastError_ = error;
             return IoStatus::Failed;
         }
-        DWORD ignored = 0;
-        (void)GetOverlappedResult(pipe, overlapped, &ignored, FALSE);
-        *safeToClose = true;
-        return IoStatus::Timeout;
+
+        DWORD signalled = 0;
+        if (stopEvent) {
+            const HANDLE waits[2] = {stopEvent, event_};
+            signalled = WaitForMultipleObjects(2, waits, FALSE, timeoutMs);
+        } else {
+            const DWORD single = WaitForSingleObject(event_, timeoutMs);
+            signalled = single == WAIT_OBJECT_0 ? WAIT_OBJECT_0 + 1 : single;
+        }
+        if (signalled == WAIT_OBJECT_0 + 1) {
+            if (GetOverlappedResult(pipe, &overlapped_, transferred, FALSE)) {
+                return IoStatus::Done;
+            }
+            lastError_ = GetLastError();
+            return IoStatus::Failed;
+        }
+
+        const IoStatus reason =
+            signalled == WAIT_OBJECT_0 ? IoStatus::Stopped
+                                       : (signalled == WAIT_TIMEOUT ? IoStatus::Timeout
+                                                                    : IoStatus::Failed);
+        CancelAndWaitForCompletion(pipe, signalled);
+        return reason;
     }
-    if (signalled != WAIT_OBJECT_0 + 1) return IoStatus::Failed;
 
-    if (!GetOverlappedResult(pipe, overlapped, transferred, FALSE)) return IoStatus::Failed;
-    return IoStatus::Done;
-}
+private:
+    void CancelAndWaitForCompletion(HANDLE pipe, DWORD signalled) {
+        if (!CancelIoEx(pipe, &overlapped_)) {
+            const DWORD error = GetLastError();
+            if (error != ERROR_NOT_FOUND) {
+                LogLine(L"  notifications: CancelIoEx failed status=%lu win32=%lu; "
+                        L"operation context remains live",
+                        signalled, error);
+            }
+        }
 
-IoStatus ConnectPipe(HANDLE pipe, HANDLE ioEvent, HANDLE stopEvent, bool* safeToClose) {
-    ResetEvent(ioEvent);
-    OVERLAPPED overlapped = {};
-    overlapped.hEvent = ioEvent;
-    const BOOL started = ConnectNamedPipe(pipe, &overlapped);
+        if (WaitForSingleObject(event_, kCancelDrainMs) != WAIT_OBJECT_0) {
+            // The operation context owns the event and THE CALLER still owns the buffer and pipe.
+            // Waiting here keeps all three alive until the kernel has released the operation. This
+            // thread may outlive Stop(), which is exactly why the worker owner is shared.
+            LogLine(L"  notifications: cancelled I/O did not drain in %lu ms; "
+                    L"waiting without releasing its context",
+                    kCancelDrainMs);
+            (void)WaitForSingleObject(event_, INFINITE);
+        }
+
+        DWORD ignored = 0;
+        (void)GetOverlappedResult(pipe, &overlapped_, &ignored, FALSE);
+    }
+
+    HANDLE event_ = nullptr;
+    OVERLAPPED overlapped_ = {};
+    DWORD lastError_ = ERROR_SUCCESS;
+};
+
+IoStatus ConnectPipe(HANDLE pipe, HANDLE stopEvent) {
+    OverlappedOperation operation;
+    if (!operation.Valid()) return IoStatus::Failed;
+    const BOOL started = ConnectNamedPipe(pipe, operation.Begin());
     const DWORD error = started ? ERROR_SUCCESS : GetLastError();
     if (started || error == ERROR_PIPE_CONNECTED) {
-        *safeToClose = true;
         return IoStatus::Done;
     }
     DWORD ignored = 0;
-    return CompleteOverlapped(pipe, ioEvent, stopEvent, &overlapped, FALSE,
-                              kConnectTimeoutMs, &ignored, safeToClose);
+    return operation.Wait(pipe, stopEvent, FALSE, kConnectTimeoutMs, &ignored);
 }
 
-IoStatus ReadAllOverlapped(HANDLE pipe, HANDLE ioEvent, HANDLE stopEvent, void* buffer,
-                           DWORD bytes, bool* safeToClose) {
+IoStatus ReadAllOverlapped(HANDLE pipe, HANDLE stopEvent, void* buffer, DWORD bytes,
+                           DWORD timeoutMs) {
     auto* cursor = static_cast<unsigned char*>(buffer);
     const DWORD startedAt = GetTickCount();
     DWORD remaining = bytes;
     while (remaining > 0) {
         const DWORD elapsed = GetTickCount() - startedAt;
-        if (elapsed >= kFrameTimeoutMs) return IoStatus::Timeout;
+        if (elapsed >= timeoutMs) return IoStatus::Timeout;
 
-        ResetEvent(ioEvent);
-        OVERLAPPED overlapped = {};
-        overlapped.hEvent = ioEvent;
+        OverlappedOperation operation;
+        if (!operation.Valid()) return IoStatus::Failed;
         DWORD got = 0;
-        const BOOL started = ReadFile(pipe, cursor, remaining, &got, &overlapped);
-        const IoStatus status = CompleteOverlapped(
-            pipe, ioEvent, stopEvent, &overlapped, started, kFrameTimeoutMs - elapsed,
-            &got, safeToClose);
+        const BOOL started = ReadFile(pipe, cursor, remaining, &got, operation.Begin());
+        const IoStatus status =
+            operation.Wait(pipe, stopEvent, started, timeoutMs - elapsed, &got);
         if (status != IoStatus::Done) return status;
         if (got == 0) return IoStatus::Failed;
         cursor += got;
@@ -183,8 +223,7 @@ IoStatus ReadAllOverlapped(HANDLE pipe, HANDLE ioEvent, HANDLE stopEvent, void* 
     return IoStatus::Done;
 }
 
-IoStatus WriteAllOverlapped(HANDLE pipe, HANDLE ioEvent, HANDLE stopEvent, const void* buffer,
-                            DWORD bytes, bool* safeToClose) {
+IoStatus WriteAllOverlapped(HANDLE pipe, HANDLE stopEvent, const void* buffer, DWORD bytes) {
     const auto* cursor = static_cast<const unsigned char*>(buffer);
     const DWORD startedAt = GetTickCount();
     DWORD remaining = bytes;
@@ -192,14 +231,12 @@ IoStatus WriteAllOverlapped(HANDLE pipe, HANDLE ioEvent, HANDLE stopEvent, const
         const DWORD elapsed = GetTickCount() - startedAt;
         if (elapsed >= kFrameTimeoutMs) return IoStatus::Timeout;
 
-        ResetEvent(ioEvent);
-        OVERLAPPED overlapped = {};
-        overlapped.hEvent = ioEvent;
+        OverlappedOperation operation;
+        if (!operation.Valid()) return IoStatus::Failed;
         DWORD written = 0;
-        const BOOL started = WriteFile(pipe, cursor, remaining, &written, &overlapped);
-        const IoStatus status = CompleteOverlapped(
-            pipe, ioEvent, stopEvent, &overlapped, started, kFrameTimeoutMs - elapsed,
-            &written, safeToClose);
+        const BOOL started = WriteFile(pipe, cursor, remaining, &written, operation.Begin());
+        const IoStatus status =
+            operation.Wait(pipe, stopEvent, started, kFrameTimeoutMs - elapsed, &written);
         if (status != IoStatus::Done) return status;
         if (written == 0) return IoStatus::Failed;
         cursor += written;
@@ -212,20 +249,17 @@ IoStatus WriteAllOverlapped(HANDLE pipe, HANDLE ioEvent, HANDLE stopEvent, const
 // client closes after reading the response, with a bounded timeout and the same cancellation path
 // as every other overlapped operation. A client that keeps the connection open is disconnected
 // after the grace period rather than being allowed to occupy the single listener indefinitely.
-IoStatus WaitForResponseConsumed(HANDLE pipe, HANDLE ioEvent, HANDLE stopEvent,
-                                 bool* safeToClose) {
-    ResetEvent(ioEvent);
-    OVERLAPPED overlapped = {};
-    overlapped.hEvent = ioEvent;
+IoStatus WaitForResponseConsumed(HANDLE pipe, HANDLE stopEvent) {
+    OverlappedOperation operation;
+    if (!operation.Valid()) return IoStatus::Failed;
     char unexpected = 0;
     DWORD received = 0;
-    const BOOL started = ReadFile(pipe, &unexpected, 1, &received, &overlapped);
-    const IoStatus status = CompleteOverlapped(
-        pipe, ioEvent, stopEvent, &overlapped, started, kResponseDrainMs,
-        &received, safeToClose);
+    const BOOL started = ReadFile(pipe, &unexpected, 1, &received, operation.Begin());
+    const IoStatus status =
+        operation.Wait(pipe, stopEvent, started, kResponseDrainMs, &received);
     if (status != IoStatus::Failed) return status;
 
-    const DWORD error = GetLastError();
+    const DWORD error = operation.Error();
     return (error == ERROR_BROKEN_PIPE || error == ERROR_PIPE_NOT_CONNECTED)
                ? IoStatus::Done
                : IoStatus::Failed;
@@ -311,7 +345,7 @@ bool NotificationServer::Start(const wchar_t* pipeName) {
     swprintf(name_, 256, L"\\\\.\\pipe\\%s", pipeName ? pipeName : kPipeName);
 
     // Stop() ends whatever exists rather than unwinding by hand (see platform/WorkerThread.h).
-    if (!worker_.Start(&NotificationServer::ThreadEntry, this)) {
+    if (!worker_.Start(&NotificationServer::ThreadEntry, weak_from_this().lock())) {
         Stop();
         return false;
     }
@@ -356,11 +390,6 @@ void NotificationServer::Run() {
     const HANDLE stopEvent = workerSignal.StopEvent();
     // One security descriptor for every instance the loop creates.
     PipeSecurity security;
-    HANDLE ioEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    if (!ioEvent) {
-        running_.store(false, std::memory_order_release);
-        return;
-    }
 
     // The loop owns one pipe instance at a time: create, wait for a client, serve
     // it, and close. That serialises clients without any extra locking, and a
@@ -383,44 +412,34 @@ void NotificationServer::Run() {
 
         running_.store(true, std::memory_order_release);
 
-        bool safeToClose = true;
-        const IoStatus connected = ConnectPipe(pipe, ioEvent, stopEvent, &safeToClose);
+        const IoStatus connected = ConnectPipe(pipe, stopEvent);
         if (connected != IoStatus::Done) {
-            if (!safeToClose) {
-                LogLine(L"  notifications: cancelled connect did not drain; pipe handle retained");
-            } else {
-                DisconnectNamedPipe(pipe);
-                CloseHandle(pipe);
-            }
+            DisconnectNamedPipe(pipe);
+            CloseHandle(pipe);
             if (connected == IoStatus::Stopped) break;
             continue;
         }
 
         char request[kMaxMessageBytes] = {};
         uint32_t length = 0;
-        safeToClose = true;
         const IoStatus header = ReadAllOverlapped(
-            pipe, ioEvent, stopEvent, &length, sizeof(length), &safeToClose);
+            pipe, stopEvent, &length, sizeof(length), kFrameTimeoutMs);
         bool frameRead = false;
         if (header == IoStatus::Done && length > 0 && length < sizeof(request)) {
             const size_t wanted = length;
             const IoStatus body = ReadAllOverlapped(
-                pipe, ioEvent, stopEvent, request, static_cast<DWORD>(wanted), &safeToClose);
+                pipe, stopEvent, request, static_cast<DWORD>(wanted), kFrameTimeoutMs);
             if (body == IoStatus::Done) {
                 request[wanted] = '\0';
                 frameRead = true;
             } else if (body == IoStatus::Stopped) {
-                if (safeToClose) {
-                    DisconnectNamedPipe(pipe);
-                    CloseHandle(pipe);
-                }
+                DisconnectNamedPipe(pipe);
+                CloseHandle(pipe);
                 break;
             }
         } else if (header == IoStatus::Stopped) {
-            if (safeToClose) {
-                DisconnectNamedPipe(pipe);
-                CloseHandle(pipe);
-            }
+            DisconnectNamedPipe(pipe);
+            CloseHandle(pipe);
             break;
         }
 
@@ -447,10 +466,10 @@ void NotificationServer::Run() {
                 if (written > 0) {
                     const uint32_t responseLength = static_cast<uint32_t>(written);
                     responseWritten =
-                        WriteAllOverlapped(pipe, ioEvent, stopEvent, &responseLength,
-                                           sizeof(responseLength), &safeToClose) == IoStatus::Done &&
-                        WriteAllOverlapped(pipe, ioEvent, stopEvent, request,
-                                           responseLength, &safeToClose) == IoStatus::Done;
+                        WriteAllOverlapped(pipe, stopEvent, &responseLength,
+                                           sizeof(responseLength)) == IoStatus::Done &&
+                        WriteAllOverlapped(pipe, stopEvent, request,
+                                           responseLength) == IoStatus::Done;
                 }
             } else {
                 InterlockedIncrement(&rejectedCount_);
@@ -458,20 +477,17 @@ void NotificationServer::Run() {
                     "{\"ok\":0,\"error\":\"no title or body\"}";
                 const uint32_t responseLength = sizeof(kRejection) - 1;
                 responseWritten =
-                    WriteAllOverlapped(pipe, ioEvent, stopEvent, &responseLength,
-                                       sizeof(responseLength), &safeToClose) == IoStatus::Done &&
-                    WriteAllOverlapped(pipe, ioEvent, stopEvent, kRejection,
-                                       responseLength, &safeToClose) == IoStatus::Done;
+                    WriteAllOverlapped(pipe, stopEvent, &responseLength,
+                                       sizeof(responseLength)) == IoStatus::Done &&
+                    WriteAllOverlapped(pipe, stopEvent, kRejection,
+                                       responseLength) == IoStatus::Done;
             }
 
-            if (safeToClose && responseWritten) {
-                const IoStatus consumed =
-                    WaitForResponseConsumed(pipe, ioEvent, stopEvent, &safeToClose);
+            if (responseWritten) {
+                const IoStatus consumed = WaitForResponseConsumed(pipe, stopEvent);
                 if (consumed == IoStatus::Stopped) {
-                    if (safeToClose) {
-                        DisconnectNamedPipe(pipe);
-                        CloseHandle(pipe);
-                    }
+                    DisconnectNamedPipe(pipe);
+                    CloseHandle(pipe);
                     break;
                 }
             }
@@ -479,16 +495,11 @@ void NotificationServer::Run() {
             InterlockedIncrement(&rejectedCount_);
         }
 
-        if (safeToClose) {
-            DisconnectNamedPipe(pipe);
-            CloseHandle(pipe);
-        } else {
-            LogLine(L"  notifications: cancelled I/O did not drain; pipe handle retained");
-        }
+        DisconnectNamedPipe(pipe);
+        CloseHandle(pipe);
         if (WaitForSingleObject(stopEvent, 0) == WAIT_OBJECT_0) break;
     }
 
-    CloseHandle(ioEvent);
     running_.store(false, std::memory_order_release);
 }
 
@@ -528,7 +539,7 @@ bool NotificationServer::Take(Notification* out) {
 
 bool SendNotification(const Notification& notification, const wchar_t* pipeName,
                       char* responseOut, size_t responseCapacity,
-                      DWORD connectTimeoutMs) {
+                      DWORD connectTimeoutMs, DWORD responseTimeoutMs) {
     wchar_t name[256] = {};
     swprintf(name, 256, L"\\\\.\\pipe\\%s", pipeName ? pipeName : kPipeName);
 
@@ -556,7 +567,7 @@ bool SendNotification(const Notification& notification, const wchar_t* pipeName,
     }
 
     HANDLE pipe = CreateFileW(name, GENERIC_READ | GENERIC_WRITE, 0, nullptr,
-                              OPEN_EXISTING, 0, nullptr);
+                              OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr);
     if (pipe == INVALID_HANDLE_VALUE) {
         const DWORD error = GetLastError();
         if (responseOut && responseCapacity) {
@@ -572,7 +583,12 @@ bool SendNotification(const Notification& notification, const wchar_t* pipeName,
     char payload[kMaxMessageBytes] = {};
     NotificationToJson(notification, payload, sizeof(payload), false);
 
-    const bool sent = WriteFrame(pipe, payload, std::strlen(payload));
+    const uint32_t payloadLength = static_cast<uint32_t>(std::strlen(payload));
+    const bool sent =
+        WriteAllOverlapped(pipe, nullptr, &payloadLength, sizeof(payloadLength)) ==
+            IoStatus::Done &&
+        (payloadLength == 0 ||
+         WriteAllOverlapped(pipe, nullptr, payload, payloadLength) == IoStatus::Done);
     if (!sent && responseOut && responseCapacity) {
         std::snprintf(responseOut, responseCapacity, "WriteFrame failed (win32 %lu)",
                       static_cast<unsigned long>(GetLastError()));
@@ -581,14 +597,29 @@ bool SendNotification(const Notification& notification, const wchar_t* pipeName,
 
     if (sent) {
         char response[1024] = {};
-        if (ReadFrame(pipe, response, sizeof(response))) {
+        uint32_t responseLength = 0;
+        IoStatus readStatus = ReadAllOverlapped(
+            pipe, nullptr, &responseLength, sizeof(responseLength), responseTimeoutMs);
+        if (readStatus == IoStatus::Done &&
+            responseLength > 0 &&
+            responseLength < static_cast<uint32_t>(sizeof(response))) {
+            readStatus = ReadAllOverlapped(
+                pipe, nullptr, response, responseLength, responseTimeoutMs);
+        } else if (readStatus == IoStatus::Done) {
+            readStatus = IoStatus::Failed;
+        }
+        if (readStatus == IoStatus::Done) {
+            response[responseLength] = '\0';
             long long acknowledged = 0;
             ok = json::GetInt(response, "ok", &acknowledged) && acknowledged != 0;
             if (responseOut && responseCapacity) {
                 strncpy_s(responseOut, responseCapacity, response, _TRUNCATE);
             }
         } else if (responseOut && responseCapacity) {
-            std::snprintf(responseOut, responseCapacity, "ReadFrame failed (win32 %lu)",
+            const char* reason = readStatus == IoStatus::Timeout
+                                     ? "response read timed out"
+                                     : "response read failed";
+            std::snprintf(responseOut, responseCapacity, "%s (win32 %lu)", reason,
                           static_cast<unsigned long>(GetLastError()));
         }
     }

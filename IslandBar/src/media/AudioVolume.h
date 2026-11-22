@@ -22,6 +22,7 @@
 #include <windows.h>
 
 #include <atomic>
+#include <memory>
 
 #include "platform/CriticalSection.h"
 #include "platform/WorkerThread.h"
@@ -41,7 +42,7 @@ inline bool MusicWaveNeedsFrames(bool musicVisible, bool playing) noexcept {
     return musicVisible && playing;
 }
 
-class AudioVolume {
+class AudioVolume : public std::enable_shared_from_this<AudioVolume> {
 public:
     AudioVolume() = default;
     ~AudioVolume();

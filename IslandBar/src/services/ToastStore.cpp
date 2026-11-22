@@ -330,7 +330,7 @@ bool ToastReader::StartPolling(HWND wakeWindow, unsigned long pollMs) {
     wakeWindow_ = wakeWindow;
     pollMs_ = pollMs == 0 ? 2000 : pollMs;
     running_.store(true, std::memory_order_release);
-    if (!worker_.Start(&ToastReader::ThreadEntry, this)) {
+    if (!worker_.Start(&ToastReader::ThreadEntry, weak_from_this().lock())) {
         running_.store(false, std::memory_order_release);
         worker_.Stop();
         return false;

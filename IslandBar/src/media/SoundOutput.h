@@ -30,6 +30,7 @@
 
 #include <atomic>
 #include <cstddef>
+#include <memory>
 
 #include "domain/CardLayout.h"   // kMaxSoundDevices, kMaxSoundSessions
 #include "platform/CriticalSection.h"
@@ -82,7 +83,7 @@ struct SoundOutputSnapshot {
     unsigned long long revision = 0;
 };
 
-class SoundOutput {
+class SoundOutput : public std::enable_shared_from_this<SoundOutput> {
 public:
     SoundOutput() = default;
     ~SoundOutput();

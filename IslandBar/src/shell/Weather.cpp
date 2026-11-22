@@ -676,7 +676,7 @@ bool WeatherReader::Start() {
 
     // This Start() was the one that unwound correctly by hand -- Stop() now owns that unwinding for every
     // reader, which is why the hand-written version above it is gone (see platform/WorkerThread.h).
-    if (!worker_.Start(&WeatherReader::ThreadEntry, this)) {
+    if (!worker_.Start(&WeatherReader::ThreadEntry, weak_from_this().lock())) {
         worker_.Stop();
         return false;
     }

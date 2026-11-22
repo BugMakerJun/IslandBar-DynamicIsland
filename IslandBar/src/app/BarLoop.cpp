@@ -6420,14 +6420,13 @@ static void TickTray(island::BarState& bar, island::BarSystems& systems,
         const DWORD shellNow = island::TrayShellProcessId();
         if (shellNow != 0 && shellNow != bar.lastShellPid && !bar.learnInFlight->load() &&
             GetTickCount64() - bar.lastLearnAttempt >= 15000) {
+            // The old shell's registrations died with it. Clear the ledger BEFORE the worker can
+            // drain the new shell's ring; clearing after Launch() lets the worker seed the ledger
+            // and the UI then erase those valid records.
+            island::ResetLiveTray();
             if (LaunchTrayLearning(bar.learnInFlight)) {
                 bar.lastShellPid = shellNow;
                 bar.lastLearnAttempt = GetTickCount64();
-                // THE NEW SHELL HOLDS NONE OF THEM. Every registration the old one was holding died
-                // with it, so the ledger is emptied before the module is offered again: until it
-                // reports back the card falls back to the registry list (see shell/TrayIcons.h)
-                // instead of drawing registrations no shell is holding any more.
-                island::ResetLiveTray();
                 island::LogAndPrint("  tray learn: the shell is a new process (pid %lu) -- offering "
                                     "the module to it again (background)\n",
                                     static_cast<unsigned long>(shellNow));

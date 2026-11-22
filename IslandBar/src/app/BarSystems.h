@@ -63,7 +63,9 @@ struct BarSystems {
     // comments instead.
 
     // the machine's own state
-    SystemStatusReader statusReader;
+    std::shared_ptr<SystemStatusReader> statusReaderOwner =
+        std::make_shared<SystemStatusReader>();
+    SystemStatusReader& statusReader = *statusReaderOwner;
     SystemStatus systemStatus;
 
     // the sound page's own snapshot, on the heap: tens of kilobytes, filled by that page's worker
@@ -86,26 +88,38 @@ struct BarSystems {
 
     // what the outside world tells it about itself
     NotificationStore notifications;
-    NotificationServer notificationServer;
-    ToastReader toasts;
+    std::shared_ptr<NotificationServer> notificationServerOwner =
+        std::make_shared<NotificationServer>();
+    NotificationServer& notificationServer = *notificationServerOwner;
+    std::shared_ptr<ToastReader> toastsOwner = std::make_shared<ToastReader>();
+    ToastReader& toasts = *toastsOwner;
     WeChatWatcher wechat;
-    WindowsFileSearch fileSearch;
+    std::shared_ptr<WindowsFileSearch> fileSearchOwner =
+        std::make_shared<WindowsFileSearch>();
+    WindowsFileSearch& fileSearch = *fileSearchOwner;
 
     // what is playing
-    MusicSession music;
-    PlayerWindowWatch playerWindow;
-    AudioVolume volume;
+    std::shared_ptr<MusicSession> musicOwner = std::make_shared<MusicSession>();
+    MusicSession& music = *musicOwner;
+    std::shared_ptr<PlayerWindowWatch> playerWindowOwner =
+        std::make_shared<PlayerWindowWatch>();
+    PlayerWindowWatch& playerWindow = *playerWindowOwner;
+    std::shared_ptr<AudioVolume> volumeOwner = std::make_shared<AudioVolume>();
+    AudioVolume& volume = *volumeOwner;
 
     // ... and the one object that owns a worker for it
-    std::unique_ptr<SoundOutput> soundOutput = std::make_unique<SoundOutput>();
+    std::shared_ptr<SoundOutput> soundOutput = std::make_shared<SoundOutput>();
 
-    LyricsProvider lyrics;
-    WeatherReader weather;
+    std::shared_ptr<LyricsProvider> lyricsOwner = std::make_shared<LyricsProvider>();
+    LyricsProvider& lyrics = *lyricsOwner;
+    std::shared_ptr<WeatherReader> weatherOwner = std::make_shared<WeatherReader>();
+    WeatherReader& weather = *weatherOwner;
 
     // the shell's own things, mirrored
     ThumbnailPreview preview;
     TrayIcons trayIcons;
-    StartApps startApps;
+    std::shared_ptr<StartApps> startAppsOwner = std::make_shared<StartApps>();
+    StartApps& startApps = *startAppsOwner;
     WindowList taskWindows;
     WindowEventMonitor windowEvents;
     ScrollTilingGrabLayer scrollTilingGrabLayer;

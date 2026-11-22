@@ -127,6 +127,15 @@ void TestCardLayout() {
                   WindowIconRetryDue(1, firstFailure + 500, firstFailure + 500) &&
                   !WindowIconRetryDue(kMaxWindowIconLoadAttempts, 0, firstFailure),
               L"window-icon retries wait for their deadline and stop at the attempt limit");
+        Check(WindowIconIdentityMatches(100, 100) &&
+                  !WindowIconIdentityMatches(100, 200) &&
+                  WindowIconIdentityMatches(100, 0),
+              L"window-icon identity rejects a reused HWND from another process");
+        Check(WindowIconPercentileIndex(2, 50) == 0 &&
+                  WindowIconPercentileIndex(2, 95) == 1 &&
+                  WindowIconPercentileIndex(2, 99) == 1 &&
+                  WindowIconPercentileIndex(16, 99) == 15,
+              L"window-icon percentiles use nearest-rank and include the maximum at P99");
 
         const RoundedBox motionCard =
             BoxForState(IslandState::Expanded,

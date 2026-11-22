@@ -32,6 +32,7 @@
 #include <cstddef>
 #include <cwchar>
 #include <deque>
+#include <memory>
 
 #include "platform/CriticalSection.h"
 #include "platform/WorkerThread.h"
@@ -57,7 +58,7 @@ bool ToastTextFromXml(const char* xml, size_t size, wchar_t* title, size_t title
 void FriendlyNameFromHandlerId(const wchar_t* primaryId, wchar_t* out, size_t capacity);
 
 // Reads the toast database and hands what it finds to the store.
-class ToastReader {
+class ToastReader : public std::enable_shared_from_this<ToastReader> {
 public:
     ToastReader() = default;
     ~ToastReader();

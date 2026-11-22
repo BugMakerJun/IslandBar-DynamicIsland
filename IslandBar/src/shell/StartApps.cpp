@@ -725,7 +725,7 @@ bool StartApps::StartIconWorker() {
         }
         return false;
     }
-    if (!iconWorker_.Start(&StartApps::IconThreadEntry, this)) {
+    if (!iconWorker_.Start(&StartApps::IconThreadEntry, weak_from_this().lock())) {
         if (iconWorker_.Stop() == WorkerThread::StopResult::Stopped &&
             iconWakeEvent_) {
             CloseHandle(iconWakeEvent_);

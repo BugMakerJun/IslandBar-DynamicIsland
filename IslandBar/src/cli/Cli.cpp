@@ -219,22 +219,22 @@ int RunWindowList(bool activate) {
 int RunToastDump(int limit) {
     if (limit <= 0) limit = 10;
 
-    island::ToastReader reader;
-    if (!reader.Start()) {
+    auto reader = std::make_shared<island::ToastReader>();
+    if (!reader->Start()) {
         island::LogAndPrint("toast dump: the system toast database is not readable\n");
         return 1;
     }
 
     std::vector<wchar_t> text(64 * 1024);
-    const int rows = reader.Dump(limit, text.data(), text.size());
+    const int rows = reader->Dump(limit, text.data(), text.size());
     // The WIDE overload: the dump is full of Chinese message text, and the narrow one would print it as
     // byte-widened mojibake -- the same trap that once swallowed a tile's own log line.
     island::LogAndPrint(L"toast dump: %d of the newest %d toast(s) in %ls\n", rows, limit,
-                        reader.Available() ? L"the live database" : L"nowhere");
+                        reader->Available() ? L"the live database" : L"nowhere");
     if (rows > 0) {
         island::LogAndPrint(L"%ls", text.data());
     }
-    reader.Stop();
+    reader->Stop();
     return rows > 0 ? 0 : 1;
 }
 
@@ -360,22 +360,22 @@ int RunVolumeSet(int percent) {
     if (percent < 0) percent = 0;
     if (percent > 100) percent = 100;
 
-    island::AudioVolume volume;
-    if (!volume.Start()) {
+    auto volume = std::make_shared<island::AudioVolume>();
+    if (!volume->Start()) {
         island::LogAndPrint("volume set: no audio endpoint available\n");
         return 1;
     }
 
     float before = 0.0f;
-    const bool hadBefore = volume.Get(&before);
-    volume.SetLevel(static_cast<float>(percent) / 100.0f);
+    const bool hadBefore = volume->Get(&before);
+    volume->SetLevel(static_cast<float>(percent) / 100.0f);
 
     // The write goes through the worker, so the level is read back rather than assumed: this reports what
     // the DEVICE ended up at, which is the only claim worth making about someone else's machine.
     float after = 0.0f;
     for (int i = 0; i < 200; ++i) {
         Sleep(10);
-        if (volume.Get(&after) && std::fabs(after - static_cast<float>(percent) / 100.0f) < 0.011f) {
+        if (volume->Get(&after) && std::fabs(after - static_cast<float>(percent) / 100.0f) < 0.011f) {
             break;
         }
     }
@@ -390,20 +390,20 @@ int RunVolumeSet(int percent) {
 // both ends, which is the only way to tell "the bar moved" apart from "the volume actually
 // changed".
 int RunVolumeTest() {
-    island::AudioVolume volume;
-    if (!volume.Start()) {
+    auto volume = std::make_shared<island::AudioVolume>();
+    if (!volume->Start()) {
         island::LogAndPrint("volume test: no audio endpoint available");
         return 1;
     }
 
     float original = 0.0f;
-    if (!volume.Get(&original)) {
+    if (!volume->Get(&original)) {
         island::LogAndPrint("volume test: the endpoint gave no level");
-        volume.Stop();
+        volume->Stop();
         return 1;
     }
     island::LogAndPrint("volume test: read %.0f%% (muted=%d)", original * 100.0f,
-                        volume.IsMuted() ? 1 : 0);
+                        volume->IsMuted() ? 1 : 0);
 
     int failures = 0;
 
@@ -418,36 +418,36 @@ int RunVolumeTest() {
         {0.75f, "set to 75%"},
     };
     for (const Step& step : steps) {
-        volume.SetLevel(step.level);
+        volume->SetLevel(step.level);
         Sleep(900);   // long enough for the worker to write and read back
 
         float read = 0.0f;
-        volume.Get(&read);
+        volume->Get(&read);
         island::LogAndPrint("volume test: %s -> device reports %.0f%%", step.label,
                             read * 100.0f);
         if (std::fabs(read - step.level) > 0.05f) ++failures;
     }
 
     // Mute, and confirm the device flipped.
-    const bool mutedBefore = volume.IsMuted();
-    volume.ToggleMute();
+    const bool mutedBefore = volume->IsMuted();
+    volume->ToggleMute();
     Sleep(900);
-    const bool mutedAfter = volume.IsMuted();
+    const bool mutedAfter = volume->IsMuted();
     island::LogAndPrint("volume test: mute %d -> %d", mutedBefore ? 1 : 0, mutedAfter ? 1 : 0);
     if (mutedAfter == mutedBefore) ++failures;
-    volume.ToggleMute();   // put mute back before restoring the level
+    volume->ToggleMute();   // put mute back before restoring the level
     Sleep(400);
 
     // Restore: a diagnostic must not leave the machine's volume somewhere else.
-    volume.SetLevel(original);
+    volume->SetLevel(original);
     Sleep(900);
     float restored = 0.0f;
-    volume.Get(&restored);
+    volume->Get(&restored);
     island::LogAndPrint("volume test: restored to %.0f%% (was %.0f%%)", restored * 100.0f,
                         original * 100.0f);
     if (std::fabs(restored - original) > 0.05f) ++failures;
 
-    volume.Stop();
+    volume->Stop();
     island::LogAndPrint("volume test: %s", failures == 0 ? "PASS" : "FAIL");
     return failures == 0 ? 0 : 1;
 }

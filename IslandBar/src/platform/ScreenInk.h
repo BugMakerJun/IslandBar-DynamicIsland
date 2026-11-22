@@ -22,6 +22,7 @@
 #include <windows.h>
 
 #include <atomic>
+#include <memory>
 
 namespace island {
 
@@ -49,12 +50,11 @@ public:
 
 private:
     struct State;
-    State* state_ = nullptr;
-    std::atomic<bool> paused_{false};
+    std::shared_ptr<State> state_;
 
     bool Start();
     static unsigned long __stdcall ThreadEntry(void* self);
-    void Run();
+    static void Run(State& state);
 };
 
 }  // namespace island

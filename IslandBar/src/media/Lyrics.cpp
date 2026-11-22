@@ -1036,7 +1036,7 @@ bool LyricsProvider::Start() {
         return false;
     }
 
-    if (!worker_.Start(&LyricsProvider::ThreadEntry, this)) {
+    if (!worker_.Start(&LyricsProvider::ThreadEntry, weak_from_this().lock())) {
         Stop();
         return false;
     }

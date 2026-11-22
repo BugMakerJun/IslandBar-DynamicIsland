@@ -23,6 +23,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstring>
+#include <memory>
 
 #include "platform/CriticalSection.h"
 #include "platform/WorkerThread.h"
@@ -287,7 +288,7 @@ bool FetchLyricsVerbose(const char* title, const char* artist, int timeoutMs, Ly
 // A request for the track already held is ignored, so the frame loop can call this
 // every frame without causing a fetch per frame. Requests for a different track
 // replace any fetch in flight.
-class LyricsProvider {
+class LyricsProvider : public std::enable_shared_from_this<LyricsProvider> {
 public:
     LyricsProvider() = default;
     ~LyricsProvider();

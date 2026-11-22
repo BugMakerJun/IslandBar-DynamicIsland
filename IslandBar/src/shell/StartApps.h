@@ -47,6 +47,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <deque>
 #include <mutex>
 #include <string>
@@ -64,7 +65,7 @@ struct StartApp {
     wchar_t target[512] = {};
 };
 
-class StartApps {
+class StartApps : public std::enable_shared_from_this<StartApps> {
 public:
     StartApps() = default;
     ~StartApps();

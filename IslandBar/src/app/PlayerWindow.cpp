@@ -166,7 +166,7 @@ PlayerWindowWatch::~PlayerWindowWatch() {
 bool PlayerWindowWatch::Start() {
     if (running_.load(std::memory_order_acquire)) return true;
 
-    if (!worker_.Start(&PlayerWindowWatch::ThreadEntry, this)) {
+    if (!worker_.Start(&PlayerWindowWatch::ThreadEntry, weak_from_this().lock())) {
         worker_.Stop();
         return false;
     }

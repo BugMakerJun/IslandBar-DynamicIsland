@@ -41,6 +41,7 @@
 #include <windows.h>
 
 #include <atomic>
+#include <memory>
 #include <cstddef>
 
 #include "platform/CriticalSection.h"
@@ -193,7 +194,7 @@ bool ParseGeocodeJson(const char* json, double* latitude, double* longitude);
 // Polling rather than being asked: the reading changes on the weather's own
 // schedule (Open-Meteo publishes a current block every 15 minutes), so there is
 // nothing for a caller to trigger it with.
-class WeatherReader {
+class WeatherReader : public std::enable_shared_from_this<WeatherReader> {
 public:
     WeatherReader() = default;
     ~WeatherReader();

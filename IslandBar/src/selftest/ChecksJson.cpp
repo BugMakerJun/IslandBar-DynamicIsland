@@ -27,6 +27,8 @@
 #include <cmath>
 #include <cstring>
 #include <cstdlib>   // strtoul: unpacking the hex of a captured registration in the tray checks
+#include <memory>
+#include <thread>
 #include <vector>
 #include <cwchar>
 #include <string>
@@ -411,6 +413,37 @@ void TestNotifications() {
     // connects and sends nothing; the second sends only two bytes of the length header. Stop() must
     // return promptly in both cases because both operations are now overlapped and cancellable.
     {
+        // A client must not wait forever for an acknowledgement the server never sends.
+        wchar_t timeoutPipeName[80] = {};
+        std::swprintf(timeoutPipeName, 80, L"IslandBar.Verify.Timeout.%lu", GetCurrentProcessId());
+        wchar_t timeoutPipe[96] = {};
+        std::swprintf(timeoutPipe, 96, L"\\\\.\\pipe\\%s", timeoutPipeName);
+        HANDLE silentServer = CreateNamedPipeW(
+            timeoutPipe, PIPE_ACCESS_DUPLEX,
+            PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
+            1, kMaxMessageBytes + sizeof(uint32_t), kMaxMessageBytes + sizeof(uint32_t),
+            0, nullptr);
+        Check(silentServer != INVALID_HANDLE_VALUE, L"a no-response test server is created");
+        HANDLE releaseSilent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        std::thread silentThread([&]() {
+            (void)ConnectNamedPipe(silentServer, nullptr);
+            WaitForSingleObject(releaseSilent, 5000);
+        });
+        Notification timeoutNotification;
+        std::snprintf(timeoutNotification.title, kTitleCapacity, "timeout");
+        char timeoutResponse[256] = {};
+        const DWORD timeoutStarted = GetTickCount();
+        const bool timeoutAcknowledged =
+            SendNotification(timeoutNotification, timeoutPipeName, timeoutResponse,
+                             sizeof(timeoutResponse), 2000, 200);
+        const DWORD timeoutElapsed = GetTickCount() - timeoutStarted;
+        SetEvent(releaseSilent);
+        silentThread.join();
+        CloseHandle(releaseSilent);
+        if (silentServer != INVALID_HANDLE_VALUE) CloseHandle(silentServer);
+        Check(!timeoutAcknowledged && timeoutElapsed < 1500,
+              L"the notification client times out when no acknowledgement arrives");
+
         wchar_t pipeName[80] = {};
         std::swprintf(pipeName, 80, L"IslandBar.Verify.%lu", GetCurrentProcessId());
         wchar_t fullName[96] = {};
@@ -421,19 +454,19 @@ void TestNotifications() {
                                OPEN_EXISTING, 0, nullptr);
         };
 
-        NotificationServer server;
-        Check(server.Start(pipeName), L"the notification server starts on a test pipe");
+        auto server = std::make_shared<NotificationServer>();
+        Check(server->Start(pipeName), L"the notification server starts on a test pipe");
         HANDLE silentClient = connectClient();
         Check(silentClient != INVALID_HANDLE_VALUE,
               L"a test client connects before sending anything");
         const DWORD silentStarted = GetTickCount();
-        server.Stop();
+        server->Stop();
         const DWORD silentStoppedMs = GetTickCount() - silentStarted;
-        Check(!server.IsRunning() && silentStoppedMs < 2000,
+        Check(!server->IsRunning() && silentStoppedMs < 2000,
               L"Stop() cancels a connected client that sends no data");
         if (silentClient != INVALID_HANDLE_VALUE) CloseHandle(silentClient);
 
-        Check(server.Start(pipeName), L"the notification server restarts after cancellation");
+        Check(server->Start(pipeName), L"the notification server restarts after cancellation");
         HANDLE partialClient = connectClient();
         const uint32_t claimedLength = 128;
         DWORD partialWritten = 0;
@@ -442,13 +475,13 @@ void TestNotifications() {
                   partialWritten == 2,
               L"a test client sends a deliberately partial frame header");
         const DWORD partialStarted = GetTickCount();
-        server.Stop();
+        server->Stop();
         const DWORD partialStoppedMs = GetTickCount() - partialStarted;
-        Check(!server.IsRunning() && partialStoppedMs < 2000,
+        Check(!server->IsRunning() && partialStoppedMs < 2000,
               L"Stop() cancels a partially received frame");
         if (partialClient != INVALID_HANDLE_VALUE) CloseHandle(partialClient);
 
-        Check(server.Start(pipeName), L"the notification server starts for a complete frame");
+        Check(server->Start(pipeName), L"the notification server starts for a complete frame");
         Notification complete;
         std::snprintf(complete.title, kTitleCapacity, "pipe test");
         char response[256] = {};
@@ -460,12 +493,12 @@ void TestNotifications() {
         Notification received;
         bool took = false;
         for (int i = 0; i < 50 && !took; ++i) {
-            took = server.Take(&received);
+            took = server->Take(&received);
             if (!took) Sleep(2);
         }
         Check(took && std::strcmp(received.title, "pipe test") == 0,
               L"the acknowledged notification reaches the queue");
-        server.Stop();
+        server->Stop();
     }
 }
 

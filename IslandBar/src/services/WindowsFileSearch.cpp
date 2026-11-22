@@ -229,7 +229,7 @@ bool WindowsFileSearch::Start() {
         Stop();
         return false;
     }
-    if (!worker_.Start(&WindowsFileSearch::ThreadEntry, this)) {
+    if (!worker_.Start(&WindowsFileSearch::ThreadEntry, weak_from_this().lock())) {
         Stop();
         return false;
     }

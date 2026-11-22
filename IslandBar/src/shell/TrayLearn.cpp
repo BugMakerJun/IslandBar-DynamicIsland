@@ -104,7 +104,7 @@ bool StartTrayWake(HWND wakeWindow) {
     if (!wakeWindow) return false;
     if (g_trayWakePump.running.exchange(true, std::memory_order_acq_rel)) return true;
     g_trayWakePump.window.store(wakeWindow, std::memory_order_release);
-    if (!g_trayWakePump.worker.Start(&TrayWakeThreadEntry, nullptr)) {
+    if (!g_trayWakePump.worker.StartUnmanaged(&TrayWakeThreadEntry, nullptr)) {
         g_trayWakePump.running.store(false, std::memory_order_release);
         g_trayWakePump.worker.Stop();
         return false;
