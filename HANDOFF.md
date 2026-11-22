@@ -14640,10 +14640,10 @@ event 和 OVERLAPPED；buffer 与 pipe 在调用帧内保持，直到操作完�
 * Debug/Release `island_smoke`：PASS。
 * 真实 `--notify`：退出码 0，通知进入队列。
 * Explorer：旧 PID `37948` -> 新 PID `47264`；一次新 shell learning，17 registrations captured。
-* 新 Release 已部署并运行，PID `32924`。
+* 新 Release 已部署并运行，最终 PID `19828`。
 * 首轮单显示器图标采样：2 个真实 cache miss，P50/P99 `4.871 ms`，max `32.744 ms`。
   nearest-rank P99 已修正为包含 small-sample 最大值；当前最坏值超过 16.7 ms 帧预算，
   因此后台像素提取列为下一步独立性能改造，当前先保留已部署的有界同步路径。
-* 8 小时采样：IslandBar PID `15528` -> 最终全绿 PID `32924`；最终采样器 PID `21024`，CSV
-  `C:\Users\18340\IslandBar\runtime-soak-20261123-030355.csv`。
+* 8 小时采样：最终采样器 PID `46744`，目标 IslandBar PID `19828`，CSV
+  `C:\Users\18340\IslandBar\runtime-soak-20261123-030448.csv`。
 

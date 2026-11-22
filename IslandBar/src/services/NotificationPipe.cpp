@@ -189,15 +189,15 @@ private:
 };
 
 IoStatus ConnectPipe(HANDLE pipe, HANDLE stopEvent) {
-    OverlappedOperation operation;
-    if (!operation.Valid()) return IoStatus::Failed;
-    const BOOL started = ConnectNamedPipe(pipe, operation.Begin());
+    auto operation = std::make_unique<OverlappedOperation>();
+    if (!operation->Valid()) return IoStatus::Failed;
+    const BOOL started = ConnectNamedPipe(pipe, operation->Begin());
     const DWORD error = started ? ERROR_SUCCESS : GetLastError();
     if (started || error == ERROR_PIPE_CONNECTED) {
         return IoStatus::Done;
     }
     DWORD ignored = 0;
-    return operation.Wait(pipe, stopEvent, FALSE, kConnectTimeoutMs, &ignored);
+    return operation->Wait(pipe, stopEvent, FALSE, kConnectTimeoutMs, &ignored);
 }
 
 IoStatus ReadAllOverlapped(HANDLE pipe, HANDLE stopEvent, void* buffer, DWORD bytes,
@@ -209,12 +209,12 @@ IoStatus ReadAllOverlapped(HANDLE pipe, HANDLE stopEvent, void* buffer, DWORD by
         const DWORD elapsed = GetTickCount() - startedAt;
         if (elapsed >= timeoutMs) return IoStatus::Timeout;
 
-        OverlappedOperation operation;
-        if (!operation.Valid()) return IoStatus::Failed;
+        auto operation = std::make_unique<OverlappedOperation>();
+        if (!operation->Valid()) return IoStatus::Failed;
         DWORD got = 0;
-        const BOOL started = ReadFile(pipe, cursor, remaining, &got, operation.Begin());
+        const BOOL started = ReadFile(pipe, cursor, remaining, &got, operation->Begin());
         const IoStatus status =
-            operation.Wait(pipe, stopEvent, started, timeoutMs - elapsed, &got);
+            operation->Wait(pipe, stopEvent, started, timeoutMs - elapsed, &got);
         if (status != IoStatus::Done) return status;
         if (got == 0) return IoStatus::Failed;
         cursor += got;
@@ -231,12 +231,12 @@ IoStatus WriteAllOverlapped(HANDLE pipe, HANDLE stopEvent, const void* buffer, D
         const DWORD elapsed = GetTickCount() - startedAt;
         if (elapsed >= kFrameTimeoutMs) return IoStatus::Timeout;
 
-        OverlappedOperation operation;
-        if (!operation.Valid()) return IoStatus::Failed;
+        auto operation = std::make_unique<OverlappedOperation>();
+        if (!operation->Valid()) return IoStatus::Failed;
         DWORD written = 0;
-        const BOOL started = WriteFile(pipe, cursor, remaining, &written, operation.Begin());
+        const BOOL started = WriteFile(pipe, cursor, remaining, &written, operation->Begin());
         const IoStatus status =
-            operation.Wait(pipe, stopEvent, started, kFrameTimeoutMs - elapsed, &written);
+            operation->Wait(pipe, stopEvent, started, kFrameTimeoutMs - elapsed, &written);
         if (status != IoStatus::Done) return status;
         if (written == 0) return IoStatus::Failed;
         cursor += written;
@@ -250,16 +250,16 @@ IoStatus WriteAllOverlapped(HANDLE pipe, HANDLE stopEvent, const void* buffer, D
 // as every other overlapped operation. A client that keeps the connection open is disconnected
 // after the grace period rather than being allowed to occupy the single listener indefinitely.
 IoStatus WaitForResponseConsumed(HANDLE pipe, HANDLE stopEvent) {
-    OverlappedOperation operation;
-    if (!operation.Valid()) return IoStatus::Failed;
+    auto operation = std::make_unique<OverlappedOperation>();
+    if (!operation->Valid()) return IoStatus::Failed;
     char unexpected = 0;
     DWORD received = 0;
-    const BOOL started = ReadFile(pipe, &unexpected, 1, &received, operation.Begin());
+    const BOOL started = ReadFile(pipe, &unexpected, 1, &received, operation->Begin());
     const IoStatus status =
-        operation.Wait(pipe, stopEvent, started, kResponseDrainMs, &received);
+        operation->Wait(pipe, stopEvent, started, kResponseDrainMs, &received);
     if (status != IoStatus::Failed) return status;
 
-    const DWORD error = operation.Error();
+    const DWORD error = operation->Error();
     return (error == ERROR_BROKEN_PIPE || error == ERROR_PIPE_NOT_CONNECTED)
                ? IoStatus::Done
                : IoStatus::Failed;
