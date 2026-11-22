@@ -14515,8 +14515,12 @@ hooked pid 37948 exe Explorer.EXE: ...
   `83.72 -> 83.46 MB`，handles `1094 -> 1025`，threads `74 -> 66`，无持续增长。
 * 真实 `--notify` 端到端：客户端退出码 0，栏日志收到 `notification: [IslandBar] MESSAGE`
   并解析出发送进程图标。
+* 已启动 8 小时后台采样（采样器 PID `29728`，目标 IslandBar PID `31504`）：
+  `C:\Users\18340\IslandBar\runtime-soak-20261123-021607.csv`，每 60 秒一行。首行 private
+  `84.10 MB`、working `107.88 MB`、handles `1090`、threads `70`。采样结束时需按整条曲线判断，
+  不能只看首行。
 * 已部署 Release 到 `%USERPROFILE%\IslandBar` 并启动。
 
-尚未覆盖：8–24 小时资源曲线、真实 DPI 缩放切换和多显示器（本机当前单显示器）。它们不能由本轮
-短时验证替代。
+尚未覆盖：真实 DPI 缩放切换和多显示器（本机当前单显示器）。DPI 的 96/150% 与 800–3840 DIP
+布局已有纯逻辑断言，但不能替代真实会话切换。
 
