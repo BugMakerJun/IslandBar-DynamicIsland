@@ -612,3 +612,14 @@ Get-Date
 handles `1094 -> 1025`、threads `74 -> 66`。
 
 本阶段验收范围是**单显示器**。多显示器暂不作为阻塞项；真实 DPI 切换仍需在单显示器上单独验收。
+
+DPI 验收必须确认实际值已经生效，不能只看设置页显示：
+
+```powershell
+# 期望缩放 125% 时读到 120；期望 100% 时读到 96
+Get-ItemProperty 'HKCU:\Control Panel\Desktop\WindowMetrics' -Name AppliedDPI
+```
+
+2026-11-23 尝试：设置页选择 125% 后，`AppliedDPI` 与 effective DPI 仍为 96，Windows 提示需要
+关闭重开或重新登录，因此该次不计通过；设置已恢复为 100%。真正的 `WM_DPICHANGED` 验收应在新登录
+会话中完成。

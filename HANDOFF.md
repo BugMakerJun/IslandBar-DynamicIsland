@@ -14513,6 +14513,10 @@ hooked pid 37948 exe Explorer.EXE: ...
   `taskbar-check` 846.7 ms、`wechat-sound draw` 2481.0 ms 两次系统级停顿，之后恢复到约 36 帧/秒。
   截图确认胶囊、歌词与右侧图标重新绘制。重置后 60 秒采样：private
   `83.72 -> 83.46 MB`，handles `1094 -> 1025`，threads `74 -> 66`，无持续增长。
+* 单显示器 DPI 尝试：在 Windows“显示”页选择 125% 后，界面保留该值，但当前会话的
+  `GetDpiForMonitor(MDT_EFFECTIVE_DPI)`、`GetDpiForSystem()` 与 `AppliedDPI` 仍全部为 96；
+  Windows 明确提示部分应用要关闭重开或重新登录。因此这不能算 `WM_DPICHANGED` 实机通过。随后已把
+  设置恢复为 100%，IslandBar PID 与运行状态未变。真正生效的 DPI 切换验证需要重新登录或下次会话。
 * 真实 `--notify` 端到端：客户端退出码 0，栏日志收到 `notification: [IslandBar] MESSAGE`
   并解析出发送进程图标。
 * 已启动 8 小时后台采样（采样器 PID `29728`，目标 IslandBar PID `31504`）：
@@ -14522,6 +14526,6 @@ hooked pid 37948 exe Explorer.EXE: ...
 * 已部署 Release 到 `%USERPROFILE%\IslandBar` 并启动。
 
 范围决定（2026-11-23 用户）：**本阶段不要求多显示器，只按单显示器验收**。多显示器从当前待测项
-移出，不据此阻塞上传。尚未覆盖的只剩真实 DPI 缩放切换；DPI 的 96/150% 与 800–3840 DIP
-布局已有纯逻辑断言，但不能替代真实会话切换。
+移出，不据此阻塞上传。尚未覆盖的只剩“重新登录后实际生效”的 DPI 缩放切换；DPI 的 96/150% 与
+800–3840 DIP 布局已有纯逻辑断言，但不能替代真实会话切换。
 
