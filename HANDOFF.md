@@ -14644,6 +14644,10 @@ event 和 OVERLAPPED；buffer 与 pipe 在调用帧内保持，直到操作完�
 * 首轮单显示器图标采样：2 个真实 cache miss，P50/P99 `4.871 ms`，max `32.744 ms`。
   nearest-rank P99 已修正为包含 small-sample 最大值；当前最坏值超过 16.7 ms 帧预算，
   因此后台像素提取列为下一步独立性能改造，当前先保留已部署的有界同步路径。
+  后台化设计边界：后台只做 HWND/PID 校验、`WM_GETICON`、exe 图标解码和像素产出；结果连同
+  `HWND + PID + request generation + retry attempt` 排入有界队列，渲染线程仍独占 D2D bitmap 创建。
+  HWND/PID/代次任一不匹配就丢结果；退出时关闭队列并等待正在执行的提取返回。验收要求真实 miss
+  样本 P99 低于 16.7 ms、无任何 frame 等待后台线程、Prune 仍能释放离场 bitmap。
 * 8 小时采样：最终采样器 PID `46744`，目标 IslandBar PID `19828`，CSV
   `C:\Users\18340\IslandBar\runtime-soak-20261123-030448.csv`。
 
