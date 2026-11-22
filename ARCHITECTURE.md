@@ -92,7 +92,7 @@ scripts/            build.ps1 / capture-*.ps1 / snapshot.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File ".\IslandBar\scripts\build.ps1" -Config Release
 powershell -NoProfile -ExecutionPolicy Bypass -File ".\IslandBar\scripts\build.ps1" -Config Debug
 
-# 自检（900+ 断言；会开窗口，退出码 0 == 全过）
+# 自检（当前 1216 项；本机有 5 项既有像素基线失败时退出码为 5）
 .\IslandBar\build\Release\src\Release\island_bar.exe --self-test
 
 # 冒烟（编译、链接、运行时）
@@ -121,6 +121,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ".\IslandBar\scripts\regress
 4. **实现并部署**：Debug 与 Release 都要能编过，跑 `--self-test` 与 `island_smoke`，部署到 `%USERPROFILE%\IslandBar`。
 5. **等用户测**：用户说"没问题"之前不 push（本地提交可以）。
 6. **推送**：用户确认后才推。本机 443 到 github.com 不通（`git push` 跑不了），走 `IslandBar\captures\push-via-api.ps1`——它按对象逐个上传 blob/tree/commit，每个哈希都与本地断言相等、分支最后才移动；文件字节取自 `git cat-file blob` 而不是工作区（`core.autocrlf` 开着，磁盘上是 CRLF、提交里是 LF）。
+
+## 6a. 并发与系统边界的硬规则（2026-11-23）
+
+- **线程状态不用 `volatile bool`**。后台线程与所有者之间共享的 `running_` 必须是 `std::atomic<bool>`：读用 acquire，写用 release；同一判断需要多次使用状态时先取一次快照。`Start/Stop/析构` 仍由对象所有者串行调用，不做并发启动协议。
+- **停止不能假定成功**。`WorkerThread::Stop()` 返回 `Stopped / Timeout / Failed`；只有 `Stopped` 才能关闭该次尝试的辅助事件。超时后线程与停止事件保留，`Prepare()` 拒绝新旧 worker 重叠。
+- **命名管道的响应不能被断开丢掉**。通知服务器使用 `FILE_FLAG_OVERLAPPED` 的 BYTE 管道；连接、读写和停止都可取消。写完响应后要等到客户端读取并关闭（有 1 秒上限），再 `DisconnectNamedPipe`，否则 Windows 会直接丢掉尚未读取的确认帧。
+- **窗口图标失败有界重试**。Renderer 对同一 HWND 最多提取 4 次，失败后的等待为 500 / 2000 / 5000 ms；成功即缓存，离场仍由 `PruneWindowIconsForFrame` 释放。不要改成每帧重试。
+- **图标提取暂不后台化**。`ID2D1DeviceContext2::CreateBitmap` 必须在渲染设备上下文执行；真正后台化还需要像素结果队列、HWND+PID 代次校验、设备丢失后重传和退出排空。现有有界 `WM_GETICON`（100 ms）+ 有限退避先控制最坏路径；若以后实测 P95/P99 仍超预算，再按完整后台流水线单独立项。
+- **`island_tray_hook.dll` 的 `DllMain` 只做 `DisableThreadLibraryCalls`**。日志锁使用静态初始化的 `SRWLOCK`；“attached”身份日志与全部文件 I/O 延迟到第一次 `IslandTrayHookProc` 内的 `EnsureHooked()`，不在加载器锁下打开文件。
 
 ## 7. 已知的架构债（写在明处，不是等人发现）
 

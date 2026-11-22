@@ -264,8 +264,6 @@ Windows 把合成按键丢了；必须用那两个快捷方式启动，别从 ID
 
 ---
 
-## 5b. 最大化窗口应该顶到屏幕顶端（2026-10-14 修的那条）
-
 ## 5c. 系统面板：亮度条 + 三个开关（2026-10-14 加的那批）
 
 **做**：点栏上系统按钮打开面板。应该看到：
@@ -306,32 +304,16 @@ Windows 把合成按键丢了；必须用那两个快捷方式启动，别从 ID
 
 ---
 
-## 5d. 外观主题（2026-10-14 加的那批）
+## 5d. 外观与最大化窗口
 
-**做**：面板翻到第二页，最右下那格「**外观**」，标题下面写的就是当前主题名。点一下换下一个，**立刻变色**
-（胶囊、卡片、瓷砖高亮、字色一起变），日志里：
+外观现在是**固定的 Niri 材质**：没有主题选择、没有主题循环，也不读取旧 `theme.txt` 或自定义主题目录。
+启动日志应只有：
 
 ```
-theme: 石墨 (switched) -- ink contrast 15.5:1
-  tile 5 '外观' -> theme 石墨 (3 of 4)
+theme: fixed Niri material (0 selectable themes)
 ```
 
-换过的主题会记住（写在 `C:\Users\18340\IslandBar\theme.txt`），下次启动还是它。内置四个：
-**默认**（跟以前一模一样）、**冰蓝**（黑 / 深蓝 / 冰蓝，方案里那套配色）、**石墨**（高对比）、
-**玻璃**（明显更透、顶上那道光和一圈亮边最重，背后是真桌面）。注意：**背后不会变模糊** ——
-Windows 的模糊背板在这套窗口上按整个窗口矩形生效（不是按形状），那条路三条 API 都试过，走不通
-（记录在 HANDOFF 8.91）。
-
-**想自己做一个**：把 `C:\Users\18340\IslandBar\themes\sample.txt` 复制成任意 `.txt`，改里面的名字和颜色
-（一行一个 `键=值`，颜色是 0..1 的小数，**没写的键沿用"默认"的值**，所以只写 `name=` 和 `accent=` 也行），
-重启栏就会出现在循环里；文件写错会在日志里说明哪一行不对，坏文件只会被跳过、不影响其它主题。
-
-**如果字看起来发灰/看不清**：日志里那一行会出现 `BELOW THE 4.5 FLOOR`，把 `ink=` 调亮或 `card=` 调暗。
-
-主题文件里还有两个键写着材质的两层（HANDOFF 8.92）：`shadow=`（阴影强度，0..1，`玻璃` 是 0.20）和
-`grain=`（颗粒噪声强度，0..1，`玻璃` 是 0.05）。**`默认` 两个都是 0** —— 所以不选主题就跟你以前看到的完全一样。
-自己写主题时可以先只改 `shadow`/`grain` 看看：数值很小（0.02–0.05 的颗粒、0.1–0.2 的阴影）才有"高级悬浮感"，
-再大就变成脏和黑边了。
+下面这条是最大化窗口的历史行为，仍然有效。
 
 **做**：把任意一个窗口最大化（双击标题栏，或 Win+↑）。
 
@@ -372,7 +354,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\IslandBar\scripts\restore-
 # 最近 20 行日志
 Get-Content $env:USERPROFILE\IslandBar\island_bar.log -Tail 20
 
-# 全部自检（954 项：几何 / 解析 / 像素）
+# 全部自检（当前 1216 项；本机 1211 OK、5 项既有像素基线失败）
 & "$env:USERPROFILE\IslandBar\island_bar.exe" --self-test
 
 # Windows 侧最新的真通知（这条通道的调试口）
@@ -512,3 +494,95 @@ private bytes 不再随运行时间单调增长。
 
 若仍然增长，移除两个诊断变量并改用 `ISLANDBAR_NO_MEDIA=1` 对照整条媒体会话链；若稳定，则正式修复
 应缓存 manager，并只保留低频、可取消的安全兜底。
+
+---
+
+## 11. 并发、通知管道与窗口图标重试
+
+这套检查已包含在 `--self-test` 里，不需要另开测试程序：
+
+```powershell
+# 必须把 exe 和 DLL 复制到项目树外再跑（%USERPROFILE%\IslandBar 或 %TEMP% 下的目录）
+& "$env:USERPROFILE\IslandBar\island_bar.exe" --self-test
+```
+
+验收行：
+
+```text
+[ OK ] Stop() cancels a connected client that sends no data
+[ OK ] Stop() cancels a partially received frame
+[ OK ] a complete framed notification is acknowledged response='{"ok":1,...}'
+[ OK ] a failed window icon retries with finite 500/2000/5000 ms backoff
+[ OK ] window-icon retries wait for their deadline and stop at the attempt limit
+```
+
+当前本机完整自检是 **1216 项：1211 OK / 5 FAIL**。这 5 项固定为既有像素基线：
+Start 页两处旧布局、系统面板 inset 亮度、应用图标行、Start 按钮。任何**第 6 项**失败都按回归处理。
+
+通知管道如果停止超时，日志必须出现：
+
+```text
+worker thread: stop timeout state=retained thread=alive prepare=blocked
+```
+
+这表示旧线程尚未退出，后续 `Start()` 会被拒绝；不要关闭它仍可能使用的句柄。
+
+---
+
+## 12. 窗口图标失败后的恢复
+
+第一次提取失败时，日志应出现：
+
+```text
+window icon: hwnd 0000000000000001 attempt 1/4 failed; retry in 500 ms
+```
+
+若第二次或后续提取成功：
+
+```text
+window icon: hwnd 0000000000000001 recovered on attempt 2/4
+```
+
+若一直失败，只会再出现一条：
+
+```text
+window icon: hwnd 0000000000000001 no icon after 4 attempts; retries exhausted
+```
+
+验收要求：同一 HWND 的 `attempt ... failed` / `retries exhausted` 合计不超过 4 次；
+不会每帧重复执行 `WM_GETICON / OpenProcess / QueryFullProcessImageName / 图标解码`。
+窗口离开任务栏行后仍应出现 `window icons: kept=... released=... capacity=32`。
+
+---
+
+## 13. TrayHook `DllMain` 与 Explorer 重启
+
+`island_tray_hook.dll` 的 `DllMain` 只调用 `DisableThreadLibraryCalls`。模块被加载但 Hook 回调尚未执行时，
+不应创建或追加 `%USERPROFILE%\IslandBar\tray_learned.txt`。第一次 Hook 初始化后才应出现：
+
+```text
+attached pid ... exe Explorer.EXE
+hooked pid ... exe Explorer.EXE: ...
+```
+
+Explorer 重启验收（会短暂隐藏任务栏，已打开的 File Explorer 窗口会关闭）：
+
+```powershell
+$old = (Get-Process explorer | Select-Object -First 1).Id
+Stop-Process -Name explorer -Force
+Start-Sleep -Seconds 3
+Start-Process "$env:WINDIR\explorer.exe"
+Start-Sleep -Seconds 15
+"old=$old new=$((Get-Process explorer | Select-Object -First 1).Id)"
+Select-String "$env:USERPROFILE\IslandBar\island_bar.log" -Pattern 'new process|tray learn|observer is up' |
+    Select-Object -Last 20
+```
+
+新 shell 必须出现且仅出现一次：
+
+```text
+tray learn: the shell is a new process (pid ...) -- offering the module to it again (background)
+tray hook: the observer is up in the shell ...
+```
+
+并最终完成一次 `tray learn: ... registration(s) captured ...`。原生 `Shell_TrayWnd` 随后应重新不可见。

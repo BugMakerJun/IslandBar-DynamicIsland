@@ -14432,3 +14432,80 @@ ChatGPT 与 Gemini 的评审一致认为应先做单变量隔离，不能同时�
 下一组必须用 `ISLANDBAR_NO_MEDIA=1` 隔离整个媒体会话链；如果稳定，正式修复采用缓存 manager 和低频、
 可取消的兜底刷新。
 
+---
+
+## 8.185 **P1/P2 并发收尾、图标恢复与 DllMain 边界**（2026-11-23）
+
+本地提交：`ae6cbd1 fix: harden worker lifecycles and window icon retries`。尚未推送。
+
+### 8.185.1 WorkerThread 与 `running_`
+
+`WorkerThread` 现在把线程、停止事件和停止标志放进共享 `State`。线程入口先用 thread-local
+`Signal` 持有状态租约，所以所有者对象释放后，不可取消的调用返回时不会触碰已释放的 `WorkerThread`。
+`Stop()` 返回 `Stopped / Timeout / Failed`：
+
+* 只有 `Stopped` 才关闭本次尝试的辅助事件；
+* `Timeout / Failed` 保留线程与事件；
+* `Prepare()` 在旧线程仍活着时拒绝启动，避免新旧 worker 重叠。
+
+故意超时测试：`worker thread: stop timeout state=retained thread=alive prepare=blocked`；
+超时后重启被拒绝；句柄数 `303 -> 303`。
+
+所有跨线程生命周期 `running_` 已改为 `std::atomic<bool>`。读用 acquire，写用 release；
+`Start/Stop/析构` 仍由所有者线程串行调用。对应文件：
+`AudioVolume`、`Lyrics`、`MusicSession`、`SoundOutput`、`Weather`、`WindowsFileSearch`、
+`NotificationPipe`、`PlayerWindow`。
+
+### 8.185.2 通知管道
+
+`ConnectNamedPipe`、请求读取和响应写入全部改成 `FILE_FLAG_OVERLAPPED`；停止事件可以取消所有等待。
+连接超时 30 秒，帧读写 5 秒，取消后的 drain 最多 2 秒。无法 drain 时不关闭仍可能被内核使用的句柄。
+
+BYTE 模式暴露出一个 Windows 行为：服务器写完响应后立刻 `DisconnectNamedPipe` 会丢掉客户端尚未读取的
+数据，客户端得到 `win32 233 (ERROR_PIPE_NOT_CONNECTED)`。现在服务器在写完响应后发起一个可取消的
+1 秒读取，等客户端读取并关闭后再断开；客户端不发数据时仍有界退出。自检确认：
+
+* 连接后不发数据，`Stop()` 在 2 秒内完成；
+* 只发半个长度头，`Stop()` 在 2 秒内完成；
+* 停止后可重启；
+* 完整通知得到 `{"ok":1,"received":1}` 并进入队列。
+
+### 8.185.3 窗口图标缓存
+
+原逻辑插入 HWND 缓存槽后才提取图标，失败后同一 HWND 命中空 bitmap 并永久不再尝试。现在每个 HWND
+最多尝试 4 次：失败后的等待依次为 **500 / 2000 / 5000 ms**。成功即缓存；失败耗尽后不再每帧做
+`WM_GETICON / OpenProcess / QueryFullProcessImageName / 解码`。离场动画仍保留 bitmap，
+`PruneWindowIconsForFrame()` 继续在离开列出的/离场的窗口集合后释放。
+
+自检新增退避边界断言。真实运行 12 秒时 6 个任务窗口图标均为 `ok`；本机该次没有触发首次失败路径。
+`icon decode: NO PIXELS, 0x0, rev 0` 是另一条封面/图标解码诊断，不等同于窗口图标缓存失败。
+
+图标提取**暂不后台化**：D2D bitmap 必须在渲染设备上下文创建，后台线程只能产出像素；完整实现还需要
+结果队列、HWND+PID 代次、设备丢失重传与退出排空。当前先用 100 ms 有界 `WM_GETICON` 和有限退避控制
+最坏路径，待 P95/P99 实测超过预算再单独立项。
+
+### 8.185.4 TrayHook `DllMain`
+
+`DllMain(DLL_PROCESS_ATTACH)` 现在只执行 `DisableThreadLibraryCalls`。原临界区改为静态初始化的
+`SRWLOCK`；“attached”身份日志从加载器锁内移到第一次 `IslandTrayHookProc -> EnsureHooked()`。
+
+独立 LoadLibrary 探针在自定义 `USERPROFILE` 下加载 DLL 后没有生成 `tray_learned.txt`；
+新 shell 真正执行 Hook 初始化后才写出：
+
+```text
+attached pid 37948 exe Explorer.EXE
+hooked pid 37948 exe Explorer.EXE: ...
+```
+
+### 8.185.5 构建与系统验证
+
+* Debug、Release：`/WX` 零告警。
+* Release `island_smoke`：PASS。
+* Debug/Release `--self-test`：均 `1211 OK / 5 FAIL`；5 项仍是既有像素基线，未出现第 6 项回归。
+* Explorer 重启：旧 PID `11812` -> 新 PID `37948`；只触发一次新 shell 托盘学习，最终
+  `18 registration(s) captured, 2 new entr(ies)`；交互桌面上 `Shell_TrayWnd` 已重新隐藏。
+* 已部署 Release 到 `%USERPROFILE%\IslandBar` 并启动。
+
+尚未覆盖：8–24 小时资源曲线、真实 DPI 缩放切换、多显示器（本机当前单显示器）和 GPU device-lost
+注入。它们不能由本轮短时验证替代。
+
