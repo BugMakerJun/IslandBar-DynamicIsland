@@ -2,7 +2,7 @@
 //  SettingsWindow.h -- IslandBar's separate, activating settings surface.
 //
 //  The window is created on demand and destroyed on close. It owns no worker and no bar state;
-//  the frame loop applies shape/theme commands and feeds read-only runtime status back in.
+//  the frame loop applies shape commands and feeds read-only runtime status back in.
 // =====================================================================
 #pragma once
 
@@ -28,8 +28,6 @@ struct SettingsRuntimeStatus {
     int scrollTilingColumns = 0;
     int scrollTilingActiveColumn = -1;
     BarShape shape = BarShape::Capsule;
-    int themeIndex = 0;
-    int themeCount = 0;
 };
 
 enum class ScrollTilingCommand {
@@ -52,7 +50,6 @@ public:
     bool AutoStartEnabled() const { return status_.autoStartEnabled; }
 
     bool TakeShapeCommand(BarShape* shape);
-    bool TakeThemeCommand(int* themeIndex);
     bool TakeScrollTilingPreference(bool* enabled);
     bool TakeScrollTilingCommand(ScrollTilingCommand* command);
 
@@ -78,12 +75,10 @@ private:
     SettingsHit focused_;
     bool trackingMouse_ = false;
     bool pendingShape_ = false;
-    bool pendingTheme_ = false;
     bool pendingScrollTilingPreference_ = false;
     bool requestedScrollTilingEnabled_ = false;
     ScrollTilingCommand pendingScrollTilingCommand_ = ScrollTilingCommand::None;
     BarShape requestedShape_ = BarShape::Capsule;
-    int requestedTheme_ = -1;
     unsigned long long privateBytesBeforeOpen_ = 0;
     unsigned long long openedAtMs_ = 0;
     bool firstPaintLogged_ = false;

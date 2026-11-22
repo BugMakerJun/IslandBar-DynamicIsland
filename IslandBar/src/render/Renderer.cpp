@@ -598,6 +598,7 @@ void Renderer::DrawDecks(const RoundedBox& island, const FrameState& frame) {
 }
 
 void Renderer::PrepareTaskButtons(const FrameState& frame) {
+    PruneWindowIconsForFrame(frame.taskButtonWindow, frame.taskButtonCount);
     for (int i = 0; i < frame.taskButtonCount && i < FrameState::kMaxTaskButtons; ++i) {
         taskButtons_[i] = frame.taskButtons[i];
         taskButtons_[i].icon = IconForWindow(frame.taskButtonWindow[i]);
@@ -2054,6 +2055,32 @@ ID2D1Bitmap1* Renderer::IconForWindow(HWND window) {
     }
 
     return slot.bitmap;
+}
+
+void Renderer::PruneWindowIconsForFrame(const HWND* frameWindows, int frameWindowCount) {
+    if (frameWindowCount < 0) frameWindowCount = 0;
+    if (frameWindowCount > FrameState::kMaxTaskButtons) {
+        frameWindowCount = FrameState::kMaxTaskButtons;
+    }
+
+    int released = 0;
+    for (int i = 0; i < windowIconCount_;) {
+        if (WindowIconFrameContains(windowIcons_[i].window, frameWindows, frameWindowCount)) {
+            ++i;
+            continue;
+        }
+
+        SafeRelease(&windowIcons_[i].bitmap);
+        windowIcons_[i] = windowIcons_[windowIconCount_ - 1];
+        windowIcons_[windowIconCount_ - 1] = {};
+        --windowIconCount_;
+        ++released;
+    }
+
+    if (released > 0) {
+        LogLine(L"  window icons: kept=%d released=%d capacity=%d", windowIconCount_, released,
+                kMaxWindowIcons);
+    }
 }
 
 void Renderer::ReleaseWindowIcons() {

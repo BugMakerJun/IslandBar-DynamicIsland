@@ -13,7 +13,6 @@
 #include "core/Log.h"
 #include "core/ProcessMetrics.h"
 #include "platform/AutoStart.h"
-#include "render/Theme.h"
 
 #pragma comment(lib, "dwmapi.lib")
 
@@ -133,8 +132,7 @@ bool SettingsWindow::Open(HWND owner, SettingsPage page, const SettingsRuntimeSt
 }
 
 void SettingsWindow::SetStatus(const SettingsRuntimeStatus& status) {
-    const bool changed = status.shape != status_.shape || status.themeIndex != status_.themeIndex ||
-                         status.themeCount != status_.themeCount ||
+    const bool changed = status.shape != status_.shape ||
                          status.hidesNativeTaskbar != status_.hidesNativeTaskbar ||
                          status.keepsNativeTray != status_.keepsNativeTray ||
                          status.fullscreenSuppressed != status_.fullscreenSuppressed ||
@@ -158,13 +156,6 @@ bool SettingsWindow::TakeShapeCommand(BarShape* shape) {
     if (!pendingShape_ || !shape) return false;
     pendingShape_ = false;
     *shape = requestedShape_;
-    return true;
-}
-
-bool SettingsWindow::TakeThemeCommand(int* themeIndex) {
-    if (!pendingTheme_ || !themeIndex) return false;
-    pendingTheme_ = false;
-    *themeIndex = requestedTheme_;
     return true;
 }
 
@@ -198,7 +189,7 @@ SettingsHit SettingsWindow::HitAtClientPoint(POINT pixels) const {
     const UINT dpi = GetDpiForWindow(hwnd_);
     const float width = PixelsToDip(client.right - client.left, dpi);
     const float height = PixelsToDip(client.bottom - client.top, dpi);
-    const SettingsLayout layout = SettingsLayoutFor(width, height, status_.themeCount);
+    const SettingsLayout layout = SettingsLayoutFor(width, height);
     return SettingsHitAt(layout, page_, PixelsToDip(pixels.x, dpi), PixelsToDip(pixels.y, dpi));
 }
 
@@ -210,14 +201,8 @@ SettingsHit SettingsWindow::HitAtScreenPoint(POINT screen) const {
 
 SettingsHit SettingsWindow::NextFocusTarget(bool backwards) const {
     if (!hwnd_) return {};
-    RECT client = {};
-    GetClientRect(hwnd_, &client);
-    const UINT dpi = GetDpiForWindow(hwnd_);
-    const SettingsLayout layout = SettingsLayoutFor(PixelsToDip(client.right - client.left, dpi),
-                                                    PixelsToDip(client.bottom - client.top, dpi),
-                                                    status_.themeCount);
     SettingsHit targets[24] = {};
-    const int count = SettingsFocusTargets(layout, page_, targets, 24);
+    const int count = SettingsFocusTargets(page_, targets, 24);
     if (count <= 0) return {};
     int current = -1;
     for (int i = 0; i < count; ++i) {
@@ -257,15 +242,6 @@ void SettingsWindow::Activate(const SettingsHit& hit) {
             status_.shape = requestedShape_;
             focused_ = hit;
             Invalidate();
-            break;
-        case SettingsHitKind::Theme:
-            if (hit.index >= 0 && hit.index < status_.themeCount) {
-                requestedTheme_ = hit.index;
-                pendingTheme_ = true;
-                status_.themeIndex = hit.index;
-                focused_ = hit;
-                Invalidate();
-            }
             break;
         case SettingsHitKind::ToggleAutoStart: {
             const bool wanted = !status_.autoStartEnabled;
@@ -329,8 +305,6 @@ void SettingsWindow::Draw() {
     SettingsViewModel model;
     model.page = page_;
     model.shape = status_.shape;
-    model.themeIndex = status_.themeIndex;
-    model.themeCount = status_.themeCount;
     model.hidesNativeTaskbar = status_.hidesNativeTaskbar;
     model.keepsNativeTray = status_.keepsNativeTray;
     model.fullscreenSuppressed = status_.fullscreenSuppressed;

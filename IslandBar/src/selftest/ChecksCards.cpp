@@ -102,6 +102,21 @@ void TestCardLayout() {
                   NiriNoticeStateFor(IslandState::MusicStrip) == IslandState::MusicStrip,
               L"a Niri notice replaces the island content without changing its width");
 
+        const HWND current =
+            reinterpret_cast<HWND>(static_cast<UINT_PTR>(1));
+        const HWND leaving =
+            reinterpret_cast<HWND>(static_cast<UINT_PTR>(2));
+        const HWND alreadyGone =
+            reinterpret_cast<HWND>(static_cast<UINT_PTR>(3));
+        const HWND frameWindows[] = {current, leaving};
+        Check(!WindowIconFrameContains(nullptr, frameWindows, 2) &&
+                  WindowIconFrameContains(current, frameWindows, 2) &&
+                  WindowIconFrameContains(leaving, frameWindows, 2) &&
+                  !WindowIconFrameContains(alreadyGone, frameWindows, 2),
+              L"the window-icon cache keeps listed and departing icons, and drops only the rest");
+        Check(kMaxWindowIcons >= FrameState::kMaxTaskButtons,
+              L"the window-icon cache capacity covers the largest frame the row can request");
+
         const RoundedBox motionCard =
             BoxForState(IslandState::Expanded,
                         AnchorForWindow(0.0f, kPillTopMarginDip, 2560.0f));
@@ -5724,111 +5739,34 @@ void TestMusicCardLayout() {
                       L"a missing or truncated blob is Unknown, not a guess", dt6);
             }
 
-            // THE THEMES, on the two things that decide whether switching one is a good idea: does a
-            // theme FILE parse (the format a user types), and is the text still readable in every
-            // theme that ships.
-            //
-            // The contrast floor is the plan's own requirement -- "do not over-transparent the
-            // background so the text becomes unclear" -- turned into a number, because a theme whose
-            // ink is a shade lighter than its surface looks fine in a file and unreadable on screen.
+            // THE MATERIAL. Niri is the only material now; the loader and every alternate preset are
+            // gone. The contrast floor remains because the fixed surface still has to carry readable ink.
             {
-                std::string why;
-                Theme parsed;
-                const char* good =
-                    "# a theme written the way a user would write one\n"
-                    "name=test\n"
-                    "pill-top=0.02,0.03,0.06,0.90\n"
-                    "pill-bottom=0.5\n"          // the one-component shorthand: a grey
-                    "gloss=0.12\n"
-                    "accent=0.2,0.6,1.0\n";
-                Check(ThemeFromText(good, &parsed, &why),
-                      L"a hand-written theme parses, and may state only what it changes",
-                      L"name + three colours and a scalar");
-                Check(parsed.gloss > 0.11f && parsed.gloss < 0.13f && parsed.pillBottom.r == 0.5f &&
-                          parsed.accent.b == 1.0f && parsed.cardFill.a > 0.9f,
-                      L"and the fields it did not mention keep the default's values",
-                      L"pill-bottom=0.5 is the grey shorthand; cardFill comes from 默认");
-
-                const char* noName = "accent=0.2,0.6,1.0\n";
-                Check(!ThemeFromText(noName, &parsed, &why),
-                      L"a theme with no name is refused (the name is what theme.txt stores)");
-                const char* badColour = "name=x\naccent=1.4,0.2,0.2\n";
-                Check(!ThemeFromText(badColour, &parsed, &why),
-                      L"a channel outside 0..1 is refused rather than clamped");
-                const char* badKey = "name=x\ncolour=0.2,0.2,0.2\n";
-                Check(!ThemeFromText(badKey, &parsed, &why),
-                      L"an unknown key is refused, so a typo cannot be silently ignored");
-
-                for (int i = 0; i < BuiltInThemeCount(); ++i) {
-                    const Theme& theme = BuiltInTheme(i);
-                    const float contrast = ThemeInkContrast(theme);
-                    std::swprintf(dt6, 256, L"theme '%ls': ink contrast %.1f:1", theme.name, contrast);
-                    Check(contrast >= kInkContrastFloor, L"every built-in theme keeps its text readable",
-                          dt6);
-                }
-
-                // The CARD ink is decided by the backdrop UNDER THE CARD, not by the island's: the system
-                // panel and the Start menu hang below the bar, over a different part of the desktop. The
-                // crossover is time-smoothed, so each sample gets a wait longer than one step (250 ms).
-                {
-                    // CardInk only adapts when the clear lens theme is in force; the painted themes keep
-                    // their own ink. The shipped startup theme is 默认, so the check has to select the
-                    // lens theme explicitly and restore the caller's choice afterwards.
-                    const int themeBefore = island::CurrentThemeIndex();
-                    for (int i = 0; i < island::ThemeCount() && !island::CurrentTheme().lens; ++i) {
-                        island::CycleTheme();
-                    }
-                    island::SetCardInkBackdrop(0.05f);
-                    (void)island::CardInk(1.0f);   // seed the one-time clock before waiting
-                    Sleep(320);
-                    const D2D1_COLOR_F onDark = island::CardInk(1.0f);
-                    island::SetCardInkBackdrop(0.95f);
-                    (void)island::CardInk(1.0f);
-                    Sleep(320);
-                    const D2D1_COLOR_F onLight = island::CardInk(1.0f);
-                    std::swprintf(dt6, 256,
-                                  L"card ink over dark %.2f/%.2f/%.2f, over light %.2f/%.2f/%.2f",
-                                  onDark.r, onDark.g, onDark.b, onLight.r, onLight.g, onLight.b);
-                    Check(onDark.r > 0.7f && onDark.g > 0.7f && onDark.b > 0.7f,
-                          L"a dark backdrop under a card switches its words to the light ink", dt6);
-                    Check(onLight.r < 0.3f && onLight.g < 0.3f && onLight.b < 0.3f,
-                          L"a bright backdrop under a card switches its words to the dark ink", dt6);
-                    island::SetCardInkBackdrop(0.5f);
-                    while (island::CurrentThemeIndex() != themeBefore) island::CycleTheme();
-                }
+                const Theme& theme = CurrentTheme();
+                const float contrast = ThemeInkContrast(theme);
+                std::swprintf(dt6, 256, L"theme '%ls': ink contrast %.1f:1", theme.name, contrast);
+                Check(contrast >= kInkContrastFloor,
+                      L"the fixed Niri material keeps its text readable", dt6);
 
                 // THE TRAY MENU'S OWN BODY, which is the one surface that has to HIDE what it covers.
-                //
-                // Measured 2026-11-05: over the glass theme the menu had no body at all -- it was the
-                // card's 2% crystal -- so the tray page's icons showed through it and the words were read
-                // against them ("托盘卡片里 鼠标右键弹窗看不清"). BOTH tones, with the glass theme's own
-                // two inks, because the sheet is chosen by the ink; pure functions, so no render and no
-                // waiting, and the numbers are the ones the drawing gets rather than a second opinion.
+                // Both tones are synthetic because the test asks about the sheet's rule, not which
+                // material happens to be selected; pure functions, so no render or wait is involved.
                 {
-                    const Theme* glass = nullptr;
-                    for (int i = 0; i < BuiltInThemeCount(); ++i) {
-                        if (BuiltInTheme(i).lens) {
-                            glass = &BuiltInTheme(i);
-                            break;
-                        }
-                    }
-                    if (glass) {
-                        const float overWhite = TrayMenuInkContrast(glass->highlight);
-                        const float overBlack = TrayMenuInkContrast(glass->ink);
-                        const D2D1_COLOR_F darkSheet = TrayMenuBody(glass->highlight, 1.0f);
-                        const D2D1_COLOR_F lightSheet = TrayMenuBody(glass->ink, 1.0f);
-                        std::swprintf(dt6, 256,
-                                      L"dark sheet %.2f/%.2f/%.2f under light words (%.1f:1), light "
-                                      L"sheet %.2f/%.2f/%.2f under dark words (%.1f:1)",
-                                      darkSheet.r, darkSheet.g, darkSheet.b, overWhite, lightSheet.r,
-                                      lightSheet.g, lightSheet.b, overBlack);
-                        Check(overWhite >= kInkContrastFloor && overBlack >= kInkContrastFloor,
-                              L"the tray menu's words stay readable on the sheet it draws", dt6);
-                        Check(darkSheet.r < 0.2f && lightSheet.r > 0.9f,
-                              L"... and the sheet is the tone its words are not", dt6);
-                    } else {
-                        Check(false, L"a lens theme is available to ask about the tray menu's sheet");
-                    }
+                    const D2D1_COLOR_F lightInk = CurrentTheme().highlight;
+                    const D2D1_COLOR_F darkInk = D2D1::ColorF(0.03f, 0.04f, 0.06f, 1.0f);
+                    const float overWhite = TrayMenuInkContrast(lightInk);
+                    const float overBlack = TrayMenuInkContrast(darkInk);
+                    const D2D1_COLOR_F darkSheet = TrayMenuBody(lightInk, 1.0f);
+                    const D2D1_COLOR_F lightSheet = TrayMenuBody(darkInk, 1.0f);
+                    std::swprintf(dt6, 256,
+                                  L"dark sheet %.2f/%.2f/%.2f under light words (%.1f:1), light "
+                                  L"sheet %.2f/%.2f/%.2f under dark words (%.1f:1)",
+                                  darkSheet.r, darkSheet.g, darkSheet.b, overWhite, lightSheet.r,
+                                  lightSheet.g, lightSheet.b, overBlack);
+                    Check(overWhite >= kInkContrastFloor && overBlack >= kInkContrastFloor,
+                          L"the tray menu's words stay readable on the sheet it draws", dt6);
+                    Check(darkSheet.r < 0.2f && lightSheet.r > 0.9f,
+                          L"... and the sheet is the tone its words are not", dt6);
                 }
 
                 // THE LIQUID-GLASS LAYERS (round 53). Two of them are pure arithmetic, which is the only
@@ -5856,7 +5794,8 @@ void TestMusicCardLayout() {
                     // The tint, on the one thing that must not break: a bright wallpaper may lighten the
                     // pill, but the bar's own text has to stay readable over it -- the clamp walks the mix
                     // back until the contrast passes, so a WHITE wallpaper is the worst case to assert.
-                    Theme tinted = BuiltInTheme(0);
+                    Theme tinted = CurrentTheme();
+                    tinted.cardFill = D2D1::ColorF(0.075f, 0.086f, 0.122f, 0.94f);
                     tinted.tint = 1.0f;
                     const D2D1_COLOR_F white = D2D1::ColorF(1.0f, 1.0f, 1.0f, 1.0f);
                     const D2D1_COLOR_F dark = D2D1::ColorF(0.02f, 0.02f, 0.03f, 1.0f);
@@ -5878,12 +5817,11 @@ void TestMusicCardLayout() {
                           L"... and the text is still readable over the tinted surface", dt6);
                     Check(fromDark.r <= tinted.cardFill.r + 0.001f,
                           L"a dark wallpaper tints toward itself rather than away", dt6);
-                    // ... and with the tint OFF (默认, which is what the fixed scenario runs) the colour is
-                    // handed back untouched, bit for bit: that is what keeps the baseline's pixels valid.
-                    const D2D1_COLOR_F untouched = TintedFill(BuiltInTheme(0), BuiltInTheme(0).cardFill,
+                    // ... and with Niri's fixed tint OFF the colour is handed back untouched, bit for bit.
+                    const D2D1_COLOR_F untouched = TintedFill(CurrentTheme(), CurrentTheme().cardFill,
                                                                white, 1.0f);
-                    Check(untouched.r == BuiltInTheme(0).cardFill.r &&
-                              untouched.a == BuiltInTheme(0).cardFill.a,
+                    Check(untouched.r == CurrentTheme().cardFill.r &&
+                              untouched.a == CurrentTheme().cardFill.a,
                           L"a theme with tint 0 gets its own colour back untouched");
                 }
 

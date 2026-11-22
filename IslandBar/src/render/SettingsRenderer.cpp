@@ -7,8 +7,6 @@
 #include <cmath>
 #include <cwchar>
 
-#include "render/Theme.h"
-
 #pragma comment(lib, "d2d1.lib")
 #pragma comment(lib, "dwrite.lib")
 
@@ -296,23 +294,6 @@ void SettingsRenderer::DrawAppearance(const SettingsLayout& layout, const Settin
     shapeChip(layout.shapeNotch, L"\u5218\u6D77", model.shape == BarShape::Notch,
               SettingsHitKind::ShapeNotch);
 
-    SetInk(kText);
-    Text(L"\u4E3B\u9898", layout.themeLabel, sectionFormat_);
-    SetInk(kMuted);
-    Text(L"\u70B9\u51FB\u540E\u7ACB\u5373\u8BA9\u52A8\u6001\u5C9B\u5E94\u7528\u65B0\u6750\u8D28", layout.themeSubtitle,
-         smallFormat_);
-
-    for (int i = 0; i < layout.themeCount; ++i) {
-        const RectF& rect = layout.themeButtons[i];
-        const SettingsHit target{SettingsHitKind::Theme, i};
-        const bool selected = i == model.themeIndex;
-        FillRound(rect, 9.0f, selected ? kSelected : (model.hovered == target ? kPanelHover : kPanel));
-        StrokeRound(rect, 9.0f, selected || model.focused == target ? kAccent : kEdge,
-                    selected ? 2.0f : 1.0f);
-        SetInk(selected ? kText : kMuted);
-        Text(ThemeAt(i).name, {rect.left + 14.0f, rect.top, rect.right - 14.0f, rect.bottom},
-             rowFormat_);
-    }
 }
 
 void SettingsRenderer::DrawPerformance(const SettingsLayout& layout, const SettingsViewModel& model) {
@@ -425,7 +406,7 @@ HRESULT SettingsRenderer::Render(const SettingsViewModel& model) {
     target_->Clear(kWindow);
 
     const D2D1_SIZE_F size = target_->GetSize();
-    const SettingsLayout layout = SettingsLayoutFor(size.width, size.height, model.themeCount);
+    const SettingsLayout layout = SettingsLayoutFor(size.width, size.height);
     SetInk(kSidebar);
     target_->FillRectangle(D2D1::RectF(0.0f, 0.0f, 180.0f, size.height), brush_.Get());
     SetInk(kEdge);

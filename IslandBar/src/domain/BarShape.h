@@ -14,8 +14,8 @@
 //  content, the deck, the icon row, the card and every hit test still measure from it (see
 //  BarMaterialBoxFor and its one caller, the frame loop).
 //
-//  THE SHAPE IS A SETTING, not a compile-time choice: it is stored in bar.txt beside theme.txt and
-//  switched from the settings card (see app/BarSettings.cpp and the Settings level of the panel).
+//  THE SHAPE IS A SETTING, not a compile-time choice: it is stored in bar.txt and switched from the
+//  settings card (see app/BarSettings.cpp and the Settings level of the panel).
 //
 //  Pure by construction: this file is in domain/ and may never learn about a window.
 // =====================================================================

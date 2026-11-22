@@ -17,8 +17,6 @@ namespace island {
 struct SettingsViewModel {
     SettingsPage page = SettingsPage::General;
     BarShape shape = BarShape::Capsule;
-    int themeIndex = 0;
-    int themeCount = 0;
     bool hidesNativeTaskbar = true;
     bool keepsNativeTray = true;
     bool fullscreenSuppressed = false;

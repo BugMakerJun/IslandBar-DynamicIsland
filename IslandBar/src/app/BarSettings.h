@@ -3,8 +3,8 @@
 //
 //  What lives here: the things about the BAR itself that the user changes and expects to survive a
 //  restart. The collapsed shape is ordinary appearance; scroll_tiling only enables the experimental
-//  capability and deliberately does not enter the mode. The file is a key=value text file beside
-//  theme.txt rather than a registry key or a binary blob: it can be read, edited and backed up by hand.
+//  capability and deliberately does not enter the mode. The file is a key=value text file rather
+//  than a registry key or a binary blob: it can be read, edited and backed up by hand.
 //
 //      %USERPROFILE%\IslandBar\bar.txt
 //
@@ -13,9 +13,9 @@
 //      shape=notch          (hangs from the screen's top edge, its top corners cut by it)
 //      scroll_tiling=disabled (default; enabled permits the separate Enter command)
 //
-//  WHAT THIS FILE DOES NOT HOLD: the theme (that is theme.txt, and has been since the first version),
-//  the Start card's folder list (start_folder.txt), the weather location (weather.txt) or anything the
-//  tray learns. One file per thing, and this one is the bar's own geometry.
+//  WHAT THIS FILE DOES NOT HOLD: the fixed material, the Start card's folder list (start_folder.txt),
+//  the weather location (weather.txt) or anything the tray learns. One file per thing, and this one
+//  is the bar's own geometry.
 // =====================================================================
 #pragma once
 

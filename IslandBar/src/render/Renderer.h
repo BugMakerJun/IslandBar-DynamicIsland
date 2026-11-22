@@ -35,6 +35,23 @@
 
 namespace island {
 
+// Whether a cached window icon must survive the current frame.
+//
+// This deliberately does not ask IsWindow: a window that has just closed is still part of the task
+// row for the length of its exit animation. The frame's window array is the authority, because it
+// contains both the listed windows and those still leaving.
+inline bool WindowIconFrameContains(HWND window, const HWND* frameWindows, int frameWindowCount) {
+    if (!window || !frameWindows || frameWindowCount <= 0) return false;
+    for (int i = 0; i < frameWindowCount; ++i) {
+        if (frameWindows[i] == window) return true;
+    }
+    return false;
+}
+
+inline constexpr int kMaxWindowIcons = 32;
+static_assert(kMaxWindowIcons >= kMaxTaskButtons,
+              "the window-icon cache must hold every button a frame can draw");
+
 // Who owns the card this frame, given what is asking for one and whether the shape is coming or going.
 //
 // `cardUp` says the shape is a card or on its way to being one; `cardWanted` says the motion is still
@@ -841,19 +858,16 @@ private:
 
     void ReleaseBitmapCache();
 
-    // --- the taskbar's per-process icon cache ---
+    // --- the taskbar's per-window icon cache ---
     //
-    // One small PNG per process, fetched from that process's executable and decoded once. Keyed by
-    // process id because several windows of the same application share an icon, and because a
-    // process id is stable for the life of the process -- which is exactly as long as the icon is
-    // valid.
+    // One bitmap per window, resolved from the window itself first and from its executable second.
+    // It is keyed by HWND rather than process id because two windows of one application are allowed
+    // to publish different icons.
     //
-    // Entries are kept rather than evicted when a process exits: the array is small, and a window
-    // disappearing and reappearing is common enough (minimising, switching desktops) that
-    // refetching every time would be worse. The list is bounded, so a long session reaches a
-    // steady state rather than growing.
-    static constexpr int kMaxWindowIcons = 32;
-
+    // Entries live exactly as long as the frame still draws that window. An entry for a closed window
+    // remains while the row is fading it out, then PruneWindowIconsForFrame releases it. Without that
+    // release, the fixed array filled after enough window churn and every later window received no
+    // icon -- the reported long-session failure.
     struct WindowIcon {
         HWND          window = nullptr;
         ID2D1Bitmap1* bitmap = nullptr;
@@ -864,6 +878,8 @@ private:
     // Returns the icon bitmap for a window, fetching and decoding it on first use. Null when the
     // window has no icon, which is normal for a few system windows and not an error.
     ID2D1Bitmap1* IconForWindow(HWND window);
+    // Releases entries that are no longer in the frame's listed-or-leaving window set.
+    void PruneWindowIconsForFrame(const HWND* frameWindows, int frameWindowCount);
     void ReleaseWindowIcons();
 
     // A scratch copy of the frame's buttons with the icons filled in. A member rather than a local

@@ -34,7 +34,6 @@ enum class SettingsHitKind {
     Navigation,
     ShapeCapsule,
     ShapeNotch,
-    Theme,
     ToggleAutoStart,
     ToggleScrollTiling,
     ScrollTilingAction,
@@ -56,8 +55,6 @@ inline bool operator!=(const SettingsHit& a, const SettingsHit& b) {
     return !(a == b);
 }
 
-inline constexpr int kSettingsMaxThemes = 8;
-
 struct SettingsLayout {
     RectF titleBar;
     RectF closeButton;
@@ -75,9 +72,6 @@ struct SettingsLayout {
     RectF shapeSubtitle;
     RectF shapeCapsule;
     RectF shapeNotch;
-    RectF themeLabel;
-    RectF themeSubtitle;
-    RectF themeButtons[kSettingsMaxThemes];
     RectF experimentalLabel;
     RectF experimentalSubtitle;
     RectF experimentalWarning;
@@ -86,12 +80,10 @@ struct SettingsLayout {
     RectF tilingActionRow;
     RectF tilingStatus;
     RectF pathRows[2];
-    int themeCount = 0;
 };
 
-inline SettingsLayout SettingsLayoutFor(float widthDip, float heightDip, int themeCount) {
+inline SettingsLayout SettingsLayoutFor(float widthDip, float heightDip) {
     SettingsLayout layout;
-    layout.themeCount = themeCount < 0 ? 0 : (themeCount > kSettingsMaxThemes ? kSettingsMaxThemes : themeCount);
 
     layout.titleBar = {0.0f, 0.0f, widthDip, 44.0f};
     layout.closeButton = {widthDip - 48.0f, 10.0f, widthDip - 16.0f, 34.0f};
@@ -130,19 +122,6 @@ inline SettingsLayout SettingsLayoutFor(float widthDip, float heightDip, int the
     layout.shapeCapsule = {left, 196.0f, left + 138.0f, 238.0f};
     layout.shapeNotch = {left + 150.0f, 196.0f, left + 288.0f, 238.0f};
 
-    layout.themeLabel = {left, 266.0f, right, 288.0f};
-    layout.themeSubtitle = {left, 290.0f, right, 310.0f};
-    const float available = right - left;
-    constexpr float themeGap = 12.0f;
-    const float themeWidth = (available - themeGap) * 0.5f;
-    for (int i = 0; i < layout.themeCount; ++i) {
-        const int column = i % 2;
-        const int row = i / 2;
-        const float buttonLeft = left + static_cast<float>(column) * (themeWidth + themeGap);
-        const float top = 322.0f + static_cast<float>(row) * 54.0f;
-        layout.themeButtons[i] = {buttonLeft, top, buttonLeft + themeWidth, top + 44.0f};
-    }
-
     layout.experimentalLabel = {left, 142.0f, right, 164.0f};
     layout.experimentalSubtitle = {left, 166.0f, right, 186.0f};
     layout.experimentalWarning = {left, 198.0f, right, 250.0f};
@@ -174,9 +153,6 @@ inline SettingsHit SettingsHitAt(const SettingsLayout& layout, SettingsPage page
     } else if (page == SettingsPage::Appearance) {
         if (inside(layout.shapeCapsule)) return {SettingsHitKind::ShapeCapsule, -1};
         if (inside(layout.shapeNotch)) return {SettingsHitKind::ShapeNotch, -1};
-        for (int i = 0; i < layout.themeCount; ++i) {
-            if (inside(layout.themeButtons[i])) return {SettingsHitKind::Theme, i};
-        }
     } else if (page == SettingsPage::Experimental) {
         if (inside(layout.tilingToggleRow)) {
             return {SettingsHitKind::ToggleScrollTiling, -1};
@@ -192,8 +168,7 @@ inline SettingsHit SettingsHitAt(const SettingsLayout& layout, SettingsPage page
 }
 
 // The keyboard traversal order: navigation, close, then the controls on the current page.
-inline int SettingsFocusTargets(const SettingsLayout& layout, SettingsPage page, SettingsHit* out,
-                                int capacity) {
+inline int SettingsFocusTargets(SettingsPage page, SettingsHit* out, int capacity) {
     if (!out || capacity <= 0) return 0;
     int count = 0;
     const auto add = [&](SettingsHitKind kind, int index) {
@@ -207,7 +182,6 @@ inline int SettingsFocusTargets(const SettingsLayout& layout, SettingsPage page,
     } else if (page == SettingsPage::Appearance) {
         add(SettingsHitKind::ShapeCapsule, -1);
         add(SettingsHitKind::ShapeNotch, -1);
-        for (int i = 0; i < layout.themeCount; ++i) add(SettingsHitKind::Theme, i);
     } else if (page == SettingsPage::Experimental) {
         add(SettingsHitKind::ToggleScrollTiling, -1);
         add(SettingsHitKind::ScrollTilingAction, -1);

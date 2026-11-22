@@ -76,11 +76,26 @@
 
 namespace island {
 
+namespace {
+
+// The old desktop pixel baselines were measured on the dark control material, not Niri. Production
+// has no theme selector, so the self-test installs this fixture only for its rendering assertions.
+const Theme kLegacyControlTheme = {
+    L"SelfTest", {0.05f, 0.05f, 0.07f, 0.92f}, {0.04f, 0.05f, 0.08f, 0.98f}, 0.06f,
+    {0.075f, 0.086f, 0.122f, 0.94f}, 0.10f, {0.0f, 0.47f, 0.83f, 0.95f},
+    {0.93f, 0.93f, 0.93f, 1.0f}, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+    {1.0f, 1.0f, 1.0f, 1.0f}, false};
+
+} // namespace
+
 int RunSelfTest() {
     ResetFailures();
 
     LogAndPrint("IslandBar runtime self-test\n");
     LogAndPrint("-----------------------------------------------\n");
+    Check(std::wcscmp(CurrentTheme().name, L"Niri") == 0 && !CurrentTheme().lens,
+          L"the running bar uses the fixed Niri material");
+    SetThemeForSelfTest(&kLegacyControlTheme);
 
     const HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     const bool comOk = SUCCEEDED(hr) || hr == RPC_E_CHANGED_MODE;
@@ -326,7 +341,7 @@ int RunSelfTest() {
               L"the notch's material starts one radius above the screen, which cuts its top corners");
 
         const island::SettingsLayout settings =
-            island::SettingsLayoutFor(760.0f, 560.0f, 4);
+            island::SettingsLayoutFor(760.0f, 560.0f);
         const auto settingsHit = [&settings](const island::RectF& r) {
             return island::SettingsHitAt(settings, island::SettingsPage::Appearance,
                                          (r.left + r.right) * 0.5f,
@@ -336,9 +351,7 @@ int RunSelfTest() {
                   settingsHit(settings.navigation[1]).kind == island::SettingsHitKind::Navigation &&
                   settingsHit(settings.navigation[1]).index == 1 &&
                   settingsHit(settings.shapeCapsule).kind == island::SettingsHitKind::ShapeCapsule &&
-                  settingsHit(settings.shapeNotch).kind == island::SettingsHitKind::ShapeNotch &&
-                  settingsHit(settings.themeButtons[2]).kind == island::SettingsHitKind::Theme &&
-                  settingsHit(settings.themeButtons[2]).index == 2,
+                  settingsHit(settings.shapeNotch).kind == island::SettingsHitKind::ShapeNotch,
               L"every separate-settings control answers where it is drawn");
         Check(island::SettingsHitAt(settings, island::SettingsPage::Appearance, 190.0f, 550.0f).kind ==
                   island::SettingsHitKind::None,
@@ -453,6 +466,7 @@ int RunSelfTest() {
     }
 
     CoUninitialize();
+    SetThemeForSelfTest(nullptr);
 
     LogAndPrint("\n-----------------------------------------------\n");
     if (Failures() == 0) {

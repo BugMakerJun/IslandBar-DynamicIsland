@@ -68,7 +68,7 @@
 #include "platform/AutoStart.h"
 #include "platform/UiWake.h"
 #include "shell/SystemToggles.h"       // Bluetooth / night light / live captions: the tiles that switch
-#include "render/Theme.h"               // the material: colours and edges, switchable, plus themes\*.txt
+#include "render/Theme.h"               // the fixed Niri material's colours and edges
 #include "services/WeChatWatch.h"
 #include "domain/StatePolicy.h"
 #include "domain/StartSearch.h"
@@ -98,8 +98,6 @@ island::SettingsRuntimeStatus CurrentSettingsStatus(
                                   ? systems.settingsWindow.AutoStartEnabled()
                                   : island::IsAutoStartEnabled();
     status.shape = systems.window.Shape();
-    status.themeIndex = island::CurrentThemeIndex();
-    status.themeCount = island::ThemeCount();
     const island::ScrollTilingStatus tiling = systems.scrollTiling.Status();
     status.scrollTilingEnabled = tiling.enabled;
     status.scrollTilingActive = tiling.active;
@@ -453,17 +451,10 @@ int BuildSystemPanel(const island::SystemStatus& status, int installedLayoutCoun
                 island::TextRenderer::PanelAction::OpenSettings, L"ms-settings:typing");
     }
 
-    // 外观 -- an entry into the separate settings window. The old cycle-theme action survives only
-    // behind the documented rollback switch.
-    wchar_t legacyAppearance[8] = {};
-    const bool legacyCycle =
-        GetEnvironmentVariableW(L"ISLANDBAR_LEGACY_APPEARANCE_CYCLE", legacyAppearance, 8) > 0 &&
-        legacyAppearance[0] == L'1';
+    // 外观 -- an entry into the separate settings window.
     addTile(L"\u5916\u89C2", island::CurrentTheme().name,   // 外观
             island::TextRenderer::IndicatorIcon::Settings, 0, false, true,
-            legacyCycle ? island::TextRenderer::PanelAction::CycleTheme
-                        : island::TextRenderer::PanelAction::OpenAppearanceSettings,
-            nullptr);
+            island::TextRenderer::PanelAction::OpenAppearanceSettings, nullptr);
 
     if (island::ShouldDrawBattery(status)) {
         static wchar_t percent[8] = {};
@@ -2105,19 +2096,6 @@ static void ApplySettingsWindowCommands(island::BarSystems& systems,
         redraw = true;
         island::LogAndPrint(L"  settings: applied section=appearance shape=%ls persist=%ls",
                             island::BarShapeName(shape), saved ? L"success" : L"FAILED");
-    }
-
-    int theme = -1;
-    if (systems.settingsWindow.TakeThemeCommand(&theme)) {
-        if (island::SelectTheme(theme)) {
-            systems.text.ClearBrushCache();
-            systems.renderer.OnThemeChanged();
-            redraw = true;
-            island::LogAndPrint(L"  settings: applied section=appearance theme=%ls persist=success",
-                                island::CurrentTheme().name);
-        } else {
-            island::LogAndPrint("  settings: theme index %d REFUSED", theme);
-        }
     }
 
     bool scrollTilingEnabled = false;
@@ -3930,24 +3908,6 @@ static void ApplyPressesAndClicks(island::BarState& bar, island::BarSystems& sys
                         break;
                     }
 
-                    case island::TextRenderer::PanelAction::CycleTheme: {
-                        // The whole material at once, and it takes effect on the NEXT frame
-                        // because every drawing call reads CurrentTheme(). The brush cache is
-                        // cleared with it: the cached brushes are keyed by colour, so a theme
-                        // change would otherwise leave every old colour in memory for the rest
-                        // of the session.
-                        const island::Theme& chosen = island::CycleTheme();
-                        systems.text.ClearBrushCache();
-                        island::LogAndPrint(
-                            L"  tile %d '%ls' -> theme %ls (%d of %d)\n", tileIndex,
-                            tile.label ? tile.label : L"?", chosen.name,
-                            island::CurrentThemeIndex() + 1, island::ThemeCount());
-                        // The tile's own caption is the theme's name, and it is built from the
-                        // frame's panel text -- which was assembled earlier in this same pass.
-                        // Redrawing on the next pass is what updates it, and the theme change
-                        // already asks for one.
-                        break;
-                    }
                 }
                 std::fflush(stdout);
             }
@@ -5306,7 +5266,6 @@ static void FillPanelFrame(BarRuntime& runtime, island::FrameState& frame, islan
                             case island::TextRenderer::PanelAction::ToggleMute:
                             case island::TextRenderer::PanelAction::OpenSoundPage:
                             case island::TextRenderer::PanelAction::ProjectionModes:
-                            case island::TextRenderer::PanelAction::CycleTheme:
                             case island::TextRenderer::PanelAction::OpenAppearanceSettings:
                                 break;
                         }
@@ -6647,10 +6606,8 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
 
     // --- the material ---------------------------------------------------------------------------
     //
-    // Read before the first frame, because every surface, edge and word on the bar is drawn from it:
-    // the built-in themes, plus any `themes\*.txt` beside the program, with the choice remembered in
-    // `theme.txt` (see Theme.h). A missing file is the ordinary case.
-    island::ApplyRememberedTheme();
+    // Niri is fixed. The old theme list, `theme.txt` and `themes\*.txt` loader are deliberately gone.
+    island::LogAndPrint("  theme: fixed Niri material (0 selectable themes)");
 
     // ... and the colour it stands on, read ONCE from the wallpaper file (see shell/WallpaperTint.h). A
     // wallpaper that cannot be read logs one line and tints nothing, so this cannot stop the bar from

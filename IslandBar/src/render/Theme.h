@@ -1,13 +1,11 @@
 // =====================================================================
 //  Theme.h
-//  The material, as data: the colours and edges the bar is drawn from, in a list the user can
-//  switch between -- and can add to, by dropping a text file in `themes\`.
+//  The material, as data: the fixed colours and edges the Niri surface is drawn from.
 //
 //  WHERE THIS CAME FROM. A review brief asked for "Liquid Glass": a translucent dark surface, a soft
 //  highlight along the top, a hairline edge, no heavy borders -- and for the palette to be black,
 //  deep blue and ice blue. Everything it asks for is drawing, and all of that drawing reads a handful
-//  of colours, so the colours are one struct rather than a style pass: switching a theme re-colours
-//  every surface at once and cannot leave two of them disagreeing.
+//  of colours, so the colours are one struct rather than a style pass.
 //
 //  THE DESKTOP BEHIND THE BAR IS NOT BLURRED, and that is measured rather than assumed. The second,
 //  island-sized acrylic window worked (HANDOFF 8.166-8.169) but DWM clips its material to a fixed ~8 px
@@ -15,18 +13,14 @@
 //  it traded those squares for unblurred tips, and the user asked for only ONE thing: remove it. The
 //  material is therefore drawn -- all of it -- and no window behind the bar exists (HANDOFF 8.173).
 //
-//  THE CONTRAST FLOOR IS PART OF THE FORMAT, not a note in a document: 'no over-transparency that
-//  makes the text unreadable' is checked by ThemeInkContrast, and the self-test runs it over every
-//  built-in theme. A user theme is loaded whatever it says -- it is the user's screen -- but the
-//  number is in the log when it is below the floor.
+//  THE CONTRAST FLOOR IS PART OF THE MATERIAL, not a note in a document: 'no over-transparency that
+//  makes the text unreadable' is checked by ThemeInkContrast, and the self-test runs it on Niri.
 // =====================================================================
 #pragma once
 
 #include <windows.h>
 
 #include <d2d1_3.h>
-
-#include <string>
 
 namespace island {
 
@@ -67,36 +61,21 @@ struct Theme {
     float sweep = 0.0f;             // 0..1
     float rim = 0.0f;               // 0..1
     float tint = 0.0f;              // 0..1
-    // THE LIGHT ON THE MATERIAL, separate from the ink. They were the same colour while every theme had
-    // white text; a light glass needs black text AND white highlights, and one field cannot be both.
+    // THE LIGHT ON THE MATERIAL, separate from the ink. The Niri material needs dark ink and light
+    // highlights, and one field cannot be both.
     D2D1_COLOR_F highlight = {1.0f, 1.0f, 1.0f, 1.0f};
     // The island refracts the REAL desktop (render/LensMaterial + platform/BackdropCapture).
     bool lens = false;
 };
 
-// The theme in force.
+// The one material in force.
 //
-// Process-wide, and that is a deliberate simplification: the material is one decision for the whole
-// bar, every drawing call reads it, none of them owns it, and threading it through the renderer's
-// interfaces would add a parameter to twenty signatures to express a value that cannot differ
-// between them.
+// Niri is the only built-in material. Process-wide, because every drawing call reads it and none of
+// them owns it. There is no selector, remembered theme, or themes\*.txt loader any more.
 const Theme& CurrentTheme();
-
-// The list the 外观 tile walks: the built-ins first, then whatever `themes\*.txt` holds.
-int ThemeCount();
-const Theme& ThemeAt(int index);
-int CurrentThemeIndex();
-
-// Applies the next theme in that list and returns it (wrapping at the end).
-const Theme& CycleTheme();
-// Selects one theme explicitly. False means the index is invalid; persistence can still fail
-// independently and is reported by the log inside SaveThemeChoice.
-bool SelectTheme(int index);
-
-// Where the choice is remembered: `<exe dir>\theme.txt`, the same place and the same idea as
-// weather.txt. An unknown name leaves the current theme alone and says so.
-bool SaveThemeChoice(const wchar_t* name);
-void ApplyRememberedTheme();
+// Diagnostic-only material override used by --self-test to keep the pre-existing desktop pixel
+// baselines while production is fixed to Niri. Never set by the running bar.
+void SetThemeForSelfTest(const Theme* theme);
 
 // The ink at an alpha, which is what most of the drawing asks for: a hundred call sites say "white at
 // 0.72" and the theme is what decides which colour that is.
@@ -162,13 +141,5 @@ D2D1_COLOR_F TintedFill(const Theme& theme, const D2D1_COLOR_F& fill, const D2D1
 void SetWallpaperTint(const D2D1_COLOR_F& tint, bool fromWallpaper);
 const D2D1_COLOR_F& WallpaperTint();
 bool WallpaperTintIsKnown();
-
-// Reads a theme from the text of a `themes\*.txt`. PURE, so the format is testable without files:
-// one `key=value` per line, `#` for comments, components 0..1 and either three (RGB) or four (RGBA).
-bool ThemeFromText(const char* utf8, Theme* out, std::string* why);
-
-// The names of the built-in themes, for the self-test and the log.
-int BuiltInThemeCount();
-const Theme& BuiltInTheme(int index);
 
 } // namespace island

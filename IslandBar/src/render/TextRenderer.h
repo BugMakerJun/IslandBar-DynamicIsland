@@ -640,10 +640,6 @@ public:
         ToggleNightLight,
         // 实时字幕, through the shortcut the feature itself is driven by: Win+Ctrl+L (island::ToggleLiveCaptions).
         ToggleLiveCaptions,
-        // 外观: walks the theme list (Theme.h) and re-colours the whole bar on the spot. A CYCLE rather
-        // than a list page, for the panel's own reason: every other tile applies its change here and
-        // says what it is now, and the caption under this one names the theme that is in force.
-        CycleTheme,
         // Opens the separate IslandBar settings window on its Appearance page.
         OpenAppearanceSettings,
     };
@@ -948,10 +944,6 @@ private:
                                  size_t size);
 
     // A single-colour brush, borrowed from a cache rather than created.
-    //
-    // PUBLIC because the theme switch has to empty it (see CycleTheme in main.cpp): the cache is keyed
-    // by the colour it was asked for, so a theme change would leave every colour of the old one in
-    // memory for the rest of the session. Nothing else outside this class has a reason to call it.
     //
     // WHY THIS EXISTS. The draw path used to create a brush wherever it needed one -- ninety-odd places
     // in this file -- and a creation is a device call with an allocation behind it. Where the count is

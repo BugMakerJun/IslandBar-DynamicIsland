@@ -5566,28 +5566,9 @@ void FillCardSurface(ID2D1DeviceContext2* context, const RoundedBox& box, float 
     // disagreeing. The edge is the theme's ink at the theme's own edge strength: a hairline that
     // catches the light rather than a second fill colour, which is the plan's "细微边缘反射".
     const island::Theme& theme = island::CurrentTheme();
-    // The shadow under the card, then the surface, then the grain over it -- the same three steps the pill
-    // is drawn in, from the same two functions, so a card and the bar cannot end up as different materials.
-    // THE SHADOW AND THE GRAIN ARE SKIPPED WHILE THE CARD IS MOVING.
-    //
-    // Both are the least perceptible parts of the material in motion and the most expensive to draw: the
-    // shadow is a 22 DIP blur and the grain is a tiled noise fill, and neither can be seen for the length of
-    // an animation or under a moving pointer. What is KEPT is everything that makes the surface the surface
-    // -- the fill, the hairline edge and the lighting -- so a moving card and a settled one cannot look like
-    // two different materials.
-    //
-    // Reported as "这个托盘卡片里卡卡的": with a card up the loop redraws the whole card on every mouse
-    // message AND on every frame of the opening animation, and each of those frames paid for the blur. The
-    // full material is drawn again on the first frame that is not moving (see FrameState::cardSurfaceMoving),
-    // so the settled look is unchanged.
-    if (!moving) {
-        // A card is a raised sheet, not another control inside the bar. The
-        // painted themes historically gave it no shadow at all, which made the
-        // large 520 x 500 surface look pasted onto the wallpaper. The reference
-        // uses a wide, soft drop shadow, so cards get a floor even when the pill
-        // theme deliberately keeps its own shadow quiet.
-        island::DrawSoftShadow(context, rounded, std::max(theme.shadow, 0.34f), 26.0f);
-    }
+    // Niri's outer cards deliberately omit a drop shadow: the window region is rectangular, so the
+    // expanding rounded shadow layers were clipped into dark wedges at the four corners. Fill, edge
+    // and lighting remain; grain is skipped while the card moves for the same cost reason as before.
     const D2D1_COLOR_F fillColour = D2D1::ColorF(theme.cardFill.r, theme.cardFill.g, theme.cardFill.b,
                                                 theme.cardFill.a * opacity);
     const D2D1_COLOR_F edgeColour = island::ThemeHighlight(theme.cardEdge * opacity);
