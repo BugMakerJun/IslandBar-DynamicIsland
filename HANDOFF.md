@@ -14559,8 +14559,9 @@ hooked pid 37948 exe Explorer.EXE: ...
 * Debug/Release `/WX`：零告警。
 * 新 Release 已部署并启动，IslandBar PID `44052`。
 
-全绿版本部署时旧采样器因目标进程短暂不存在而退出；已为 PID `44052` 重新启动采样器 PID `43340`，
-新 CSV 为 `runtime-soak-20261123-022721.csv`。
+全绿版本部署时旧采样器因目标进程短暂不存在而退出；随后切换到带 CPU 列的完整采样器：
+目标 PID `44052`、采样器 PID `27676`，CSV
+`C:\Users\18340\IslandBar\runtime-soak-20261123-023224.csv`。
 
 ---
 
