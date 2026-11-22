@@ -586,3 +586,27 @@ tray hook: the observer is up in the shell ...
 ```
 
 并最终完成一次 `tray learn: ... registration(s) captured ...`。原生 `Shell_TrayWnd` 随后应重新不可见。
+
+---
+
+## 14. 图形驱动重置（device-lost）
+
+先记录正在运行的 PID 和日志时间，再发送 Windows 标准的图形驱动重置快捷键：
+
+```powershell
+Get-Process island_bar | Select-Object Id,StartTime
+Get-Date
+```
+
+按 `Win+Ctrl+Shift+B`。屏幕会短暂闪烁并可能蜂鸣，这是驱动重置本身。
+
+验收：
+
+* PID 不变，`Get-Process island_bar` 仍为 `Responding=True`；
+* 顶部胶囊、任务窗口图标和卡片随后能继续绘制；
+* 重置当下允许出现一次系统级停顿，但后续 `interval ... hitches` 应回到 0；
+* 60 秒资源采样中 private bytes、handles、threads 不得持续单调增长。
+
+2026-11-23 实测：PID `31504` 保持不变；重置时 `taskbar-check 846.7 ms`、
+`wechat-sound draw 2481.0 ms`，随后约 36 帧/秒恢复。之后 60 秒 private `83.72 -> 83.46 MB`、
+handles `1094 -> 1025`、threads `74 -> 66`。

@@ -14509,10 +14509,14 @@ hooked pid 37948 exe Explorer.EXE: ...
 * 部署后 120 秒资源采样（13 点，每 10 秒）：private `82.07 -> 82.00 MB`，working set
   `101.35 -> 101.43 MB`，handles `1080 -> 1028`，threads `73 -> 67`，单核 CPU 区间
   `6.24% - 13.04%`。早期下降对应启动/托盘线程收尾，随后稳定，未见单调增长。
+* 标准 `Win+Ctrl+Shift+B` 图形驱动重置：IslandBar 保持 PID 且 `Responding=True`；重置期间出现
+  `taskbar-check` 846.7 ms、`wechat-sound draw` 2481.0 ms 两次系统级停顿，之后恢复到约 36 帧/秒。
+  截图确认胶囊、歌词与右侧图标重新绘制。重置后 60 秒采样：private
+  `83.72 -> 83.46 MB`，handles `1094 -> 1025`，threads `74 -> 66`，无持续增长。
 * 真实 `--notify` 端到端：客户端退出码 0，栏日志收到 `notification: [IslandBar] MESSAGE`
   并解析出发送进程图标。
 * 已部署 Release 到 `%USERPROFILE%\IslandBar` 并启动。
 
-尚未覆盖：8–24 小时资源曲线、真实 DPI 缩放切换、多显示器（本机当前单显示器）和 GPU device-lost
-注入。它们不能由本轮短时验证替代。
+尚未覆盖：8–24 小时资源曲线、真实 DPI 缩放切换和多显示器（本机当前单显示器）。它们不能由本轮
+短时验证替代。
 
