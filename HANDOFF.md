@@ -14520,10 +14520,10 @@ hooked pid 37948 exe Explorer.EXE: ...
   设置恢复为 100%，IslandBar PID 与运行状态未变。真正生效的 DPI 切换验证需要重新登录或下次会话。
 * 真实 `--notify` 端到端：客户端退出码 0，栏日志收到 `notification: [IslandBar] MESSAGE`
   并解析出发送进程图标。
-* 已启动 8 小时后台采样（采样器 PID `29728`，目标 IslandBar PID `31504`）：
-  `C:\Users\18340\IslandBar\runtime-soak-20261123-021607.csv`，每 60 秒一行。首行 private
-  `84.10 MB`、working `107.88 MB`、handles `1090`、threads `70`。采样结束时需按整条曲线判断，
-  不能只看首行。
+* 8 小时后台采样最初使用采样器 PID `29728` / 目标 IslandBar PID `31504`，文件为
+  `runtime-soak-20261123-021607.csv`；该文件保留为部署前 10 分钟样本。全绿版本部署后，旧采样器
+  在进程切换空档按设计退出，随后以采样器 PID `43340`、目标 PID `44052` 重新开始：
+  `C:\Users\18340\IslandBar\runtime-soak-20261123-022721.csv`。采样结束时按新文件整条曲线判断。
 * 已部署 Release 到 `%USERPROFILE%\IslandBar` 并启动。
 
 范围决定（2026-11-23 用户）：**本阶段不要求多显示器，只按单显示器验收**。多显示器从当前待测项
@@ -14559,5 +14559,6 @@ hooked pid 37948 exe Explorer.EXE: ...
 * Debug/Release `/WX`：零告警。
 * 新 Release 已部署并启动，IslandBar PID `44052`。
 
-8 小时采样器继续运行；目标进程重启后，它会从下一分钟开始自动跟随新的 IslandBar PID。
+全绿版本部署时旧采样器因目标进程短暂不存在而退出；已为 PID `44052` 重新启动采样器 PID `43340`，
+新 CSV 为 `runtime-soak-20261123-022721.csv`。
 
