@@ -14503,7 +14503,8 @@ hooked pid 37948 exe Explorer.EXE: ...
 
 * Debug、Release：`/WX` 零告警。
 * Release `island_smoke`：PASS。
-* Debug/Release `--self-test`：均 `1211 OK / 5 FAIL`；5 项仍是既有像素基线，未出现第 6 项回归。
+* Debug/Release `--self-test`：在本轮该阶段为 `1211 OK / 5 FAIL`；这 5 项已在 8.186 修复，
+  最终两种配置均为 `1216 OK / 0 FAIL`。
 * Explorer 重启：旧 PID `11812` -> 新 PID `37948`；只触发一次新 shell 托盘学习，最终
   `18 registration(s) captured, 2 new entr(ies)`；交互桌面上 `Shell_TrayWnd` 已重新隐藏。
 * 部署后 120 秒资源采样（13 点，每 10 秒）：private `82.07 -> 82.00 MB`，working set
@@ -14528,4 +14529,35 @@ hooked pid 37948 exe Explorer.EXE: ...
 范围决定（2026-11-23 用户）：**本阶段不要求多显示器，只按单显示器验收**。多显示器从当前待测项
 移出，不据此阻塞上传。尚未覆盖的只剩“重新登录后实际生效”的 DPI 缩放切换；DPI 的 96/150% 与
 800–3840 DIP 布局已有纯逻辑断言，但不能替代真实会话切换。
+
+---
+
+## 8.186 **清掉最后 5 条自检失败：两条过期坐标、两条越界采样、一条真实材质错误**（2026-11-23）
+
+上一阶段完整体检稳定停在 `1211 OK / 5 FAIL`。逐条核对后不是同一类问题：
+
+1. **Start 页两条是测试坐标过期**。断言把“空网格点”放在
+   `grid.top + 3 * (cellHeight + rowGap) + 12`，实际为 `y=511`；Start 网格只有
+   `y=94..481`，这个点根本不在卡片里。改成真实空单元格：0 个固定项时取 cell 1，
+   3 个固定项时取 cell 4（cell 3 是 AddTile）。生产命中函数没有改。
+2. **全屏 HUD 两条是测试采样越界**。全屏音乐 HUD 的窗口区域只有 300 DIP，
+   应用图标行和 Start 按钮按完整栏布局自然落在该区域外。旧测试在区域外调用
+   `RegionLuminance`，得到 `-1.00`，把“无法采样”误判成“没有画”。现在断言这两个控件的
+   矩形与 HUD 矩形不相交，和生产窗口只保留 HUD 的边界一致。
+3. **系统面板 inset 一条是真实绘制错误**。Niri 下 `CardInk` 是深色前景，
+   `CardInk(0.045)` 叠到深色卡片上会把凹槽画亮；实测
+   `card 26.24 / well 33.56 / delta +7.32`。改为 8% 黑色覆盖后：
+   `card 26.24 / well 22.45 / delta -3.79`，现在确实是更深的井。
+
+改动的生产代码只有 `render/TextRenderer.cpp` 一处；另外两个文件只修测试坐标和采样范围。
+
+验证：
+
+* Debug `--self-test`：`1216 OK / 0 FAIL`，`RESULT: PASS`。
+* Release `--self-test`：`1216 OK / 0 FAIL`，`RESULT: PASS`。
+* Release `island_smoke`：PASS。
+* Debug/Release `/WX`：零告警。
+* 新 Release 已部署并启动，IslandBar PID `44052`。
+
+8 小时采样器继续运行；目标进程重启后，它会从下一分钟开始自动跟随新的 IslandBar PID。
 

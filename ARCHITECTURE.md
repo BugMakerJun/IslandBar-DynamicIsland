@@ -92,7 +92,7 @@ scripts/            build.ps1 / capture-*.ps1 / snapshot.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File ".\IslandBar\scripts\build.ps1" -Config Release
 powershell -NoProfile -ExecutionPolicy Bypass -File ".\IslandBar\scripts\build.ps1" -Config Debug
 
-# 自检（当前 1216 项；本机有 5 项既有像素基线失败时退出码为 5）
+# 自检（当前 1216 项；退出码 0 == 全过）
 .\IslandBar\build\Release\src\Release\island_bar.exe --self-test
 
 # 冒烟（编译、链接、运行时）

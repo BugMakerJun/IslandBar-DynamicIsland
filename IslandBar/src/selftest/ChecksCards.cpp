@@ -4942,11 +4942,17 @@ void TestMusicCardLayout() {
                 const float tabY = (startLayout.pinnedTab.top + startLayout.pinnedTab.bottom) * 0.5f;
                 const float allX =
                     (startLayout.allAppsButton.left + startLayout.allAppsButton.right) * 0.5f;
-                // A point in the band under the three rows: inside the grid, on no tile.
-                const float emptyX = (startLayout.grid.left + startLayout.grid.right) * 0.5f;
-                const float emptyY = startLayout.grid.top +
-                                     static_cast<float>(kStartRows) * (kStartCellHeight + kStartRowGap) +
-                                     12.0f;
+                // Empty grid cells, inside the grid. There is no fourth row: the 3x6 grid already fills
+                // the whole grid rectangle, so a point below it is outside the card and cannot test the
+                // empty-area branch.
+                const RectF emptyWithNoPins = StartPinCellFor(startLayout, 1);
+                const RectF emptyAfterThreePins = StartPinCellFor(startLayout, 4);
+                const float emptyX = (emptyWithNoPins.left + emptyWithNoPins.right) * 0.5f;
+                const float emptyY = (emptyWithNoPins.top + emptyWithNoPins.bottom) * 0.5f;
+                const float emptyAfterThreeX =
+                    (emptyAfterThreePins.left + emptyAfterThreePins.right) * 0.5f;
+                const float emptyAfterThreeY =
+                    (emptyAfterThreePins.top + emptyAfterThreePins.bottom) * 0.5f;
 
                 Check(StartPinCellAt(startLayout, 6, (third.left + third.right) * 0.5f, pinCentreY) == 3,
                       L"a point on the fourth tile answers the fourth tile", startDetail);
@@ -4966,7 +4972,8 @@ void TestMusicCardLayout() {
                       L"the first tile is the first pin, and it answers its own centre", startDetail);
                 const StartPageHit addHit = hitAt(0, 3, (third.left + third.right) * 0.5f,
                                                  (third.top + third.bottom) * 0.5f);
-                const StartPageHit emptyHit = hitAt(0, 3, emptyX, emptyY);
+                const StartPageHit emptyHit =
+                    hitAt(0, 3, emptyAfterThreeX, emptyAfterThreeY);
                 Check(addHit.target == StartPageTarget::AddTile &&
                           emptyHit.target == StartPageTarget::EmptyGrid,
                       L"with three pins the fourth cell is the add tile, and the room below is the empty grid",

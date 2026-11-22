@@ -5675,7 +5675,10 @@ void TextRenderer::DrawSystemPanel(ID2D1DeviceContext2* context, const RoundedBo
             D2D1::RectF(layout.sliderPanel.left, layout.sliderPanel.top, layout.sliderPanel.right,
                         layout.sliderPanel.bottom),
             kPanelRadius, kPanelRadius};
-        if (ID2D1SolidColorBrush* well = BrushFor(context, island::CardInk(0.045f * opacity))) {
+        // A well has to be darker than the card. CardInk is the card's foreground ink, so on the dark
+        // Niri surface it brightened this rectangle instead of recessing it.
+        if (ID2D1SolidColorBrush* well =
+                BrushFor(context, D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.08f * opacity))) {
             context->FillRoundedRectangle(&rounded, well);
         }
         if (ID2D1SolidColorBrush* edge = BrushFor(context, island::CardInk(0.075f * opacity))) {

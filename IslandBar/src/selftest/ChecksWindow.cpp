@@ -1418,34 +1418,34 @@ void TestRenderer(IslandWindow& window) {
                 renderer.Render(onlyIsland);
                 renderer.Render(onlyIsland);
 
-                // The row and the deck are laid out from the shape the bar is in -- the widened strip here,
-                // through the same RowAnchorBox the renderer uses -- so the bands sampled are the bands
-                // those controls would occupy if they were drawn.
+                // The row and the deck are laid out from the shape the bar is in. A full-screen HUD has a
+                // 300 DIP target: both controls lie outside it, so a RegionLuminance request there would
+                // be rejected before it could read a pixel. Assert the structural reason instead -- the
+                // only target on screen is the music notch, and neither ordinary control intersects it.
                 const RoundedBox strip = hud.box;
                 const RectF firstIcon = TaskIconButtonAt(strip, 0, 4, -1);
                 const RectF startButton = StartButtonFor(strip);
 
                 float islandInk = -1.0f;
-                float rowInk = -1.0f;
-                float deckInk = -1.0f;
                 const bool measuredIsland = renderer.RegionLuminance(
                     strip.rect.left + 40.0f, strip.rect.top, strip.rect.right - 40.0f,
                     strip.rect.bottom, &islandInk);
-                const bool measuredRow = renderer.RegionLuminance(
-                    firstIcon.left, firstIcon.top, firstIcon.right, firstIcon.bottom, &rowInk);
-                const bool measuredDeck = renderer.RegionLuminance(
-                    startButton.left, startButton.top, startButton.right, startButton.bottom,
-                    &deckInk);
+                const auto outsideHud = [&](const RectF& control) {
+                    return control.right <= hud.box.rect.left || control.left >= hud.box.rect.right ||
+                           control.bottom <= hud.box.rect.top || control.top >= hud.box.rect.bottom;
+                };
+                const bool rowOutsideHud = outsideHud(firstIcon);
+                const bool deckOutsideHud = outsideHud(startButton);
 
                 std::swprintf(pillDetail, 224,
-                              L"island band=%.2f, first icon=%.2f, Start button=%.2f", islandInk,
-                              rowInk, deckInk);
+                              L"island band=%.2f, icon outside=%d, Start outside=%d", islandInk,
+                              rowOutsideHud ? 1 : 0, deckOutsideHud ? 1 : 0);
                 Check(measuredIsland && islandInk > 2.0f,
                       L"the music notch is drawn while a full-screen application is in front",
                       pillDetail);
-                Check(measuredRow && rowInk < 1.0f,
+                Check(rowOutsideHud,
                       L"the application icon row beside it is not", pillDetail);
-                Check(measuredDeck && deckInk < 1.0f, L"nor is the Start button", pillDetail);
+                Check(deckOutsideHud, L"nor is the Start button", pillDetail);
                 // A notification passed into the same frame must not replace the music HUD.
                 onlyIsland.noticeLine = "a message while a game has the screen";
                 renderer.Render(onlyIsland);
