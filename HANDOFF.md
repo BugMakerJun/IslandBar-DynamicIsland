@@ -14506,6 +14506,11 @@ hooked pid 37948 exe Explorer.EXE: ...
 * Debug/Release `--self-test`：均 `1211 OK / 5 FAIL`；5 项仍是既有像素基线，未出现第 6 项回归。
 * Explorer 重启：旧 PID `11812` -> 新 PID `37948`；只触发一次新 shell 托盘学习，最终
   `18 registration(s) captured, 2 new entr(ies)`；交互桌面上 `Shell_TrayWnd` 已重新隐藏。
+* 部署后 120 秒资源采样（13 点，每 10 秒）：private `82.07 -> 82.00 MB`，working set
+  `101.35 -> 101.43 MB`，handles `1080 -> 1028`，threads `73 -> 67`，单核 CPU 区间
+  `6.24% - 13.04%`。早期下降对应启动/托盘线程收尾，随后稳定，未见单调增长。
+* 真实 `--notify` 端到端：客户端退出码 0，栏日志收到 `notification: [IslandBar] MESSAGE`
+  并解析出发送进程图标。
 * 已部署 Release 到 `%USERPROFILE%\IslandBar` 并启动。
 
 尚未覆盖：8–24 小时资源曲线、真实 DPI 缩放切换、多显示器（本机当前单显示器）和 GPU device-lost
