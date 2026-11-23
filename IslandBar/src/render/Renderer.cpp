@@ -1978,7 +1978,13 @@ const long long presentStartedTicks = PerformanceTicks();
 lastFrameTiming_.presentStartTicks = presentStartedTicks;
 lastFrameTiming_.presentSyncInterval = syncInterval;
 lastFrameTiming_.presentAttempted = true;
-const HRESULT presentHr = swapChain_->Present(syncInterval, 0);
+    HRESULT presentHr = S_OK;
+    if (injectedPresentFailure_ != S_OK) {
+        presentHr = injectedPresentFailure_;
+        injectedPresentFailure_ = S_OK;
+    } else {
+        presentHr = swapChain_->Present(syncInterval, 0);
+    }
 lastFrameTiming_.presentMilliseconds =
     MillisecondsBetween(presentStartedTicks, PerformanceTicks(), qpcFrequency_);
 lastFrameTiming_.presentResult = presentHr;
@@ -2007,7 +2013,13 @@ lastFrameTiming_.presented = true;
 if (compDevice_) {
     const long long commitStartedTicks = PerformanceTicks();
     lastFrameTiming_.commitAttempted = true;
-    const HRESULT commitHr = compDevice_->Commit();
+    HRESULT commitHr = S_OK;
+    if (injectedCommitFailure_ != S_OK) {
+        commitHr = injectedCommitFailure_;
+        injectedCommitFailure_ = S_OK;
+    } else {
+        commitHr = compDevice_->Commit();
+    }
     lastFrameTiming_.commitResult = commitHr;
     lastFrameTiming_.commitSucceeded = SUCCEEDED(commitHr);
     lastFrameTiming_.commitMilliseconds =
@@ -2724,6 +2736,8 @@ void Renderer::Shutdown() {
     waitablePacing_ = false;
     compositorPacing_ = false;
     deviceLost_ = false;
+    injectedPresentFailure_ = S_OK;
+    injectedCommitFailure_ = S_OK;
     text_ = nullptr;
     lastFrameTiming_ = {};
     SafeRelease(&swapChain2_);

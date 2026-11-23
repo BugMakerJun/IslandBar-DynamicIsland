@@ -806,6 +806,13 @@ public:
     void DisableWaitablePacing();
     // True once Present or Commit has established that the device cannot be used any more.
     bool DeviceLost() const { return deviceLost_; }
+    // One-shot fault injection for the runtime self-test.
+    void InjectPresentFailureForTest(HRESULT failure) noexcept {
+        injectedPresentFailure_ = failure;
+    }
+    void InjectCommitFailureForTest(HRESULT failure) noexcept {
+        injectedCommitFailure_ = failure;
+    }
     // Device recovery policy shared with the frame loop and its self-test.
     static constexpr unsigned kMaxDeviceRecoveryAttempts = 8;
     static unsigned DeviceRecoveryDelayMs(unsigned failedAttempts) noexcept;
@@ -897,6 +904,8 @@ private:
     bool                     waitablePacing_ = false;
     bool                     compositorPacing_ = false;
     bool                     deviceLost_ = false;
+    HRESULT                  injectedPresentFailure_ = S_OK;
+    HRESULT                  injectedCommitFailure_ = S_OK;
     unsigned long long       presentsSucceeded_ = 0;
     ID2D1Factory3*           d2dFactory_  = nullptr;
     ID2D1Device2*            d2dDevice_   = nullptr;

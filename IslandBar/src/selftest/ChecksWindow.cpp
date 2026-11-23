@@ -2621,6 +2621,36 @@ void TestRenderer(IslandWindow& window) {
         renderer.Render(pill);
         Check(textRebuilt && renderer.LastFrameTiming().presented,
               L"the rebuilt device presents a frame with DirectWrite reattached");
+
+        renderer.InjectPresentFailureForTest(DXGI_ERROR_DEVICE_REMOVED);
+        renderer.Render(pill);
+        Check(renderer.DeviceLost() &&
+                  renderer.LastFrameTiming().presentResult == DXGI_ERROR_DEVICE_REMOVED,
+              L"an injected Present device-removal enters the recovery state");
+
+        renderer.Shutdown();
+        const bool rebuiltForCommit = renderer.Initialize(
+            window.Handle(), static_cast<UINT>(widthPx), static_cast<UINT>(heightPx),
+            window.Scale());
+        Check(rebuiltForCommit, L"the device rebuilds after an injected Present loss");
+        if (rebuiltForCommit) {
+            renderer.InjectCommitFailureForTest(DXGI_ERROR_DEVICE_RESET);
+            renderer.Render(pill);
+            Check(renderer.DeviceLost() &&
+                      renderer.LastFrameTiming().commitResult == DXGI_ERROR_DEVICE_RESET,
+                  L"an injected Commit device-reset enters the recovery state");
+        }
+
+        renderer.Shutdown();
+        const bool finalRebuild = renderer.Initialize(
+            window.Handle(), static_cast<UINT>(widthPx), static_cast<UINT>(heightPx),
+            window.Scale());
+        Check(finalRebuild, L"the device rebuilds after an injected Commit loss");
+        if (finalRebuild) {
+            renderer.Render(pill);
+            Check(!renderer.DeviceLost() && renderer.LastFrameTiming().presented,
+                  L"a rebuilt device returns to normal Present after injected failures");
+        }
         renderer.SetTextRenderer(nullptr);
         renderer.Shutdown();
         Check(!renderer.IsInitialized(), L"the rebuilt chain releases again");
