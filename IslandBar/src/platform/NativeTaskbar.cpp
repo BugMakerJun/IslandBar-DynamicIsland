@@ -182,8 +182,7 @@ bool NativeTaskbar::EnsureHidden() {
         }
         if (!trayWnd_ || !IsWindow(trayWnd_)) {
             HandleExplorerRestart();
-            const bool cropped = ApplyTrayRegion();
-            return cropped;
+            return Hide();
         }
         bool acted = false;
         if (!IsWindowVisible(trayWnd_)) {
@@ -404,8 +403,12 @@ void NativeTaskbar::HandleExplorerRestart() {
     // visible again. Claim ownership of the hide so EnsureHidden keeps enforcing
     // it, but keep wasVisible_ as "yes, it should be there" -- which is what
     // Restore needs in order to put it back.
-    weHidIt_ = true;
+    trayWnd_ = nullptr;
+    trayNotify_ = nullptr;
     located_ = false;
+    haveRegion_ = false;
+    appliedTrayRect_ = {};
+    weHidIt_ = true;
 }
 
 // --- keeping the real tray on screen -------------------------------------------------------------

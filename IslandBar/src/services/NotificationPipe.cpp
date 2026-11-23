@@ -19,39 +19,36 @@ namespace {
 
 // Security descriptor for the pipe.
 //
-// CreateNamedPipe's default DACL is created from the process token and, in
-// practice, refuses same-user clients with ERROR_ACCESS_DENIED -- which is exactly
-// what happened: the sender got win32 5 while the listener sat waiting.
-//
-// The descriptor grants full access to Everyone, and that is a deliberate,
-// bounded decision:
-//   * a named pipe is reachable only from this machine, never over the network;
-//   * the only thing an attacker gains by writing is the ability to show a
-//     notification -- the same thing the user can already do;
-//   * notifications are parsed defensively (see MiniJson), so a hostile message
-//     cannot corrupt the bar.
-// The alternative -- a DACL naming only the current user -- would break the
-// common case of sending from an elevated shell while the bar runs unelevated.
-//
-// Built once and freed by the destructor.
+// CreateNamedPipe's default DACL refused ordinary same-user clients in practice.
+// The explicit DACL therefore names the current user's SID and grants only the
+// read/write/synchronize access a client needs. Elevated and unelevated processes
+// for the same account share that SID, so the supported elevated-sender case
+// keeps working without exposing the pipe to Everyone.
 class PipeSecurity {
 public:
     PipeSecurity() {
-        // SECURITY_WORLD_SID_AUTHORITY with SECURITY_WORLD_RID is Everyone.
-        SID_IDENTIFIER_AUTHORITY worldAuthority = SECURITY_WORLD_SID_AUTHORITY;
-        if (!AllocateAndInitializeSid(&worldAuthority, 1, SECURITY_WORLD_RID,
-                                      0, 0, 0, 0, 0, 0, 0, &everyone_)) {
-            everyone_ = nullptr;
+        HANDLE token = nullptr;
+        if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
             return;
         }
 
+        BYTE tokenBuffer[sizeof(TOKEN_USER) + SECURITY_MAX_SID_SIZE] = {};
+        DWORD tokenBytes = 0;
+        const bool haveUser = GetTokenInformation(
+            token, TokenUser, tokenBuffer, sizeof(tokenBuffer), &tokenBytes) != FALSE;
+        CloseHandle(token);
+        if (!haveUser) return;
+
+        const TOKEN_USER* user = reinterpret_cast<const TOKEN_USER*>(tokenBuffer);
+        if (!CopySid(sizeof(userSid_), userSid_, user->User.Sid)) return;
+
         EXPLICIT_ACCESSW access = {};
-        access.grfAccessPermissions = GENERIC_ALL;
+        access.grfAccessPermissions = GENERIC_READ | GENERIC_WRITE | SYNCHRONIZE;
         access.grfAccessMode = SET_ACCESS;
         access.grfInheritance = NO_INHERITANCE;
         access.Trustee.TrusteeForm = TRUSTEE_IS_SID;
-        access.Trustee.TrusteeType = TRUSTEE_IS_WELL_KNOWN_GROUP;
-        access.Trustee.ptstrName = reinterpret_cast<LPWSTR>(everyone_);
+        access.Trustee.TrusteeType = TRUSTEE_IS_USER;
+        access.Trustee.ptstrName = reinterpret_cast<LPWSTR>(userSid_);
 
         if (SetEntriesInAclW(1, &access, nullptr, &acl_) != ERROR_SUCCESS) {
             acl_ = nullptr;
@@ -67,7 +64,6 @@ public:
 
     ~PipeSecurity() {
         if (acl_) LocalFree(acl_);
-        if (everyone_) FreeSid(everyone_);
     }
 
     PipeSecurity(const PipeSecurity&) = delete;
@@ -76,9 +72,10 @@ public:
     // Null when the descriptor could not be built, which makes CreateNamedPipe fall
     // back to its default rather than failing outright.
     SECURITY_ATTRIBUTES* Attributes() { return ready_ ? &attributes_ : nullptr; }
+    bool CurrentUserOnly() const { return ready_; }
 
 private:
-    PSID everyone_ = nullptr;
+    BYTE userSid_[SECURITY_MAX_SID_SIZE] = {};
     PACL acl_ = nullptr;
     SECURITY_DESCRIPTOR descriptor_ = {};
     SECURITY_ATTRIBUTES attributes_ = {};
@@ -390,6 +387,9 @@ void NotificationServer::Run() {
     const HANDLE stopEvent = workerSignal.StopEvent();
     // One security descriptor for every instance the loop creates.
     PipeSecurity security;
+    LogLine(security.CurrentUserOnly()
+                ? L"  notifications: access=current-user read/write/synchronize\n"
+                : L"  notifications: access=default DACL (explicit user ACL unavailable)\n");
 
     // The loop owns one pipe instance at a time: create, wait for a client, serve
     // it, and close. That serialises clients without any extra locking, and a

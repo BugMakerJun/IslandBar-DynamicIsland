@@ -33,9 +33,10 @@ namespace island {
 // The default pipe name, without the \\.\pipe\ prefix.
 inline constexpr const wchar_t* kPipeName = L"IslandBar.Notify";
 
-// Largest request accepted, in bytes. A pipe is writable by any local process, so
-// the length prefix must not be trusted to size an allocation: a bogus 4 GB claim
-// would otherwise be an out-of-memory denial of service.
+// Largest request accepted, in bytes. The pipe DACL admits only the current
+// user's SID, but the length prefix still must not be trusted to size an
+// allocation: a bogus 4 GB claim would otherwise be an out-of-memory denial of
+// service.
 inline constexpr uint32_t kMaxMessageBytes = 64 * 1024;
 
 // The server side. One thread accepts connections and reads framed messages.
