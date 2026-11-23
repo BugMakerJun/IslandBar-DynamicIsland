@@ -465,7 +465,7 @@ void TestNotifications() {
         if (remoteClient != INVALID_HANDLE_VALUE) CloseHandle(remoteClient);
         wchar_t remoteDetail[96] = {};
         std::swprintf(remoteDetail, 96, L"CreateFile win32=%lu", remoteError);
-        Check(remoteRejected,
+        Check(remoteRejected && remoteError == ERROR_ACCESS_DENIED,
               L"the notification pipe rejects a remote loopback client", remoteDetail);
         HANDLE silentClient = connectClient();
         Check(silentClient != INVALID_HANDLE_VALUE,

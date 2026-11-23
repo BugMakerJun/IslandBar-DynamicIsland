@@ -354,7 +354,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\IslandBar\scripts\restore-
 # 最近 20 行日志
 Get-Content $env:USERPROFILE\IslandBar\island_bar.log -Tail 20
 
-# 全部自检（当前 1228 项；退出码 0 == 全过）
+# 全部自检（当前 1229 项；退出码 0 == 全过）
 & "$env:USERPROFILE\IslandBar\island_bar.exe" --self-test
 
 # Windows 侧最新的真通知（这条通道的调试口）
@@ -520,7 +520,7 @@ private bytes 不再随运行时间单调增长。
 [ OK ] the notification client times out when no acknowledgement arrives
 ```
 
-当前本机完整自检是 **1228 项：1228 OK / 0 FAIL**。
+当前本机完整自检是 **1229 项：1229 OK / 0 FAIL**。
 
 通知管道如果停止超时，日志必须出现：
 

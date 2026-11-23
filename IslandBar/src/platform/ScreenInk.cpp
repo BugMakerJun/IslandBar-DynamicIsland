@@ -169,9 +169,12 @@ void ScreenInk::Run(State& state) {
                     state.screenDc = GetDC(nullptr);
                     if (state.screenDc) state.memoryDc = CreateCompatibleDC(state.screenDc);
                 }
-                const bool resized =
-                    !state.dib || width > state.dibWidth || height > state.dibHeight;
+                bool surfaceReady =
+                    state.dib && state.pixels &&
+                    ScreenInkSurfaceFits(state.dibWidth, state.dibHeight, width, height);
+                const bool resized = !surfaceReady;
                 if (state.screenDc && state.memoryDc && resized) {
+                    bool selected = false;
                     BITMAPINFO info = {};
                     info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
                     info.bmiHeader.biWidth = width;
@@ -193,12 +196,14 @@ void ScreenInk::Run(State& state) {
                             state.pixels = bits;
                             state.dibWidth = width;
                             state.dibHeight = height;
+                            selected = true;
                         }
                     } else if (dib) {
                         DeleteObject(dib);
                     }
+                    surfaceReady = selected;
                 }
-                if (state.dib && state.pixels &&
+                if (surfaceReady && state.dib && state.pixels &&
                     BitBlt(state.memoryDc, 0, 0, width, height, state.screenDc, cover.left,
                            cover.top, SRCCOPY)) {
                     const auto* bytes = static_cast<const unsigned char*>(state.pixels);

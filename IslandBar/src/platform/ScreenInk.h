@@ -26,6 +26,11 @@
 
 namespace island {
 
+inline bool ScreenInkSurfaceFits(int surfaceWidth, int surfaceHeight,
+                                 int width, int height) noexcept {
+    return surfaceWidth >= width && surfaceHeight >= height;
+}
+
 class ScreenInk {
 public:
     // The most patches one reading can carry: sixteen for the bar (four areas x four corners) and four

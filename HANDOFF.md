@@ -14685,3 +14685,29 @@ event 或线程。自检覆盖空 owner 拒绝、状态保持空、随即使用 
 * 新 8 小时采样器 PID `28696`，CSV
   `C:\Users\18340\IslandBar\runtime-soak-20261123-200030.csv`。
 
+---
+
+## 8.190 **第四轮复审：ScreenInk 失败 surface 与远程测试收紧**
+
+第三轮复审指出的两个问题：
+
+* ScreenInk 在扩容失败后仍会按新 `width × height` 使用旧的小 DIB，存在 CPU 越界读；
+* 远程管道测试只检查 `CreateFile` 失败，没有校验拒绝原因。
+
+修法：
+
+* `ScreenInkSurfaceFits(surfaceWidth, surfaceHeight, width, height)` 成为纯尺寸门槛。
+* 本轮采样先计算 `surfaceReady`；现有 DIB 尺寸不足时必须成功创建并选择新 DIB，否则本轮跳过
+  `BitBlt` 和全部像素读取，灰度保持无效值。
+* 远程 loopback 测试现在严格要求 `INVALID_HANDLE_VALUE && ERROR_ACCESS_DENIED`。
+
+验证：
+
+* 远程 loopback：`win32=5`；
+* 小 surface/大 cover 被拒绝；
+* 两轮扩容/重建 GDI Objects `41 -> 41`；
+* Debug/Release `/WX` 零告警；
+* Debug/Release 自检 `1229 OK / 0 FAIL`；
+* Debug/Release smoke PASS；
+* 最终 Release 已部署运行，PID `31740`。
+

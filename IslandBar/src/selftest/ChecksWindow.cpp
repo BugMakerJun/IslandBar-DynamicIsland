@@ -2701,6 +2701,10 @@ void TestWorkerThread() {
     Check(after <= before + 8, L"a retried start leaves no handles behind", detail);
 
     {
+        Check(!ScreenInkSurfaceFits(64, 64, 512, 512) &&
+                  ScreenInkSurfaceFits(512, 512, 64, 64) &&
+                  !ScreenInkSurfaceFits(0, 0, 1, 1),
+              L"ScreenInk refuses a cover larger than its existing surface");
         const DWORD gdiBefore = GetGuiResources(GetCurrentProcess(), GR_GDIOBJECTS);
         for (int round = 0; round < 2; ++round) {
             ScreenInk ink;
