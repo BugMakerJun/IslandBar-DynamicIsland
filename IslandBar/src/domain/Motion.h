@@ -455,6 +455,24 @@ inline float AnimationDeltaFor(float elapsedSeconds) noexcept {
     return std::clamp(elapsedSeconds, 0.0f, kMaximumAnimationStepSeconds);
 }
 
+// Advances a normalized progress value by one visual frame. All linear UI
+// progress animations use this so their duration and long-stall behavior are
+// identical.
+inline float AdvanceProgressBy(float progress, float target, float elapsedSeconds,
+                               float durationSeconds) noexcept {
+    if (!std::isfinite(progress) || !std::isfinite(target) ||
+        !std::isfinite(durationSeconds)) {
+        return target;
+    }
+    progress = std::clamp(progress, 0.0f, 1.0f);
+    target = std::clamp(target, 0.0f, 1.0f);
+    if (durationSeconds <= 0.0f) return target;
+    const float step = AnimationDeltaFor(elapsedSeconds) / durationSeconds;
+    if (progress < target) return std::min(target, progress + step);
+    if (progress > target) return std::max(target, progress - step);
+    return target;
+}
+
 // Easing curves, named for what they do rather than for a number.
 //
 // EaseOutCubic is the one the motion uses, for every pair of states; see the comment on CurveFor for

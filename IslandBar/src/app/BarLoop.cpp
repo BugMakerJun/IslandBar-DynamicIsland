@@ -7762,16 +7762,13 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                 constexpr float kSearchAnimationSeconds = 0.30f;
                 const float target = bar.inlineSearchOpen ? 1.0f : 0.0f;
                 const float previousProgress = bar.inlineSearchProgress;
-                const float step = animationDt / kSearchAnimationSeconds;
                 const unsigned long long nowMs = GetTickCount64();
                 if (bar.inlineSearchOpen && nowMs < bar.inlineSearchHoldUntil) {
                     bar.inlineSearchProgress = 0.0f;
-                } else if (bar.inlineSearchProgress < target) {
+                } else {
                     bar.inlineSearchProgress =
-                        std::min(target, bar.inlineSearchProgress + step);
-                } else if (bar.inlineSearchProgress > target) {
-                    bar.inlineSearchProgress =
-                        std::max(target, bar.inlineSearchProgress - step);
+                        island::AdvanceProgressBy(bar.inlineSearchProgress, target, rawDt,
+                                                  kSearchAnimationSeconds);
                 }
                 bar.inlineSearchAnimating =
                     std::fabs(bar.inlineSearchProgress - previousProgress) > 0.0001f ||
@@ -7784,14 +7781,9 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                     bar.startSearchQuery[0] != L'\0';
                 const float target = resultsWanted ? 1.0f : 0.0f;
                 const float previousProgress = bar.inlineSearchResultsProgress;
-                const float step = animationDt / kSearchResultsAnimationSeconds;
-                if (bar.inlineSearchResultsProgress < target) {
-                    bar.inlineSearchResultsProgress =
-                        std::min(target, bar.inlineSearchResultsProgress + step);
-                } else if (bar.inlineSearchResultsProgress > target) {
-                    bar.inlineSearchResultsProgress =
-                        std::max(target, bar.inlineSearchResultsProgress - step);
-                }
+                bar.inlineSearchResultsProgress =
+                    island::AdvanceProgressBy(bar.inlineSearchResultsProgress, target, rawDt,
+                                              kSearchResultsAnimationSeconds);
                 bar.inlineSearchResultsAnimating =
                     std::fabs(bar.inlineSearchResultsProgress - previousProgress) > 0.0001f ||
                     std::fabs(bar.inlineSearchResultsProgress - target) > 0.001f;
@@ -7805,14 +7797,9 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                 if (armed) bar.railPowerConfirmShown = bar.startPowerConfirm;
                 const float target = armed ? 1.0f : 0.0f;
                 const float previousProgress = bar.railPowerConfirmProgress;
-                const float step = animationDt / kPowerConfirmAnimationSeconds;
-                if (bar.railPowerConfirmProgress < target) {
-                    bar.railPowerConfirmProgress =
-                        std::min(target, bar.railPowerConfirmProgress + step);
-                } else if (bar.railPowerConfirmProgress > target) {
-                    bar.railPowerConfirmProgress =
-                        std::max(target, bar.railPowerConfirmProgress - step);
-                }
+                bar.railPowerConfirmProgress =
+                    island::AdvanceProgressBy(bar.railPowerConfirmProgress, target, rawDt,
+                                              kPowerConfirmAnimationSeconds);
                 bar.railPowerConfirmAnimating =
                     std::fabs(bar.railPowerConfirmProgress - previousProgress) > 0.0001f ||
                     std::fabs(bar.railPowerConfirmProgress - target) > 0.001f;

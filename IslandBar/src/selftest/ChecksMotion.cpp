@@ -79,6 +79,8 @@ namespace island {
 void TestMotion(float originX, float originY, float monitorWidthDip) {
     Section(L"island states and motion");
 
+    const IslandAnchor anchor = AnchorForWindow(originX, originY, monitorWidthDip);
+
     {
         const float normalSteps[] = {
             1.0f / 165.0f,
@@ -95,9 +97,34 @@ void TestMotion(float originX, float originY, float monitorWidthDip) {
                   AnimationDeltaFor(-1.0f) == 0.0f &&
                   AnimationDeltaFor(std::numeric_limits<float>::quiet_NaN()) == 0.0f,
               L"visual animation steps preserve normal QPC deltas and cap only long stalls");
-    }
 
-    const IslandAnchor anchor = AnchorForWindow(originX, originY, monitorWidthDip);
+        const float searchAfterStall = AdvanceProgressBy(0.0f, 1.0f, 0.5f, 0.30f);
+        Check(Nearly(searchAfterStall, kMaximumAnimationStepSeconds / 0.30f, 0.0001f),
+              L"a 500 ms search-animation stall advances only the capped 100 ms distance");
+
+        Motion stalled;
+        stalled.SetAnchor(anchor);
+        stalled.SnapTo(IslandState::Collapsed);
+        stalled.SetTarget(IslandState::Expanded);
+        const float widthBeforeStall = stalled.Current().rect.right - stalled.Current().rect.left;
+        const bool stillAnimating = stalled.Tick(AnimationDeltaFor(0.5f));
+        const RoundedBox afterStall = stalled.Current();
+        const float widthAfterStall = afterStall.rect.right - afterStall.rect.left;
+        Check(stillAnimating && stalled.IsAnimating() &&
+                  std::isfinite(widthAfterStall) && std::isfinite(afterStall.rect.top) &&
+                  std::isfinite(afterStall.rect.bottom) &&
+                  widthAfterStall >= widthBeforeStall &&
+                  widthAfterStall <= kExpandedWidthDip,
+              L"the main motion remains finite and monotonic after a long frame");
+
+        float hoverAmount = 0.0f;
+        float hoverVelocity = 0.0f;
+        const bool hoverMoving =
+            RowOpenStep(&hoverAmount, &hoverVelocity, 1.0f, AnimationDeltaFor(0.5f));
+        Check(hoverMoving && std::isfinite(hoverAmount) && std::isfinite(hoverVelocity) &&
+                  std::fabs(hoverAmount) < 2.0f && std::fabs(hoverVelocity) < 20.0f,
+              L"the icon-hover spring remains finite and bounded after a long frame");
+    }
 
     // --- target geometry ---
     const RoundedBox collapsed = BoxForState(IslandState::Collapsed, anchor);
