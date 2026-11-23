@@ -23,6 +23,7 @@
 #include <windows.h>
 #include <shellapi.h>   // APPBARDATA / ABM_* for the native-taskbar probe
 
+#include <algorithm>
 #include <cstdio>
 #include <cmath>
 #include <cstring>
@@ -603,12 +604,39 @@ void TestClock() {
 
     {
         island::TimingSeries timing;
-        for (size_t i = 0; i < island::kTimingSampleCapacity + 37; ++i) {
-            timing.Add(static_cast<double>(i));
+        const size_t capacities[] = {
+            island::kTimingSampleCapacity - 1,
+            island::kTimingSampleCapacity,
+            island::kTimingSampleCapacity + 1,
+            island::kTimingSampleCapacity + 37,
+        };
+        bool bucketsMatched = true;
+        for (size_t samples : capacities) {
+            timing.Reset();
+            for (size_t i = 0; i < samples; ++i) timing.Add(6.5);
+            bucketsMatched =
+                bucketsMatched &&
+                timing.BucketCountSum() == timing.SampleCount() &&
+                timing.SampleCount() ==
+                    static_cast<long long>(
+                        std::min(samples, island::kTimingSampleCapacity));
         }
+        Check(bucketsMatched,
+              L"the timing window stays bounded and its buckets cover exactly the retained samples");
+    }
+
+    {
+        island::TimingSeries timing;
+        for (size_t i = 0; i < island::kTimingSampleCapacity; ++i) timing.Add(6.5);
+        timing.Add(13.0);
+        const auto& buckets = timing.Buckets();
         Check(timing.SampleCount() ==
-                  static_cast<long long>(island::kTimingSampleCapacity),
-              L"the timing window remains bounded after overwriting old samples");
+                  static_cast<long long>(island::kTimingSampleCapacity) &&
+                  timing.BucketCountSum() == timing.SampleCount() &&
+                  buckets[island::TimingBucketFor(6.5)] ==
+                      static_cast<int>(island::kTimingSampleCapacity - 1) &&
+                  buckets[island::TimingBucketFor(13.0)] == 1,
+              L"overwriting the ring removes the evicted sample from its old histogram bucket");
     }
 
     {

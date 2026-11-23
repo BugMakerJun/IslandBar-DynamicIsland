@@ -1238,6 +1238,7 @@ struct BarRuntime {
     island::TimingSeries panelFillIntervals;
     island::TimingSeries hoverFillIntervals;
     island::TimingSeries decodedPictureIntervals;
+    island::TimingSeries reportDurationIntervals;
     unsigned long long lastFrameStartTicks = 0;
     unsigned long long lastPresentStartTicks = 0;
     unsigned long long lastAnimationFrameStartTicks = 0;
@@ -1357,9 +1358,10 @@ struct BarRuntime {
 // wait failure is reported as the fallback that is actually in use.
 static void ReportIntervalAndThrottle(BarRuntime& runtime, island::BarSystems& systems,
                                       island::FullscreenHudMode fullscreenHudMode) {
+    constexpr unsigned long long kReportIntervalMs = 2000;
     const unsigned long long nowMs = GetTickCount64();
     const unsigned long long intervalMs = nowMs - runtime.lastIntervalReport;
-    if (intervalMs >= 4000) {
+    if (intervalMs >= kReportIntervalMs) {
         runtime.lastIntervalReport = nowMs;
         const double intervalSeconds = static_cast<double>(intervalMs) / 1000.0;
         wchar_t intervalSummary[256] = {};
@@ -1388,7 +1390,7 @@ static void ReportIntervalAndThrottle(BarRuntime& runtime, island::BarSystems& s
         // paid for them, and "one per state change" means it did not.
         {
             const unsigned long long applied = systems.window.RegionApplications();
-            island::LogAndPrint("  window region: %llu applied in total (%llu in the last 4 s)",
+            island::LogAndPrint("  window region: %llu applied in total (%llu in the last 2 s)",
                                 applied, applied - runtime.lastRegionApplications);
             runtime.lastRegionApplications = applied;
         }
@@ -1449,6 +1451,7 @@ static void ReportIntervalAndThrottle(BarRuntime& runtime, island::BarSystems& s
         logTiming("frameSlotWait", runtime.frameSlotWaitIntervals);
         logTiming("messagePump", runtime.messagePumpIntervals);
         logTiming("frameWork", runtime.frameWorkIntervals);
+        logTiming("report interval", runtime.reportDurationIntervals);
         wchar_t traceSetting[8] = {};
         const bool traceBusiness =
             GetEnvironmentVariableW(L"ISLANDBAR_TRACE_TIMING", traceSetting, 8) > 0;
@@ -1495,6 +1498,7 @@ static void ReportIntervalAndThrottle(BarRuntime& runtime, island::BarSystems& s
         runtime.panelFillIntervals.Reset();
         runtime.hoverFillIntervals.Reset();
         runtime.decodedPictureIntervals.Reset();
+        runtime.reportDurationIntervals.Reset();
         runtime.whyAnimating = runtime.whyClock = runtime.whyNotification = runtime.whyMusic = 0;
         runtime.whyLyrics = runtime.whyProgress = runtime.whyFirst = runtime.whyStatusStrip = 0;
         runtime.whyStartHover = runtime.whyStartWash = 0;
@@ -8681,7 +8685,10 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
 
             // The two periodic reports: what the frames did, and whether the loop paced itself. The phase
             // lives above RunBar; its cross-frame state is BarRuntime's.
+            const long long reportStartedTicks = PerformanceNowTicks();
             ReportIntervalAndThrottle(runtime, systems, bar.fullscreenHudMode);
+            runtime.reportDurationIntervals.Add(
+                ElapsedMilliseconds(reportStartedTicks, PerformanceNowTicks(), frequency));
 
             // The wait that paces the loop. The phase lives above RunBar and it is the last thing a pass
             // does; the work flags below are the loop own bookkeeping and stay here.

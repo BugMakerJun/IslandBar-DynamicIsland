@@ -56,6 +56,9 @@ class TimingSeries {
 public:
     void Add(double milliseconds) noexcept {
         if (!std::isfinite(milliseconds) || milliseconds < 0.0) return;
+        if (sampleCount_ == values_.size()) {
+            --buckets_[TimingBucketFor(values_[next_])];
+        }
         values_[next_] = milliseconds;
         next_ = (next_ + 1) % values_.size();
         if (sampleCount_ < values_.size()) ++sampleCount_;
@@ -72,6 +75,12 @@ public:
     long long SampleCount() const noexcept { return static_cast<long long>(sampleCount_); }
 
     const std::array<int, kTimingBucketCount>& Buckets() const noexcept { return buckets_; }
+
+    long long BucketCountSum() const noexcept {
+        long long total = 0;
+        for (int count : buckets_) total += count;
+        return total;
+    }
 
     TimingSummary Summarize() const noexcept {
         TimingSummary summary;
