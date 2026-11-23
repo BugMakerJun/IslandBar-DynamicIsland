@@ -1376,7 +1376,7 @@ struct BarRuntime {
 // BarRuntime -- the ten redraw counters, the frame statistics, and the four numbers the throttle line
 // subtracts -- which is what that struct was extended for. The path itself is queried live so a runtime
 // wait failure is reported as the fallback that is actually in use.
-static void ReportIntervalAndThrottle(BarRuntime& runtime, island::BarSystems& systems,
+static bool ReportIntervalAndThrottle(BarRuntime& runtime, island::BarSystems& systems,
                                       island::FullscreenHudMode fullscreenHudMode) {
     constexpr unsigned long long kReportIntervalMs = 2000;
     const unsigned long long nowMs = GetTickCount64();
@@ -1406,7 +1406,7 @@ static void ReportIntervalAndThrottle(BarRuntime& runtime, island::BarSystems& s
                             runtime.whyStartPower, runtime.whyTrayPage);
         // Reported beside the frame intervals because the two are the same question: a region
         // re-applied per frame is a window-manager call inside the animation's own loop. A
-        // hundred of them in a 4 s window containing one 0.36 s transition means the transition
+        // hundred of them in a 2 s window containing one 0.36 s transition means the transition
         // paid for them, and "one per state change" means it did not.
         {
             const unsigned long long applied = systems.window.RegionApplications();
@@ -1552,7 +1552,9 @@ static void ReportIntervalAndThrottle(BarRuntime& runtime, island::BarSystems& s
         runtime.whyStartSearch = 0;
         runtime.whyStartPower = 0;
         runtime.whyTrayPage = 0;
+        return true;
     }
+    return false;
 }
 
 
@@ -8710,7 +8712,7 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                 std::fflush(stdout);
             }
 
-            // Report the frame-interval tail and what forced each redraw, LIVE, every 4 s.
+            // Report the frame-interval tail and what forced each redraw, LIVE, every 2 s.
             //
             // Kept in the shipping path on purpose. It says three things nothing else does:
             // whether the loop hiccups (the worst interval and the >50 ms bucket), which term
@@ -8770,9 +8772,10 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
             // The two periodic reports: what the frames did, and whether the loop paced itself. The phase
             // lives above RunBar; its cross-frame state is BarRuntime's.
             const long long reportStartedTicks = PerformanceNowTicks();
-            ReportIntervalAndThrottle(runtime, systems, bar.fullscreenHudMode);
-            runtime.reportDurationIntervals.Add(
-                ElapsedMilliseconds(reportStartedTicks, PerformanceNowTicks(), frequency));
+            if (ReportIntervalAndThrottle(runtime, systems, bar.fullscreenHudMode)) {
+                runtime.reportDurationIntervals.Add(
+                    ElapsedMilliseconds(reportStartedTicks, PerformanceNowTicks(), frequency));
+            }
 
             // The wait that paces the loop. The phase lives above RunBar and it is the last thing a pass
             // does; the work flags below are the loop own bookkeeping and stay here.
