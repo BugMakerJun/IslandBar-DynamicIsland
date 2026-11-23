@@ -8020,6 +8020,8 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                             ++runtime.pacing.compositorFailed;
                             break;
                     }
+                } else {
+                    ++runtime.pacing.compositorUnavailable;
                 }
                 // DXGI requires the waitable before rendering. The compositor tick above normally
                 // leaves it signaled, so this is backpressure rather than a second display interval.

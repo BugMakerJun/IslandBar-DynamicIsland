@@ -537,6 +537,17 @@ void TestRenderer(IslandWindow& window) {
 
     Check(renderer.WaitForCompositorClock(50) == Renderer::CompositorWaitResult::Success,
           L"compositor clock tick received");
+    Check(Renderer::ClassifyCompositorWaitStatus(0) ==
+                  Renderer::CompositorWaitResult::Success &&
+              Renderer::ClassifyCompositorWaitStatus(1) ==
+                  Renderer::CompositorWaitResult::Success &&
+              Renderer::ClassifyCompositorWaitStatus(WAIT_TIMEOUT) ==
+                  Renderer::CompositorWaitResult::Timeout &&
+              Renderer::ClassifyCompositorWaitStatus(static_cast<DWORD>(0xC01E0006u)) ==
+                  Renderer::CompositorWaitResult::Failed &&
+              Renderer::ClassifyCompositorWaitStatus(WAIT_FAILED) ==
+                  Renderer::CompositorWaitResult::Failed,
+          L"compositor wait classification follows NTSTATUS success and failure semantics");
 
     // --- the card's text is actually drawn -----------------------------------
     //

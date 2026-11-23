@@ -2341,15 +2341,18 @@ Renderer::CompositorWaitResult Renderer::WaitForCompositorClock(DWORD timeoutMs)
     // This API returns an NTSTATUS rather than a WAIT_* code. A negative status means the display
     // is occluded or the compositor cannot tick right now, so Present must fall back to sync 1.
     const DWORD result = waitForClock_(0, nullptr, timeoutMs);
+    const CompositorWaitResult classified = ClassifyCompositorWaitStatus(result);
+    compositorPacing_ = classified == CompositorWaitResult::Success;
+    return classified;
+}
+
+Renderer::CompositorWaitResult Renderer::ClassifyCompositorWaitStatus(DWORD result) noexcept {
     if (result == WAIT_TIMEOUT) {
-        compositorPacing_ = false;
         return CompositorWaitResult::Timeout;
     }
-    if (result != 0) {
-        compositorPacing_ = false;
+    if (static_cast<LONG>(result) < 0) {
         return CompositorWaitResult::Failed;
     }
-    compositorPacing_ = true;
     return CompositorWaitResult::Success;
 }
 

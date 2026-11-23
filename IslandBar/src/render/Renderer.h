@@ -711,6 +711,9 @@ public:
         Unavailable,
         Failed,
     };
+    // Pure mapping used by the wait and by the self-test. WAIT_TIMEOUT is a
+    // Win32 status and must be classified before the NTSTATUS sign test.
+    static CompositorWaitResult ClassifyCompositorWaitStatus(DWORD status) noexcept;
 
     // Blocks until the compositor is ready for the next frame, or the timeout
     // expires. The result distinguishes normal ticks from timeouts, a missing
