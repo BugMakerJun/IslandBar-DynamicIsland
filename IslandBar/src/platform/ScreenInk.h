@@ -26,6 +26,19 @@
 
 namespace island {
 
+struct ScreenInkGdiStatsForTest {
+    unsigned long long acquisitions = 0;
+    unsigned long long releases = 0;
+    unsigned long long threadMismatches = 0;
+    unsigned long long releaseFailures = 0;
+    unsigned long long injectedFailuresHit = 0;
+};
+
+void ConfigureScreenInkGdiFailuresForTest(int getDcFailures, int memoryDcFailures,
+                                          int dibFailures, int selectFailures);
+ScreenInkGdiStatsForTest ScreenInkGdiDiagnosticsForTest();
+void ResetScreenInkGdiDiagnosticsForTest();
+
 inline bool ScreenInkSurfaceFits(int surfaceWidth, int surfaceHeight,
                                  int width, int height) noexcept {
     return surfaceWidth >= width && surfaceHeight >= height;
@@ -60,6 +73,7 @@ private:
     bool Start();
     static unsigned long __stdcall ThreadEntry(void* self);
     static void Run(State& state);
+    static void ReleaseGdiSurface(State& state);
 };
 
 }  // namespace island

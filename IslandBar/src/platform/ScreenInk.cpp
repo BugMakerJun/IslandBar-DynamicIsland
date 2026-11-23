@@ -4,6 +4,7 @@
 #include "platform/ScreenInk.h"
 
 #include <algorithm>
+#include <atomic>
 #include <new>
 
 #include "platform/CriticalSection.h"
@@ -16,6 +17,32 @@ namespace {
 // smoothed over a quarter of a second, so this is a floor on the lag between "the window behind went
 // dark" and "the words turn white", not a frame rate.
 constexpr unsigned long kSampleIntervalMs = 200;
+
+struct InjectedFailures {
+    std::atomic<int> getDc{0};
+    std::atomic<int> memoryDc{0};
+    std::atomic<int> dib{0};
+    std::atomic<int> select{0};
+    std::atomic<unsigned long long> hit{0};
+};
+
+InjectedFailures g_injected;
+std::atomic<unsigned long long> g_gdiAcquisitions{0};
+std::atomic<unsigned long long> g_gdiReleases{0};
+std::atomic<unsigned long long> g_gdiThreadMismatches{0};
+std::atomic<unsigned long long> g_gdiReleaseFailures{0};
+std::atomic<DWORD> g_gdiAcquireThread{0};
+
+bool TakeInjectedFailure(std::atomic<int>& remaining) {
+    int count = remaining.load(std::memory_order_acquire);
+    while (count > 0) {
+        if (remaining.compare_exchange_weak(count, count - 1, std::memory_order_acq_rel)) {
+            g_injected.hit.fetch_add(1, std::memory_order_relaxed);
+            return true;
+        }
+    }
+    return false;
+}
 
 // The screen rectangle a BitBlt is allowed to reach. Patches are clamped to it rather than refused:
 // the bar sits on the screen's top edge, so its own top strip is partly outside on a maximised window.
@@ -54,18 +81,34 @@ struct ScreenInk::State {
     }
 
     ~State() {
-        // DeleteDC first: a bitmap must not be destroyed while it is the selected object of a DC.
-        if (memoryDc) {
-            DeleteDC(memoryDc);
-            memoryDc = nullptr;
-        }
-        if (dib) {
-            DeleteObject(dib);
-            dib = nullptr;
-        }
-        if (screenDc) ReleaseDC(nullptr, screenDc);
+        // GDI resources are released by ThreadEntry on the thread that acquired screenDc.
     }
 };
+
+void ScreenInk::ReleaseGdiSurface(State& state) {
+    if (state.memoryDc) {
+        DeleteDC(state.memoryDc);
+        state.memoryDc = nullptr;
+    }
+    if (state.dib) {
+        DeleteObject(state.dib);
+        state.dib = nullptr;
+    }
+    if (state.screenDc) {
+        const DWORD acquireThread = g_gdiAcquireThread.load(std::memory_order_acquire);
+        if (acquireThread != 0 && acquireThread != GetCurrentThreadId()) {
+            g_gdiThreadMismatches.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (!ReleaseDC(nullptr, state.screenDc)) {
+            g_gdiReleaseFailures.fetch_add(1, std::memory_order_relaxed);
+        }
+        g_gdiReleases.fetch_add(1, std::memory_order_relaxed);
+        state.screenDc = nullptr;
+    }
+    state.pixels = nullptr;
+    state.dibWidth = 0;
+    state.dibHeight = 0;
+}
 
 ScreenInk::~ScreenInk() {
     if (state_) {
@@ -115,7 +158,16 @@ float ScreenInk::Grey(int index) const {
 }
 
 unsigned long __stdcall ScreenInk::ThreadEntry(void* self) {
-    Run(*static_cast<State*>(self));
+    State& state = *static_cast<State*>(self);
+    struct SurfaceGuard {
+        State& state;
+        ~SurfaceGuard() { ReleaseGdiSurface(state); }
+    } guard{state};
+    try {
+        Run(state);
+    } catch (...) {
+        LogLine(L"  ink: worker threw an exception; GDI cleanup continues on the worker thread");
+    }
     return 0;
 }
 
@@ -165,12 +217,19 @@ void ScreenInk::Run(State& state) {
             if (any) {
                 const int width = cover.right - cover.left;
                 const int height = cover.bottom - cover.top;
-                if (!state.screenDc) {
+                if (!state.screenDc && !TakeInjectedFailure(g_injected.getDc)) {
                     state.screenDc = GetDC(nullptr);
-                    if (state.screenDc) state.memoryDc = CreateCompatibleDC(state.screenDc);
+                    if (state.screenDc) {
+                        g_gdiAcquireThread.store(GetCurrentThreadId(), std::memory_order_release);
+                        g_gdiAcquisitions.fetch_add(1, std::memory_order_relaxed);
+                    }
+                }
+                if (state.screenDc && !state.memoryDc &&
+                    !TakeInjectedFailure(g_injected.memoryDc)) {
+                    state.memoryDc = CreateCompatibleDC(state.screenDc);
                 }
                 bool surfaceReady =
-                    state.dib && state.pixels &&
+                    state.memoryDc && state.dib && state.pixels &&
                     ScreenInkSurfaceFits(state.dibWidth, state.dibHeight, width, height);
                 const bool resized = !surfaceReady;
                 if (state.screenDc && state.memoryDc && resized) {
@@ -183,10 +242,15 @@ void ScreenInk::Run(State& state) {
                     info.bmiHeader.biBitCount = 32;
                     info.bmiHeader.biCompression = BI_RGB;
                     void* bits = nullptr;
-                    HBITMAP dib = CreateDIBSection(state.screenDc, &info, DIB_RGB_COLORS, &bits,
-                                                   nullptr, 0);
+                    HBITMAP dib = TakeInjectedFailure(g_injected.dib)
+                                      ? nullptr
+                                      : CreateDIBSection(state.screenDc, &info, DIB_RGB_COLORS,
+                                                         &bits, nullptr, 0);
                     if (dib && bits) {
-                        const HGDIOBJ previous = SelectObject(state.memoryDc, dib);
+                        const HGDIOBJ previous =
+                            TakeInjectedFailure(g_injected.select)
+                                ? nullptr
+                                : SelectObject(state.memoryDc, dib);
                         if (!previous || previous == HGDI_ERROR) {
                             DeleteObject(dib);
                         } else {
@@ -241,6 +305,34 @@ void ScreenInk::Run(State& state) {
 
         if (WaitForSingleObject(stopEvent, kSampleIntervalMs) != WAIT_TIMEOUT) break;
     }
+}
+
+void ConfigureScreenInkGdiFailuresForTest(int getDcFailures, int memoryDcFailures,
+                                          int dibFailures, int selectFailures) {
+    g_injected.getDc.store(std::max(0, getDcFailures), std::memory_order_release);
+    g_injected.memoryDc.store(std::max(0, memoryDcFailures), std::memory_order_release);
+    g_injected.dib.store(std::max(0, dibFailures), std::memory_order_release);
+    g_injected.select.store(std::max(0, selectFailures), std::memory_order_release);
+}
+
+ScreenInkGdiStatsForTest ScreenInkGdiDiagnosticsForTest() {
+    ScreenInkGdiStatsForTest diagnostics;
+    diagnostics.acquisitions = g_gdiAcquisitions.load(std::memory_order_acquire);
+    diagnostics.releases = g_gdiReleases.load(std::memory_order_acquire);
+    diagnostics.threadMismatches = g_gdiThreadMismatches.load(std::memory_order_acquire);
+    diagnostics.releaseFailures = g_gdiReleaseFailures.load(std::memory_order_acquire);
+    diagnostics.injectedFailuresHit = g_injected.hit.load(std::memory_order_acquire);
+    return diagnostics;
+}
+
+void ResetScreenInkGdiDiagnosticsForTest() {
+    ConfigureScreenInkGdiFailuresForTest(0, 0, 0, 0);
+    g_injected.hit.store(0, std::memory_order_release);
+    g_gdiAcquisitions.store(0, std::memory_order_release);
+    g_gdiReleases.store(0, std::memory_order_release);
+    g_gdiThreadMismatches.store(0, std::memory_order_release);
+    g_gdiReleaseFailures.store(0, std::memory_order_release);
+    g_gdiAcquireThread.store(0, std::memory_order_release);
 }
 
 }  // namespace island

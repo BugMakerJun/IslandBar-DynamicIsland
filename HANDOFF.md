@@ -14711,3 +14711,28 @@ event 或线程。自检覆盖空 owner 拒绝、状态保持空、随即使用 
 * Debug/Release smoke PASS；
 * 最终 Release 已部署运行，PID `31740`。
 
+---
+
+## 8.191 **第五轮复审：ScreenInk 线程归属与 GDI 失败恢复**
+
+第三轮复审后仍有两个确定问题：
+
+* `screenDc` 在 worker 中通过 `GetDC` 获取，但正常停止后旧代码可能在 UI 线程的 State 析构中
+  `ReleaseDC`；
+* `CreateCompatibleDC` 失败时，因为 `screenDc` 已非空，下一轮不会重新尝试。
+
+修法：
+
+* GDI 清理集中到 `ScreenInk::ThreadEntry()` 的 RAII guard，在 worker 返回时按
+  memory DC → DIB → screen DC 的顺序释放；
+* State 析构不再执行跨线程 `ReleaseDC`；
+* screen DC 与 memory DC 分开初始化，memory DC 每轮在为空时重试；
+* 只有 memory DC、DIB、pixels 都存在且尺寸足够时 `surfaceReady` 才为真；
+* 加入轻量故障注入：GetDC、CreateCompatibleDC、CreateDIBSection、SelectObject。
+
+故障注入逐项失败两次后均自动恢复；失败轮灰度保持 `-1`，获取/释放线程不一致数为 0，
+ReleaseDC 失败数为 0。GDI Objects 正常扩容/重建仍为 `41 -> 41`。
+
+验证：Debug/Release `/WX` 零告警；自检 `1233 OK / 0 FAIL`；Debug/Release smoke PASS；
+最终 Release 已部署运行，PID `40244`。
+

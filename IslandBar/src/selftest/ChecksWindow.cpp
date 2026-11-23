@@ -2705,6 +2705,51 @@ void TestWorkerThread() {
                   ScreenInkSurfaceFits(512, 512, 64, 64) &&
                   !ScreenInkSurfaceFits(0, 0, 1, 1),
               L"ScreenInk refuses a cover larger than its existing surface");
+
+        const auto runFailureCase = [&](const wchar_t* label, int getDcFailures,
+                                        int memoryDcFailures, int dibFailures,
+                                        int selectFailures) {
+            ResetScreenInkGdiDiagnosticsForTest();
+            ConfigureScreenInkGdiFailuresForTest(
+                getDcFailures, memoryDcFailures, dibFailures, selectFailures);
+            bool failedRoundWasInvalid = false;
+            bool recovered = false;
+            ScreenInkGdiStatsForTest diagnostics;
+            {
+                ScreenInk ink;
+                RECT patch = {0, 0, 320, 320};
+                ink.Request(&patch, 1);
+                for (int i = 0; i < 50 &&
+                                    ScreenInkGdiDiagnosticsForTest().injectedFailuresHit == 0;
+                     ++i) {
+                    Sleep(10);
+                }
+                failedRoundWasInvalid = ink.Grey(0) < 0.0f;
+                for (int i = 0; i < 120 && !recovered; ++i) {
+                    Sleep(10);
+                    recovered = ink.Grey(0) >= 0.0f;
+                }
+            }
+            diagnostics = ScreenInkGdiDiagnosticsForTest();
+            std::swprintf(detail, 96,
+                          L"%ls: hit=%llu invalid=%d recovered=%d threads=%llu/%llu",
+                          label, diagnostics.injectedFailuresHit,
+                          failedRoundWasInvalid ? 1 : 0, recovered ? 1 : 0,
+                          diagnostics.threadMismatches, diagnostics.releaseFailures);
+            Check(diagnostics.injectedFailuresHit > 0 && failedRoundWasInvalid && recovered &&
+                      diagnostics.acquisitions == diagnostics.releases &&
+                      diagnostics.threadMismatches == 0 &&
+                      diagnostics.releaseFailures == 0,
+                  L"ScreenInk recovers after a GDI creation failure and releases on the worker",
+                  detail);
+        };
+
+        runFailureCase(L"GetDC", 2, 0, 0, 0);
+        runFailureCase(L"CreateCompatibleDC", 0, 2, 0, 0);
+        runFailureCase(L"CreateDIBSection", 0, 0, 2, 0);
+        runFailureCase(L"SelectObject", 0, 0, 0, 2);
+        ResetScreenInkGdiDiagnosticsForTest();
+
         const DWORD gdiBefore = GetGuiResources(GetCurrentProcess(), GR_GDIOBJECTS);
         for (int round = 0; round < 2; ++round) {
             ScreenInk ink;
