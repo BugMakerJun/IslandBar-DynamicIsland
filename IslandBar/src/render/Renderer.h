@@ -806,6 +806,9 @@ public:
     void DisableWaitablePacing();
     // True once Present or Commit has established that the device cannot be used any more.
     bool DeviceLost() const { return deviceLost_; }
+    // Device recovery policy shared with the frame loop and its self-test.
+    static constexpr unsigned kMaxDeviceRecoveryAttempts = 8;
+    static unsigned DeviceRecoveryDelayMs(unsigned failedAttempts) noexcept;
     // Static capability: whether the optional compositor-clock entry point was
     // resolved. Runtime wait results are counted separately.
     bool HasCompositorClock() const { return waitForClock_ != nullptr; }

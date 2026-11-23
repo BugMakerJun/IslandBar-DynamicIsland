@@ -2360,6 +2360,13 @@ Renderer::CompositorWaitResult Renderer::ClassifyCompositorWaitStatus(DWORD resu
     return CompositorWaitResult::Success;
 }
 
+unsigned Renderer::DeviceRecoveryDelayMs(unsigned failedAttempts) noexcept {
+    if (failedAttempts == 0) return 0;
+    const unsigned shift = failedAttempts - 1 < 3 ? failedAttempts - 1 : 3;
+    const unsigned delay = 250u << shift;
+    return delay < 2000u ? delay : 2000u;
+}
+
 bool Renderer::ReadBackFrame(float insideXDip, float insideYDip,
                              float outsideXDip, float outsideYDip,
                              BYTE* insideAlpha, BYTE* outsideAlpha,
@@ -2717,6 +2724,7 @@ void Renderer::Shutdown() {
     waitablePacing_ = false;
     compositorPacing_ = false;
     deviceLost_ = false;
+    text_ = nullptr;
     lastFrameTiming_ = {};
     SafeRelease(&swapChain2_);
     SafeRelease(&dxgiAdapter3_);

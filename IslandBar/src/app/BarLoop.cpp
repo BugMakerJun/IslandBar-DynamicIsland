@@ -1260,6 +1260,9 @@ struct BarRuntime {
     unsigned long long lastPresentStartTicks = 0;
     unsigned long long lastAnimationFrameStartTicks = 0;
     unsigned long long lastAnimationPresentStartTicks = 0;
+    unsigned rendererRecoveryAttempts = 0;
+    unsigned long long rendererRecoveryNextAtMs = 0;
+    bool rendererRecoveryFatal = false;
     // The last successful present, used only by the deliberate 20 Hz full-screen music cap.
     // Ordinary animation pacing comes from the compositor clock and swap-chain backpressure.
     unsigned long long lastDrawAtTicks = 0;
@@ -5786,15 +5789,89 @@ static bool WaitForFrameSlot(island::BarSystems& systems, BarRuntime& runtime,
     }
 }
 
+static bool TryRecoverRenderer(island::BarSystems& systems, BarRuntime& runtime,
+                               bool& haveDrawn) {
+    const unsigned attempt = ++runtime.rendererRecoveryAttempts;
+    if (attempt == 1) {
+        const island::Renderer::FrameTiming failed = systems.renderer.LastFrameTiming();
+        island::LogAndPrint(
+            "  renderer: recovery requested present=0x%08lX commit=0x%08lX reason=0x%08lX\n",
+            static_cast<unsigned long>(failed.presentResult),
+            static_cast<unsigned long>(failed.commitResult),
+            static_cast<unsigned long>(failed.deviceRemovedReason));
+    }
+
+    systems.renderer.SetTextRenderer(nullptr);
+    systems.text.Shutdown();
+
+    const RECT rect = systems.window.WindowRect();
+    const UINT width = rect.right > rect.left ? static_cast<UINT>(rect.right - rect.left) : 0u;
+    const UINT height = rect.bottom > rect.top ? static_cast<UINT>(rect.bottom - rect.top) : 0u;
+    const bool rendererReady =
+        width > 0 && height > 0 &&
+        systems.renderer.Initialize(systems.window.Handle(), width, height, systems.window.Scale());
+    const bool textReady = rendererReady && systems.text.Initialize();
+    if (rendererReady && textReady) {
+        systems.renderer.SetTextRenderer(&systems.text);
+        runtime.rendererRecoveryAttempts = 0;
+        runtime.rendererRecoveryNextAtMs = 0;
+        runtime.rendererRecoveryFatal = false;
+        runtime.lastFrameStartTicks = 0;
+        runtime.lastPresentStartTicks = 0;
+        runtime.lastAnimationFrameStartTicks = 0;
+        runtime.lastAnimationPresentStartTicks = 0;
+        runtime.lastDrawAtTicks = 0;
+        runtime.pacing = {};
+        runtime.lastPacing = {};
+        systems.renderer.ResetFrameStats();
+        haveDrawn = false;
+        island::LogAndPrint("  renderer recovery: attempt=%u result=recovered\n",
+                            attempt);
+        std::fflush(stdout);
+        return true;
+    }
+
+    systems.renderer.SetTextRenderer(nullptr);
+    systems.text.Shutdown();
+    systems.renderer.Shutdown();
+    if (runtime.rendererRecoveryAttempts >= island::Renderer::kMaxDeviceRecoveryAttempts) {
+        runtime.rendererRecoveryFatal = true;
+        island::LogAndPrint(
+            "  renderer recovery: attempt=%u result=failed; exiting to restore the taskbar\n",
+            attempt);
+        std::fflush(stdout);
+        return false;
+    }
+
+    const unsigned delay = island::Renderer::DeviceRecoveryDelayMs(runtime.rendererRecoveryAttempts);
+    runtime.rendererRecoveryNextAtMs = GetTickCount64() + delay;
+    island::LogAndPrint("  renderer recovery: attempt=%u result=retry delay=%ums\n",
+                        attempt, delay);
+    std::fflush(stdout);
+    return false;
+}
+
 // The last thing a pass does. The draw gate has already waited for the compositor clock and consumed
 // the frame-latency object, so only input is drained here. The fallback Present(1, 0) has also supplied
 // the display clock by this point. Neither path adds a fixed wait after rendering.
 static bool PaceTheLoop(island::BarSystems& systems, BarRuntime& runtime,
                         const LARGE_INTEGER& frequency, bool frameRequested,
-                        bool framePresented, DWORD drawWaitMs) {
-    if (systems.renderer.DeviceLost()) {
+                        bool framePresented, DWORD drawWaitMs, bool& haveDrawn) {
+    if (systems.renderer.DeviceLost() || !systems.renderer.IsInitialized()) {
+        const ULONGLONG now = GetTickCount64();
+        if (!runtime.rendererRecoveryFatal &&
+            (runtime.rendererRecoveryAttempts == 0 || now >= runtime.rendererRecoveryNextAtMs)) {
+            if (TryRecoverRenderer(systems, runtime, haveDrawn)) return true;
+            if (runtime.rendererRecoveryFatal) return false;
+        }
+
         const long long waitStartedTicks = PerformanceNowTicks();
-        ::MsgWaitForMultipleObjectsEx(0, nullptr, 250, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        DWORD waitMs = 250;
+        if (runtime.rendererRecoveryNextAtMs > now) {
+            waitMs = static_cast<DWORD>(
+                std::min<unsigned long long>(250, runtime.rendererRecoveryNextAtMs - now));
+        }
+        ::MsgWaitForMultipleObjectsEx(0, nullptr, waitMs, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
         (void)RecordWait(runtime, waitStartedTicks, PerformanceNowTicks(), frequency);
         return true;
     }
@@ -7072,6 +7149,7 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
     // strip is on screen. The titles are copied into this array for the frame to point at: the list
     // can refresh between frames, and a frame that pointed into the list would read freed entries.
 
+    bool rendererRecoveryFailed = false;
     if (!renderOk) {
         island::LogAndPrint("WARNING: composition surface unavailable; the window stays empty\n");
         std::fflush(stdout);
@@ -8796,7 +8874,9 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                         static_cast<unsigned long long>(frequency.QuadPart));
                 }
             }
-            if (!PaceTheLoop(systems, runtime, frequency, needDraw, framePresented, drawWaitMs)) {
+            if (!PaceTheLoop(systems, runtime, frequency, needDraw, framePresented, drawWaitMs,
+                             haveDrawn)) {
+                rendererRecoveryFailed = runtime.rendererRecoveryFatal;
                 break;
             }
 
@@ -8862,6 +8942,6 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
     // Its handles, on the same path. Closing the WLAN client here rather than leaving it to process
     // teardown matters because the shell's wireless service keeps a per-client context, and a bar
     // that is started and stopped repeatedly would accumulate them.
-    return 0;
+    return rendererRecoveryFailed ? 1 : 0;
 }
 

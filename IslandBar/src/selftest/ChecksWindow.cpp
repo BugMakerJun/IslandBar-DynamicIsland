@@ -2604,6 +2604,34 @@ void TestRenderer(IslandWindow& window) {
     // island could never be made fully opaque again by the frame loop.
     renderer.Shutdown();
     Check(!renderer.IsInitialized(), L"shutdown released the chain");
+
+    // The same rebuild the frame loop performs after DXGI device removal. This
+    // cannot fabricate a driver reset, but it does exercise the complete release
+    // and re-creation sequence with the real window and compositor.
+    const bool rebuilt = renderer.Initialize(window.Handle(),
+                                             static_cast<UINT>(widthPx),
+                                             static_cast<UINT>(heightPx),
+                                             window.Scale());
+    Check(rebuilt && renderer.IsInitialized() && !renderer.DeviceLost(),
+          L"the complete device chain can be rebuilt after shutdown");
+    if (rebuilt) {
+        const bool textRebuilt = textForRenderer.Initialize();
+        if (textRebuilt) renderer.SetTextRenderer(&textForRenderer);
+        renderer.Render(pill);
+        Check(textRebuilt && renderer.LastFrameTiming().presented,
+              L"the rebuilt device presents a frame with DirectWrite reattached");
+        renderer.SetTextRenderer(nullptr);
+        renderer.Shutdown();
+        Check(!renderer.IsInitialized(), L"the rebuilt chain releases again");
+    }
+
+    Check(Renderer::DeviceRecoveryDelayMs(1) == 250 &&
+              Renderer::DeviceRecoveryDelayMs(2) == 500 &&
+              Renderer::DeviceRecoveryDelayMs(3) == 1000 &&
+              Renderer::DeviceRecoveryDelayMs(4) == 2000 &&
+              Renderer::DeviceRecoveryDelayMs(8) == 2000 &&
+              Renderer::kMaxDeviceRecoveryAttempts == 8,
+          L"device recovery backs off exponentially and stops at eight attempts");
 }
 
 // --- the worker-thread rule ---------------------------------------------------------------------------
