@@ -503,7 +503,14 @@ void TestRenderer(IslandWindow& window) {
     // Opacity must be drivable through the effect group: that is the whole
     // reason the effect group exists (Visual3 is unavailable on this device).
     pill.opacity = 0.0f;
+    const unsigned long long presentsBefore = renderer.PresentSucceededCount();
     renderer.Render(pill);
+    const Renderer::FrameTiming frameTiming = renderer.LastFrameTiming();
+    Check(renderer.PresentSucceededCount() == presentsBefore + 1 &&
+              frameTiming.presentAttempted && frameTiming.presented &&
+              frameTiming.presentSyncInterval <= 1 &&
+              frameTiming.commitAttempted && frameTiming.commitSucceeded,
+          L"the frame result separates Present success from Commit success");
     Check(true, L"zero-opacity frame accepted");
     pill.opacity = 1.0f;
 
@@ -528,7 +535,7 @@ void TestRenderer(IslandWindow& window) {
         Check(read, L"frame still readable during the fade", why);
     }
 
-    Check(renderer.WaitForCompositorClock(50),
+    Check(renderer.WaitForCompositorClock(50) == Renderer::CompositorWaitResult::Success,
           L"compositor clock tick received");
 
     // --- the card's text is actually drawn -----------------------------------

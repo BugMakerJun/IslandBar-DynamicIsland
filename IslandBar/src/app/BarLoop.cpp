@@ -1174,6 +1174,19 @@ static void ReadTrayAndStartLearning(island::BarState& bar, island::BarSystems& 
 // WHAT BELONGS IN HERE, and the rule is narrow: a local that genuinely has to survive a pass, because
 // something written this frame is read next frame. A local that can live inside a phase stays inside
 // it, and nothing that owns policy, a resource or a lifetime moves in here.
+struct PacingCounters {
+    unsigned long long compositorSuccess = 0;
+    unsigned long long compositorTimeout = 0;
+    unsigned long long compositorUnavailable = 0;
+    unsigned long long compositorFailed = 0;
+    unsigned long long present0 = 0;
+    unsigned long long present1 = 0;
+    unsigned long long presentFailures = 0;
+    unsigned long long commitSuccesses = 0;
+    unsigned long long commitFailures = 0;
+    unsigned long long frameSlotFailures = 0;
+};
+
 struct BarRuntime {
     // Which card owns the shape, held for the whole life of the card rather than for the life of the
     // request that opened it. See NextCardOwner.
@@ -1221,6 +1234,8 @@ struct BarRuntime {
     island::TimingSeries presentIntervals;
     island::TimingSeries animationPresentIntervals;
     island::TimingSeries presentDurationIntervals;
+    island::TimingSeries present0DurationIntervals;
+    island::TimingSeries present1DurationIntervals;
     island::TimingSeries commitIntervals;
     island::TimingSeries compositorWaitIntervals;
     island::TimingSeries frameSlotWaitIntervals;
@@ -1266,11 +1281,13 @@ struct BarRuntime {
     //
     // Frames presented, real blocking waits, and zero-time message polls. The old single "waits"
     // counter mixed the last two and therefore overstated blocking.
-    unsigned long long lastFramesPresented = 0;
+    unsigned long long lastPresentSucceeded = 0;
     unsigned long long blockingWaits = 0;
     unsigned long long pollChecks = 0;
     unsigned long long lastBlockingWaits = 0;
     unsigned long long lastPollChecks = 0;
+    PacingCounters pacing;
+    PacingCounters lastPacing;
     // When the interval report was last written, and how many window regions had been applied then.
     unsigned long long lastIntervalReport = 0;
     unsigned long long lastRegionApplications = 0;
@@ -1395,9 +1412,9 @@ static void ReportIntervalAndThrottle(BarRuntime& runtime, island::BarSystems& s
             runtime.lastRegionApplications = applied;
         }
         {
-            const unsigned long long frames = systems.renderer.FramesPresented();
-            const double framesPerSecond =
-                static_cast<double>(frames - runtime.lastFramesPresented) / intervalSeconds;
+            const unsigned long long presents = systems.renderer.PresentSucceededCount();
+            const double presentsPerSecond =
+                static_cast<double>(presents - runtime.lastPresentSucceeded) / intervalSeconds;
             const double blockingWaitsPerSecond =
                 static_cast<double>(runtime.blockingWaits - runtime.lastBlockingWaits) /
                 intervalSeconds;
@@ -1420,13 +1437,29 @@ static void ReportIntervalAndThrottle(BarRuntime& runtime, island::BarSystems& s
                                      ? "20fps"
                                      : "vsync";
             island::LogAndPrint(
-                "  throttle: path=%s sync=%s present=%u frames=%.1f/s "
+                "  throttle: path=%s sync=%s present=%u presentOk=%.1f/s "
                 "blockingWaits=%.1f/s polls=%.1f/s maxLatency=1 hud=%s cap=%s",
-                pacingPath, syncPath, presentInterval, framesPerSecond,
+                pacingPath, syncPath, presentInterval, presentsPerSecond,
                 blockingWaitsPerSecond, pollsPerSecond, hudName, hudCap);
-            runtime.lastFramesPresented = frames;
+            const PacingCounters& pacing = runtime.pacing;
+            const PacingCounters& previous = runtime.lastPacing;
+            island::LogAndPrint(
+                "  pacing results: compositor ok=%llu timeout=%llu unavailable=%llu failed=%llu | "
+                "present0=%llu present1=%llu presentFailures=%llu | "
+                "commitOk=%llu commitFailures=%llu frameSlotFailures=%llu",
+                pacing.compositorSuccess - previous.compositorSuccess,
+                pacing.compositorTimeout - previous.compositorTimeout,
+                pacing.compositorUnavailable - previous.compositorUnavailable,
+                pacing.compositorFailed - previous.compositorFailed, pacing.present0 - previous.present0,
+                pacing.present1 - previous.present1,
+                pacing.presentFailures - previous.presentFailures,
+                pacing.commitSuccesses - previous.commitSuccesses,
+                pacing.commitFailures - previous.commitFailures,
+                pacing.frameSlotFailures - previous.frameSlotFailures);
+            runtime.lastPresentSucceeded = presents;
             runtime.lastBlockingWaits = runtime.blockingWaits;
             runtime.lastPollChecks = runtime.pollChecks;
+            runtime.lastPacing = pacing;
         }
 
         const auto logTiming = [](const char* name, const island::TimingSeries& series) {
@@ -1446,6 +1479,8 @@ static void ReportIntervalAndThrottle(BarRuntime& runtime, island::BarSystems& s
         logTiming("draw", runtime.drawIntervals);
         logTiming("endDraw", runtime.endDrawIntervals);
         logTiming("present", runtime.presentDurationIntervals);
+        logTiming("present(0)", runtime.present0DurationIntervals);
+        logTiming("present(1)", runtime.present1DurationIntervals);
         logTiming("commit", runtime.commitIntervals);
         logTiming("compositorWait", runtime.compositorWaitIntervals);
         logTiming("frameSlotWait", runtime.frameSlotWaitIntervals);
@@ -1481,6 +1516,8 @@ static void ReportIntervalAndThrottle(BarRuntime& runtime, island::BarSystems& s
         runtime.presentIntervals.Reset();
         runtime.animationPresentIntervals.Reset();
         runtime.presentDurationIntervals.Reset();
+        runtime.present0DurationIntervals.Reset();
+        runtime.present1DurationIntervals.Reset();
         runtime.commitIntervals.Reset();
         runtime.compositorWaitIntervals.Reset();
         runtime.frameSlotWaitIntervals.Reset();
@@ -5713,6 +5750,7 @@ static bool WaitForFrameSlot(island::BarSystems& systems, BarRuntime& runtime,
         }
         if (waitResult == WAIT_FAILED) {
             const DWORD waitError = GetLastError();
+            ++runtime.pacing.frameSlotFailures;
             systems.renderer.DisableWaitablePacing();
             island::LogAndPrint(
                 "  throttle: waitable wait failed (error %lu); path=vsync sync=present1 present=1\n",
@@ -7949,19 +7987,23 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
             if (needDraw && drawDue) {
                 if (systems.renderer.HasCompositorClock()) {
                     const long long waitStartedTicks = PerformanceNowTicks();
-                    if (systems.renderer.WaitForCompositorClock(8)) {
-                        compositorWaitThisPassMs =
-                            RecordWait(runtime, waitStartedTicks, PerformanceNowTicks(), frequency);
-                        runtime.compositorWaitIntervals.Add(compositorWaitThisPassMs);
-                    } else {
-                        compositorWaitThisPassMs =
-                            ElapsedMilliseconds(waitStartedTicks, PerformanceNowTicks(), frequency);
-                        runtime.compositorWaitIntervals.Add(compositorWaitThisPassMs);
-                        if (island::TimingCountsAsBlocking(compositorWaitThisPassMs)) {
-                            runtime.blockingWaits += 1;
-                        } else {
-                            runtime.pollChecks += 1;
-                        }
+                    const auto waitResult = systems.renderer.WaitForCompositorClock(8);
+                    compositorWaitThisPassMs =
+                        RecordWait(runtime, waitStartedTicks, PerformanceNowTicks(), frequency);
+                    runtime.compositorWaitIntervals.Add(compositorWaitThisPassMs);
+                    switch (waitResult) {
+                        case island::Renderer::CompositorWaitResult::Success:
+                            ++runtime.pacing.compositorSuccess;
+                            break;
+                        case island::Renderer::CompositorWaitResult::Timeout:
+                            ++runtime.pacing.compositorTimeout;
+                            break;
+                        case island::Renderer::CompositorWaitResult::Unavailable:
+                            ++runtime.pacing.compositorUnavailable;
+                            break;
+                        case island::Renderer::CompositorWaitResult::Failed:
+                            ++runtime.pacing.compositorFailed;
+                            break;
                     }
                 }
                 // DXGI requires the waitable before rendering. The compositor tick above normally
@@ -8550,9 +8592,31 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                 ApplyFullscreenHudFrame(bar, systems, frame);
                 actualDrawStartedTicks =
                     static_cast<unsigned long long>(PerformanceNowTicks());
-                const unsigned long long framesBefore = systems.renderer.FramesPresented();
+                const unsigned long long presentsBefore =
+                    systems.renderer.PresentSucceededCount();
                 systems.renderer.Render(frame);
-                framePresented = systems.renderer.FramesPresented() != framesBefore;
+                framePresented =
+                    systems.renderer.PresentSucceededCount() != presentsBefore;
+                const island::Renderer::FrameTiming timing =
+                    systems.renderer.LastFrameTiming();
+                if (timing.presentAttempted) {
+                    if (timing.presentSyncInterval == 0) {
+                        ++runtime.pacing.present0;
+                        runtime.present0DurationIntervals.Add(timing.presentMilliseconds);
+                    } else {
+                        ++runtime.pacing.present1;
+                        runtime.present1DurationIntervals.Add(timing.presentMilliseconds);
+                    }
+                    runtime.presentDurationIntervals.Add(timing.presentMilliseconds);
+                    if (!timing.presented) ++runtime.pacing.presentFailures;
+                }
+                if (timing.commitAttempted) {
+                    if (timing.commitSucceeded) {
+                        ++runtime.pacing.commitSuccesses;
+                    } else {
+                        ++runtime.pacing.commitFailures;
+                    }
+                }
                 if (framePresented) {
                     haveDrawn = true;
                     runtime.lastDrawAtTicks = frameStartedTicks;
@@ -8565,8 +8629,6 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                     }
                     runtime.lastFrameStartTicks = actualDrawStartedTicks;
 
-                    const island::Renderer::FrameTiming timing =
-                        systems.renderer.LastFrameTiming();
                     const unsigned long long presentStartTicks =
                         static_cast<unsigned long long>(timing.presentStartTicks);
                     if (runtime.lastPresentStartTicks != 0) {
@@ -8602,7 +8664,6 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                     runtime.targetIntervals.Add(timing.targetMilliseconds);
                     runtime.drawIntervals.Add(timing.drawMilliseconds);
                     runtime.endDrawIntervals.Add(timing.endDrawMilliseconds);
-                    runtime.presentDurationIntervals.Add(timing.presentMilliseconds);
                     runtime.commitIntervals.Add(timing.commitMilliseconds);
                 }
 

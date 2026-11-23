@@ -1975,12 +1975,16 @@ SafeRelease(&d2dTarget_);
 const UINT syncInterval = (waitablePacing_ && compositorPacing_) ? 0u : 1u;
 const long long presentStartedTicks = PerformanceTicks();
 lastFrameTiming_.presentStartTicks = presentStartedTicks;
+lastFrameTiming_.presentSyncInterval = syncInterval;
+lastFrameTiming_.presentAttempted = true;
 const HRESULT presentHr = swapChain_->Present(syncInterval, 0);
 lastFrameTiming_.presentMilliseconds =
     MillisecondsBetween(presentStartedTicks, PerformanceTicks(), qpcFrequency_);
+lastFrameTiming_.presentResult = presentHr;
 if (FAILED(presentHr)) {
     const HRESULT deviceReason =
         d3dDevice_ ? d3dDevice_->GetDeviceRemovedReason() : static_cast<HRESULT>(S_OK);
+    lastFrameTiming_.deviceRemovedReason = deviceReason;
     static bool reportedPresentFailure = false;
     if (!reportedPresentFailure) {
         reportedPresentFailure = true;
@@ -1996,17 +2000,21 @@ if (FAILED(presentHr)) {
     return;
 }
 
-framesPresented_ += 1;
+presentsSucceeded_ += 1;
 lastFrameTiming_.presented = true;
 
 if (compDevice_) {
     const long long commitStartedTicks = PerformanceTicks();
+    lastFrameTiming_.commitAttempted = true;
     const HRESULT commitHr = compDevice_->Commit();
+    lastFrameTiming_.commitResult = commitHr;
+    lastFrameTiming_.commitSucceeded = SUCCEEDED(commitHr);
     lastFrameTiming_.commitMilliseconds =
         MillisecondsBetween(commitStartedTicks, PerformanceTicks(), qpcFrequency_);
     if (FAILED(commitHr)) {
         const HRESULT deviceReason =
             d3dDevice_ ? d3dDevice_->GetDeviceRemovedReason() : static_cast<HRESULT>(S_OK);
+        lastFrameTiming_.deviceRemovedReason = deviceReason;
         static bool reportedCommitFailure = false;
         if (!reportedCommitFailure) {
             reportedCommitFailure = true;
@@ -2324,18 +2332,25 @@ void Renderer::ReleaseBitmapCache() {
     }
 }
 
-bool Renderer::WaitForCompositorClock(DWORD timeoutMs) {
+Renderer::CompositorWaitResult Renderer::WaitForCompositorClock(DWORD timeoutMs) {
     if (!waitForClock_) {
         compositorPacing_ = false;
-        return false;
+        return CompositorWaitResult::Unavailable;
     }
 
     // This API returns an NTSTATUS rather than a WAIT_* code. A negative status means the display
     // is occluded or the compositor cannot tick right now, so Present must fall back to sync 1.
     const DWORD result = waitForClock_(0, nullptr, timeoutMs);
-    compositorPacing_ =
-        result != WAIT_TIMEOUT && result != WAIT_FAILED && static_cast<LONG>(result) >= 0;
-    return compositorPacing_;
+    if (result == WAIT_TIMEOUT) {
+        compositorPacing_ = false;
+        return CompositorWaitResult::Timeout;
+    }
+    if (result != 0) {
+        compositorPacing_ = false;
+        return CompositorWaitResult::Failed;
+    }
+    compositorPacing_ = true;
+    return CompositorWaitResult::Success;
 }
 
 bool Renderer::ReadBackFrame(float insideXDip, float insideYDip,

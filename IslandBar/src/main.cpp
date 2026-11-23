@@ -181,7 +181,9 @@ int RunDemo() {
     QueryPerformanceFrequency(&frequency);
     QueryPerformanceCounter(&previous);
 
-    bool clockDriven = renderer.WaitForCompositorClock(1);
+    const bool clockDriven =
+        renderer.WaitForCompositorClock(1) ==
+        island::Renderer::CompositorWaitResult::Success;
 
     for (const Step& step : steps) {
         window.SetState(step.state);

@@ -687,7 +687,14 @@ public:
         double presentMilliseconds = 0.0;
         double commitMilliseconds = 0.0;
         long long presentStartTicks = 0;
+        UINT presentSyncInterval = 0;
+        HRESULT presentResult = S_OK;
+        HRESULT commitResult = S_OK;
+        HRESULT deviceRemovedReason = S_OK;
+        bool presentAttempted = false;
         bool presented = false;
+        bool commitAttempted = false;
+        bool commitSucceeded = false;
     };
     const FrameTiming& LastFrameTiming() const { return lastFrameTiming_; }
 
@@ -698,14 +705,22 @@ public:
         lastFrameTiming_ = {};
     }
 
+    enum class CompositorWaitResult {
+        Success,
+        Timeout,
+        Unavailable,
+        Failed,
+    };
+
     // Blocks until the compositor is ready for the next frame, or the timeout
-    // expires. Returns true when a frame tick actually arrived.
+    // expires. The result distinguishes normal ticks from timeouts, a missing
+    // entry point, and an NTSTATUS failure such as an occluded display.
     //
     // This replaces the old Sleep(16) pacing: the bar wakes when the compositor
     // ticks instead of polling a timer, which costs nothing while the desktop is
     // idle. Returns false on builds that predate the API so the caller can fall
     // back to a timed loop.
-    bool WaitForCompositorClock(DWORD timeoutMs);
+    CompositorWaitResult WaitForCompositorClock(DWORD timeoutMs);
 
     // Reads the last rendered frame back from the GPU and reports what is
     // actually in it: the alpha at a point inside the pill, and the alpha at a
@@ -795,9 +810,9 @@ public:
     // both the compositor clock and the waitable established the frame slot.
     bool CompositorPacing() const { return compositorPacing_; }
 
-    // Frames handed to the compositor. Reported per second by the throttle line: a count far above the
-    // monitor's refresh rate is the sign that the pacing is not pacing anything.
-    unsigned long long FramesPresented() const { return framesPresented_; }
+    // Successful calls to IDXGISwapChain::Present. This is a submission count,
+    // not proof that DWM scanned the frame out to the display.
+    unsigned long long PresentSucceededCount() const { return presentsSucceeded_; }
 
     // How many decoded images and window icons the renderer is holding. This is the number that
     // separates "a cache filled up" from "something is leaking" on the memory line: Direct2D cannot be
@@ -876,7 +891,7 @@ private:
     bool                     waitablePacing_ = false;
     bool                     compositorPacing_ = false;
     bool                     deviceLost_ = false;
-    unsigned long long       framesPresented_ = 0;
+    unsigned long long       presentsSucceeded_ = 0;
     ID2D1Factory3*           d2dFactory_  = nullptr;
     ID2D1Device2*            d2dDevice_   = nullptr;
     ID2D1DeviceContext2*     d2dContext_  = nullptr;
