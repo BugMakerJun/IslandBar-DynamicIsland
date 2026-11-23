@@ -728,6 +728,12 @@ static void StartNotificationChannels(bool& listening, bool& toastsAvailable, is
             island::LogAndPrint("  notifications: toast worker could not start; system toasts are paused");
         }
     }
+
+    if (systems.wechat.Start(systems.wechatOwner)) {
+        island::LogAndPrint("  wechat: process index worker running");
+    } else {
+        island::LogAndPrint("  wechat: process index worker could not start; WeChat detection is paused");
+    }
 }
 
 // Declared here because the policy's context asks it long before the call strip's own code below.
@@ -1220,6 +1226,18 @@ struct BarRuntime {
     island::TimingSeries frameSlotWaitIntervals;
     island::TimingSeries messagePumpIntervals;
     island::TimingSeries frameWorkIntervals;
+    island::TimingSeries windowEventIntervals;
+    island::TimingSeries scrollTilingIntervals;
+    island::TimingSeries notificationIntervals;
+    island::TimingSeries wechatScanIntervals;
+    island::TimingSeries wechatSoundIntervals;
+    island::TimingSeries soundSnapshotIntervals;
+    island::TimingSeries wechatProcessIntervals;
+    island::TimingSeries trayIntervals;
+    island::TimingSeries taskListIntervals;
+    island::TimingSeries panelFillIntervals;
+    island::TimingSeries hoverFillIntervals;
+    island::TimingSeries decodedPictureIntervals;
     unsigned long long lastFrameStartTicks = 0;
     unsigned long long lastPresentStartTicks = 0;
     unsigned long long lastAnimationFrameStartTicks = 0;
@@ -1431,6 +1449,23 @@ static void ReportIntervalAndThrottle(BarRuntime& runtime, island::BarSystems& s
         logTiming("frameSlotWait", runtime.frameSlotWaitIntervals);
         logTiming("messagePump", runtime.messagePumpIntervals);
         logTiming("frameWork", runtime.frameWorkIntervals);
+        wchar_t traceSetting[8] = {};
+        const bool traceBusiness =
+            GetEnvironmentVariableW(L"ISLANDBAR_TRACE_TIMING", traceSetting, 8) > 0;
+        if (traceBusiness) {
+            logTiming("business.windowEvents", runtime.windowEventIntervals);
+            logTiming("business.scrollTiling", runtime.scrollTilingIntervals);
+            logTiming("business.notifications", runtime.notificationIntervals);
+            logTiming("business.wechatScan", runtime.wechatScanIntervals);
+            logTiming("business.wechatSound", runtime.wechatSoundIntervals);
+            logTiming("business.soundSnapshot", runtime.soundSnapshotIntervals);
+            logTiming("business.wechatProcess", runtime.wechatProcessIntervals);
+            logTiming("business.tray", runtime.trayIntervals);
+            logTiming("business.taskList", runtime.taskListIntervals);
+            logTiming("business.panelFill", runtime.panelFillIntervals);
+            logTiming("business.hoverFill", runtime.hoverFillIntervals);
+            logTiming("business.decodedPictures", runtime.decodedPictureIntervals);
+        }
 
         std::fflush(stdout);
         runtime.liveStats.Reset();
@@ -1448,6 +1483,18 @@ static void ReportIntervalAndThrottle(BarRuntime& runtime, island::BarSystems& s
         runtime.frameSlotWaitIntervals.Reset();
         runtime.messagePumpIntervals.Reset();
         runtime.frameWorkIntervals.Reset();
+        runtime.windowEventIntervals.Reset();
+        runtime.scrollTilingIntervals.Reset();
+        runtime.notificationIntervals.Reset();
+        runtime.wechatScanIntervals.Reset();
+        runtime.wechatSoundIntervals.Reset();
+        runtime.soundSnapshotIntervals.Reset();
+        runtime.wechatProcessIntervals.Reset();
+        runtime.trayIntervals.Reset();
+        runtime.taskListIntervals.Reset();
+        runtime.panelFillIntervals.Reset();
+        runtime.hoverFillIntervals.Reset();
+        runtime.decodedPictureIntervals.Reset();
         runtime.whyAnimating = runtime.whyClock = runtime.whyNotification = runtime.whyMusic = 0;
         runtime.whyLyrics = runtime.whyProgress = runtime.whyFirst = runtime.whyStatusStrip = 0;
         runtime.whyStartHover = runtime.whyStartWash = 0;
@@ -1738,6 +1785,11 @@ static double ElapsedMilliseconds(long long start, long long end,
     if (frequency.QuadPart <= 0 || end < start) return 0.0;
     return static_cast<double>(end - start) * 1000.0 /
            static_cast<double>(frequency.QuadPart);
+}
+
+static void AddElapsed(island::TimingSeries& series, long long start, long long end,
+                       const LARGE_INTEGER& frequency) {
+    series.Add(ElapsedMilliseconds(start, end, frequency));
 }
 
 static double RecordWait(BarRuntime& runtime, long long start, long long end,
@@ -2345,6 +2397,7 @@ static void EnsureTaskbarStillHidden(bool hideNativeTaskbar, bool keepStrip, int
 // rather than duplicated, exactly like the taskbar check's.
 static void PollNotificationChannels(bool listening, bool toastsAvailable, bool soundOutputStarted,
                                      island::BarState& bar, island::BarSystems& systems,
+                                     BarRuntime& runtime, const LARGE_INTEGER& frequency,
                                      unsigned long long& frameWork, unsigned long long toastPollBit,
                                      unsigned long long wechatScanBit, unsigned long long wechatSoundBit) {
     const auto announceOnIsland = [&systems]() {
@@ -2359,6 +2412,7 @@ static void PollNotificationChannels(bool listening, bool toastsAvailable, bool 
     // Drain everything the listener thread has received. Each one opens the
     // card, so a burst ends with the last notification on screen rather than
     // flashing through all of them.
+    const long long pipeStartedTicks = PerformanceNowTicks();
     if (listening) {
         island::Notification incoming;
         int drained = 0;
@@ -2389,9 +2443,11 @@ static void PollNotificationChannels(bool listening, bool toastsAvailable, bool 
             announceOnIsland();
         }
     }
+    AddElapsed(runtime.notificationIntervals, pipeStartedTicks, PerformanceNowTicks(), frequency);
 
     // ... and the same for the other channel. SQLite already ran on its
     // worker; this consumes an in-memory fixed-capacity batch only.
+    const long long toastStartedTicks = PerformanceNowTicks();
     if (toastsAvailable && systems.toasts.HasPending()) {
         frameWork |= toastPollBit;
         const int arrived = systems.toasts.Drain(&systems.notifications);
@@ -2404,6 +2460,7 @@ static void PollNotificationChannels(bool listening, bool toastsAvailable, bool 
             announceOnIsland();
         }
     }
+    AddElapsed(runtime.notificationIntervals, toastStartedTicks, PerformanceNowTicks(), frequency);
 
     // ... and WeChat, which has no channel of its own and is recognised by its popup appearing.
     if (bar.wechatWakePending || GetTickCount64() - bar.lastWeChatPoll >= 2000) {
@@ -2411,7 +2468,9 @@ static void PollNotificationChannels(bool listening, bool toastsAvailable, bool 
         bar.lastWeChatPoll = GetTickCount64();
         frameWork |= wechatScanBit;
         const unsigned long long scanStartedAt = GetTickCount64();
+        const long long scanStartedTicks = PerformanceNowTicks();
         const int announced = systems.wechat.Poll(&systems.notifications, GetTickCount64());
+        AddElapsed(runtime.wechatScanIntervals, scanStartedTicks, PerformanceNowTicks(), frequency);
         const unsigned long long scanTook = GetTickCount64() - scanStartedAt;
         // 25 ms, not 10: the walk over ~440 top-level windows costs ~16 ms here with the process-name
         // table, which is the normal price rather than a defect. This line is for the abnormal one.
@@ -2432,24 +2491,32 @@ static void PollNotificationChannels(bool listening, bool toastsAvailable, bool 
     // long, and a check every half second could read the session as active twice in a row and never
     // see the edge -- the sound would play with no announcement and no evidence anywhere.
     if (soundOutputStarted && systems.soundOutput && GetTickCount64() - bar.lastWeChatSoundPoll >= 200) {
+        const long long soundStartedTicks = PerformanceNowTicks();
         bar.lastWeChatSoundPoll = GetTickCount64();
         frameWork |= wechatSoundBit;
+        const long long snapshotStartedTicks = PerformanceNowTicks();
         systems.soundOutput->Snapshot(systems.soundSnapshot.get());
+        AddElapsed(runtime.soundSnapshotIntervals, snapshotStartedTicks,
+                   PerformanceNowTicks(), frequency);
 
         // Is WeChat running, and is one of its audio sessions making sound?
-        const bool wechatRunning = island::AnyWeChatProcessRunning();
+        const long long processStartedTicks = PerformanceNowTicks();
+        const bool wechatRunning = systems.wechat.AnyProcessRunning();
         bool wechatSessionActive = false;
         int wechatSessions = 0;
         for (int i = 0; i < systems.soundSnapshot->sessionCount; ++i) {
             const island::SoundSessionInfo& session = systems.soundSnapshot->sessions[i];
-            if (!island::IsWeChatProcess(session.pid)) continue;
+            if (!systems.wechat.IsProcessWeChat(session.pid)) continue;
             ++wechatSessions;
             if (session.active) wechatSessionActive = true;
         }
+        AddElapsed(runtime.wechatProcessIntervals, processStartedTicks,
+                   PerformanceNowTicks(), frequency);
         if (systems.wechat.PollSound(&systems.notifications, wechatRunning, wechatSessionActive,
                                      wechatSessions, GetTickCount64()) > 0) {
             announceOnIsland();
         }
+        AddElapsed(runtime.wechatSoundIntervals, soundStartedTicks, PerformanceNowTicks(), frequency);
     }
 }
 
@@ -7342,11 +7409,14 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
             const unsigned long long frameStartedTicks =
                 static_cast<unsigned long long>(frameStartedCounter.QuadPart);
 
+            const long long windowEventsStartedTicks = PerformanceNowTicks();
             if (systems.windowEvents.Running()) {
                 systems.windowEvents.Poll(&windowEvents);
             } else {
                 windowEvents.clear();
             }
+            AddElapsed(runtime.windowEventIntervals, windowEventsStartedTicks,
+                       PerformanceNowTicks(), frequency);
             if (!windowEvents.empty()) {
                 bar.taskRefreshWakePending = true;
                 bar.wechatWakePending = true;
@@ -7361,6 +7431,7 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                 !systems.scrollTiling.GrabActive()) {
                 systems.scrollTilingGrabLayer.Hide();
             }
+            const long long scrollTilingStartedTicks = PerformanceNowTicks();
             if (systems.scrollTiling.Active() && !windowEvents.empty()) {
                 const bool admissionCandidate = std::any_of(
                     windowEvents.begin(), windowEvents.end(), [](const auto& event) {
@@ -7375,6 +7446,8 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
             systems.scrollTiling.Tick(GetTickCount64(), monitor, tilingTopInsetPx,
                                       nullptr, &tilingDetail);
             UpdateScrollTilingGrab(systems, monitor, tilingTopInsetPx, haveDrawn);
+            AddElapsed(runtime.scrollTilingIntervals, scrollTilingStartedTicks,
+                       PerformanceNowTicks(), frequency);
 
             // The shell's taskbar, re-hidden on a slow cadence, and the strip given back if the shell
             // took it again. The phase lives above RunBar; its countdown and the work flags are carried
@@ -7385,7 +7458,8 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
             // The four channels that bring a message in. The phase lives above RunBar; which message is
             // showing right now is worked out below, where the policy and the drawing read it.
             PollNotificationChannels(listening, toastsAvailable, soundOutputStarted, bar, systems,
-                                     frameWork, kWorkToastPoll, kWorkWeChatScan, kWorkWeChatSound);
+                                     runtime, frequency, frameWork, kWorkToastPoll,
+                                     kWorkWeChatScan, kWorkWeChatSound);
 
             // Is something asking for attention right now? Computed before the
             // pointer logic so both branches agree on the same answer.
@@ -7978,7 +8052,9 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
 
                 // The tray's own cadence: re-read what the shell is holding, harvest what the module saw, and
                 // start a learning pass only when the shell itself was replaced. The phase lives above RunBar.
+                const long long trayStartedTicks = PerformanceNowTicks();
                 TickTray(bar, systems, frameWork, kWorkTrayRefresh, kTrayRefreshMs);
+                AddElapsed(runtime.trayIntervals, trayStartedTicks, PerformanceNowTicks(), frequency);
                 // The tray and the panel as the frame sees them. The phase lives above RunBar; the order
                 // against the Start card below is unchanged.
                 FillTrayAndPanelFrame(runtime, frame, bar, systems, motionFrame, dt, forcedStartHover,
@@ -8032,8 +8108,11 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                 // afterwards. Reported as the panel "appearing and disappearing" with the pointer.
                 // The panel own content, level by level. The phase lives above RunBar; its place in the
                 // sequence is unchanged.
+                const long long panelFillStartedTicks = PerformanceNowTicks();
                 FillPanelFrame(runtime, frame, bar, systems, soundPageShown, trayPageShown, startPageShown,
                                centerPageShown, weatherPageShown, dt);
+                AddElapsed(runtime.panelFillIntervals, panelFillStartedTicks,
+                           PerformanceNowTicks(), frequency);
 
                 // Given to the window here as well, because the click handler reads it to work out which
                 // tile was pressed -- and the click handler runs near the TOP of the loop, before the
@@ -8093,7 +8172,10 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                     GetTickCount64() - bar.lastTaskRefresh >= 2000) {
                     bar.taskRefreshWakePending = false;
                     bar.lastTaskRefresh = GetTickCount64();
+                    const long long taskListStartedTicks = PerformanceNowTicks();
                     systems.taskWindows.Refresh();
+                    AddElapsed(runtime.taskListIntervals, taskListStartedTicks,
+                               PerformanceNowTicks(), frequency);
                     const int topInsetPx = island::DipToPixels(
                         systems.window.BandHeightDip(), monitor.dpi);
                     systems.scrollTiling.OnWindowRefresh(
@@ -8396,9 +8478,12 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
 
                 // The hover preview (and the notice line that shares this stretch). The phase lives above
                 // RunBar; the drawn count it needs is the one the row was laid out with, above.
+                const long long hoverFillStartedTicks = PerformanceNowTicks();
                 FillHoverPreview(runtime, frame, bar, systems, runtime.nowPlaying, previewReady, drawn, listed, dt,
                                  musicWavePhase, lyricLine, fallbackLine, noticeLine, frameWork,
                                  kWorkThumbnail, kThumbnailDwellMs, traceCardFrames);
+                AddElapsed(runtime.hoverFillIntervals, hoverFillStartedTicks,
+                           PerformanceNowTicks(), frequency);
 
                 // The CALL strip and the date/weather strip. The phase lives above RunBar; its place in the
                 // sequence is unchanged.
@@ -8453,7 +8538,10 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
 
                 // The album art, the wash built from it, and the source application's icon. The phase
                 // lives above RunBar; its place in the sequence is unchanged.
+                const long long decodedPicturesStartedTicks = PerformanceNowTicks();
                 FillDecodedPictures(runtime, frame, runtime.nowPlaying);
+                AddElapsed(runtime.decodedPictureIntervals, decodedPicturesStartedTicks,
+                           PerformanceNowTicks(), frequency);
 
                 ApplyFullscreenHudFrame(bar, systems, frame);
                 actualDrawStartedTicks =
@@ -8632,6 +8720,7 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
     // Stop the listener before tearing the window down: a client mid-send should be
     // finished with, not left holding a pipe that is about to disappear.
     systems.notificationServer.Stop();
+    systems.wechat.Stop();
     systems.toasts.Stop();
     island::StopTrayWake();
     systems.statusReader.Stop();

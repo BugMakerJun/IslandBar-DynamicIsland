@@ -2693,6 +2693,19 @@ void TestWorkerThread() {
         if (release) CloseHandle(release);
     }
 
+    {
+        auto watcher = std::make_shared<WeChatWatcher>();
+        Check(watcher->Start(watcher),
+              L"the WeChat process-index worker starts with a shared owner");
+        Check(!watcher->IsProcessWeChat(GetCurrentProcessId()),
+              L"the published process index answers without a synchronous process scan");
+        watcher->Stop();
+        watcher->Stop();
+        Check(watcher->Start(watcher),
+              L"the WeChat process-index worker restarts after an idempotent stop");
+        watcher->Stop();
+    }
+
     DWORD after = 0;
     GetProcessHandleCount(GetCurrentProcess(), &after);
 

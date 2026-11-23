@@ -38,6 +38,7 @@ struct WindowVisit {
     std::vector<bool> visible;
     std::vector<int> left, top, width, height;
     std::vector<std::wstring> verdicts;
+    const std::vector<unsigned long>* wechatPids = nullptr;
 };
 
 // The name test, in one place: the public IsWeChatProcess below and the window scan both use it.
@@ -55,7 +56,7 @@ bool IsWeChatName(const wchar_t* name) {
     return _wcsnicmp(leaf, L"Weixin", 6) == 0 || _wcsnicmp(leaf, L"WeChat", 6) == 0;
 }
 
-// EVERY PROCESS'S NAME, IN ONE CALL, kept for a second.
+// EVERY PROCESS'S NAME, IN ONE CALL, built on the process-index worker.
 //
 // WHY THIS EXISTS, with the measurement (2026-10-18): the walks in this file ask "is this pid WeChat?"
 // once per top-level window, and each answer used to be an OpenProcess plus QueryFullProcessImageNameW.
@@ -69,14 +70,9 @@ struct ProcessNames {
     ULONGLONG builtAt = 0;
 };
 
-const ProcessNames& NamesNow() {
-    static ProcessNames table;
-    const ULONGLONG now = GetTickCount64();
-    if (table.builtAt != 0 && now - table.builtAt < 1000) return table;
-
-    table.pids.clear();
-    table.wechat.clear();
-    table.builtAt = now;
+ProcessNames BuildProcessNames() {
+    ProcessNames table;
+    table.builtAt = GetTickCount64();
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snapshot == INVALID_HANDLE_VALUE) return table;
     PROCESSENTRY32W entry = {};
@@ -91,27 +87,6 @@ const ProcessNames& NamesNow() {
     return table;
 }
 
-// The slow, always-correct answer: ask the process itself. Used for a pid that started after the table
-// was built, which is the one case the table cannot answer.
-bool AskTheProcess(unsigned long pid) {
-    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
-    if (!process) return false;
-    wchar_t path[260] = {};
-    DWORD length = 260;
-    const bool ok = QueryFullProcessImageNameW(process, 0, path, &length) != 0;
-    CloseHandle(process);
-    if (!ok) return false;
-    return IsWeChatName(path);
-}
-
-bool LooksLikeWeChatProcess(unsigned long pid) {
-    const ProcessNames& table = NamesNow();
-    for (size_t i = 0; i < table.pids.size(); ++i) {
-        if (table.pids[i] == pid) return table.wechat[i];
-    }
-    return AskTheProcess(pid);
-}
-
 // The windows of every WeChat process, top level AND their children.
 //
 // Children because a self-drawn UI may hang its popup off the main window instead of creating a top-level
@@ -121,7 +96,11 @@ BOOL CALLBACK CollectWindow(HWND window, LPARAM param) {
 
     DWORD pid = 0;
     GetWindowThreadProcessId(window, &pid);
-    if (pid == 0 || !LooksLikeWeChatProcess(pid)) return TRUE;
+    if (pid == 0 || !visit->wechatPids ||
+        std::find(visit->wechatPids->begin(), visit->wechatPids->end(), pid) ==
+            visit->wechatPids->end()) {
+        return TRUE;
+    }
 
     wchar_t className[256] = {};
     GetClassNameW(window, className, 256);
@@ -145,22 +124,66 @@ BOOL CALLBACK CollectWindow(HWND window, LPARAM param) {
 
 }  // namespace
 
-bool IsWeChatProcess(unsigned long pid) {
-    return LooksLikeWeChatProcess(pid);
+struct WeChatWatcher::ProcessIndex {
+    std::vector<unsigned long> pids;
+    std::vector<bool> wechat;
+    bool anyWeChat = false;
+};
+
+WeChatWatcher::~WeChatWatcher() {
+    Stop();
 }
 
-bool AnyWeChatProcessRunning() {
-    // ASKED OF THE PROCESS TABLE, not of the window list.
-    //
-    // It used to walk every top-level window and ask each one's process, which cost ~16 ms here (438
-    // windows) and ran five times a second from the sound channel: 80 ms of every second on the frame
-    // loop, and a dropped frame each time. The table NamesNow() keeps answers the same question in a
-    // few microseconds, and the question is the one that matters for a SOUND: a WeChat that makes noise
-    // is a WeChat process, whether or not it has a window on screen. `IsWeChatProcess(session.pid)` on
-    // the audio session is still what decides which sound is WeChat's.
-    const ProcessNames& table = NamesNow();
-    for (size_t i = 0; i < table.wechat.size(); ++i) {
-        if (table.wechat[i]) return true;
+bool WeChatWatcher::Start(const std::shared_ptr<WeChatWatcher>& owner) {
+    if (processWorker_.Started()) return true;
+    if (!owner || owner.get() != this) return false;
+    return processWorker_.Start(&WeChatWatcher::ProcessThreadEntry, owner);
+}
+
+void WeChatWatcher::Stop() {
+    (void)processWorker_.Stop();
+}
+
+unsigned long __stdcall WeChatWatcher::ProcessThreadEntry(void* self) {
+    static_cast<WeChatWatcher*>(self)->RunProcessIndex();
+    return 0;
+}
+
+void WeChatWatcher::RunProcessIndex() {
+    const HANDLE stopEvent = WorkerThread::CurrentSignal().StopEvent();
+    if (!stopEvent) return;
+
+    for (;;) {
+        const ProcessNames names = BuildProcessNames();
+        auto fresh = std::make_shared<ProcessIndex>();
+        fresh->pids = names.pids;
+        fresh->wechat = names.wechat;
+        for (size_t i = 0; i < names.wechat.size(); ++i) {
+            fresh->anyWeChat = fresh->anyWeChat || names.wechat[i];
+        }
+        {
+            CriticalSection::Guard guard(processLock_);
+            processIndex_ = std::move(fresh);
+        }
+        if (WaitForSingleObject(stopEvent, 1000) == WAIT_OBJECT_0) break;
+    }
+}
+
+std::shared_ptr<const WeChatWatcher::ProcessIndex> WeChatWatcher::ProcessSnapshot() const {
+    CriticalSection::Guard guard(processLock_);
+    return processIndex_;
+}
+
+bool WeChatWatcher::AnyProcessRunning() const {
+    const std::shared_ptr<const ProcessIndex> index = ProcessSnapshot();
+    return index && index->anyWeChat;
+}
+
+bool WeChatWatcher::IsProcessWeChat(unsigned long pid) const {
+    const std::shared_ptr<const ProcessIndex> index = ProcessSnapshot();
+    if (!index) return false;
+    for (size_t i = 0; i < index->pids.size(); ++i) {
+        if (index->pids[i] == pid) return index->wechat[i];
     }
     return false;
 }
@@ -263,7 +286,8 @@ int WeChatWatcher::Poll(NotificationStore* store, unsigned long long nowMs) {
     // belongs to WeChat, and on a machine with 400 windows that is ~16 ms -- 32 ms a second on the frame
     // loop for a client that is not even running. The process table answers "is any WeChat process
     // alive" for free, and a WeChat window cannot exist without one.
-    if (!AnyWeChatProcessRunning()) {
+    const std::shared_ptr<const ProcessIndex> processIndex = ProcessSnapshot();
+    if (!processIndex || !processIndex->anyWeChat) {
         // Cleared rather than kept: the list describes windows that were last seen, and a client that
         // has gone and come back owns different handles. Keeping them would suppress the "appeared"
         // line for the first popup after a restart.
@@ -271,7 +295,13 @@ int WeChatWatcher::Poll(NotificationStore* store, unsigned long long nowMs) {
         return 0;
     }
 
+    std::vector<unsigned long> wechatPids;
+    wechatPids.reserve(processIndex->wechat.size());
+    for (size_t i = 0; i < processIndex->wechat.size(); ++i) {
+        if (processIndex->wechat[i]) wechatPids.push_back(processIndex->pids[i]);
+    }
     WindowVisit visit;
+    visit.wechatPids = &wechatPids;
     EnumWindows(&CollectWindow, reinterpret_cast<LPARAM>(&visit));
     if (visit.handles.empty()) return 0;
 

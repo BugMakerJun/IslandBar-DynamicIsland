@@ -23,8 +23,11 @@
 #pragma once
 
 #include <cstddef>
+#include <memory>
 #include <vector>
 
+#include "platform/CriticalSection.h"
+#include "platform/WorkerThread.h"
 #include "services/Notification.h"
 
 namespace island {
@@ -79,16 +82,24 @@ bool LooksLikeWeChatCall(const wchar_t* title, bool visible);
 bool ShouldAnnounceWeChatSound(bool wechatRunning, bool wasActive, bool isActive, int wasSessions,
                                int sessions, bool primed, unsigned long long sinceLastAnnounceMs);
 
-// Whether a process is one of WeChat's, and whether any of them is running.
-//
-// Exposed because the SOUND channel has to answer "is this audio session WeChat's" -- the session carries a
-// process id and nothing else, so the same rule the window scan uses has to be reachable from outside it.
-bool IsWeChatProcess(unsigned long pid);
-bool AnyWeChatProcessRunning();
-
 // Watches the WeChat process's windows and reports a message arriving.
 class WeChatWatcher {
 public:
+    WeChatWatcher() = default;
+    ~WeChatWatcher();
+
+    WeChatWatcher(const WeChatWatcher&) = delete;
+    WeChatWatcher& operator=(const WeChatWatcher&) = delete;
+
+    // Keeps the process-name index fresh on a worker. The worker owns a shared reference for its
+    // whole lifetime, so Stop() timing out cannot leave a pointer into a destroyed watcher.
+    bool Start(const std::shared_ptr<WeChatWatcher>& owner);
+    void Stop();
+
+    // Main-thread queries. They copy a shared immutable index and do no process or window I/O.
+    bool AnyProcessRunning() const;
+    bool IsProcessWeChat(unsigned long pid) const;
+
     // Enumerates the Weixin/WeChat processes' windows and pushes ONE notification for a new
     // toast-like window. Returns how many it pushed (0 or 1).
     //
@@ -129,6 +140,15 @@ public:
     int soundAnnouncements_ = 0;
 
 private:
+    struct ProcessIndex;
+    static unsigned long __stdcall ProcessThreadEntry(void* self);
+    void RunProcessIndex();
+    std::shared_ptr<const ProcessIndex> ProcessSnapshot() const;
+
+    WorkerThread processWorker_;
+    mutable CriticalSection processLock_;
+    std::shared_ptr<const ProcessIndex> processIndex_;
+
     // The handle last announced, so one popup is not reported twice, and when it was announced.
     long long lastHandle_ = 0;
     unsigned long long lastAnnounceMs_ = 0;

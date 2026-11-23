@@ -93,7 +93,8 @@ struct BarSystems {
     NotificationServer& notificationServer = *notificationServerOwner;
     std::shared_ptr<ToastReader> toastsOwner = std::make_shared<ToastReader>();
     ToastReader& toasts = *toastsOwner;
-    WeChatWatcher wechat;
+    std::shared_ptr<WeChatWatcher> wechatOwner = std::make_shared<WeChatWatcher>();
+    WeChatWatcher& wechat = *wechatOwner;
     std::shared_ptr<WindowsFileSearch> fileSearchOwner =
         std::make_shared<WindowsFileSearch>();
     WindowsFileSearch& fileSearch = *fileSearchOwner;
