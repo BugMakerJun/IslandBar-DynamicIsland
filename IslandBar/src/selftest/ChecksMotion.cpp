@@ -30,6 +30,7 @@
 #include <cstdlib>   // strtoul: unpacking the hex of a captured registration in the tray checks
 #include <vector>
 #include <cwchar>
+#include <limits>
 #include <string>
 
 #include "domain/Geometry.h"
@@ -77,6 +78,24 @@ namespace island {
 
 void TestMotion(float originX, float originY, float monitorWidthDip) {
     Section(L"island states and motion");
+
+    {
+        const float normalSteps[] = {
+            1.0f / 165.0f,
+            1.0f / 60.0f,
+            0.05f,
+            kMaximumAnimationStepSeconds,
+        };
+        bool normalUnchanged = true;
+        for (float step : normalSteps) {
+            normalUnchanged =
+                normalUnchanged && Nearly(AnimationDeltaFor(step), step, 0.000001f);
+        }
+        Check(normalUnchanged && AnimationDeltaFor(0.5f) == kMaximumAnimationStepSeconds &&
+                  AnimationDeltaFor(-1.0f) == 0.0f &&
+                  AnimationDeltaFor(std::numeric_limits<float>::quiet_NaN()) == 0.0f,
+              L"visual animation steps preserve normal QPC deltas and cap only long stalls");
+    }
 
     const IslandAnchor anchor = AnchorForWindow(originX, originY, monitorWidthDip);
 

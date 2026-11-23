@@ -19,6 +19,9 @@
 // =====================================================================
 #pragma once
 
+#include <algorithm>
+#include <cmath>
+
 #include "domain/BarShape.h"
 #include "domain/Geometry.h"
 
@@ -441,6 +444,16 @@ struct MotionTiming {
     float fromExpanded    = 0.24f;   // closing it: quicker, because putting something away should feel
                                      // decisive rather than slow
 };
+
+// The one visual-animation step policy used by the app loop. A normal frame
+// keeps its exact QPC delta; a long scheduler stall is capped so every visual
+// interpolation resumes from at most 100 ms away instead of jumping to its end.
+inline constexpr float kMaximumAnimationStepSeconds = 0.1f;
+
+inline float AnimationDeltaFor(float elapsedSeconds) noexcept {
+    if (!std::isfinite(elapsedSeconds) || elapsedSeconds <= 0.0f) return 0.0f;
+    return std::clamp(elapsedSeconds, 0.0f, kMaximumAnimationStepSeconds);
+}
 
 // Easing curves, named for what they do rather than for a number.
 //

@@ -1288,6 +1288,9 @@ struct BarRuntime {
     unsigned long long lastPollChecks = 0;
     PacingCounters pacing;
     PacingCounters lastPacing;
+    unsigned long long animationDtClamps = 0;
+    unsigned long long lastAnimationDtClamps = 0;
+    double rawAnimationDtMaximumMs = 0.0;
     // When the interval report was last written, and how many window regions had been applied then.
     unsigned long long lastIntervalReport = 0;
     unsigned long long lastRegionApplications = 0;
@@ -1456,10 +1459,17 @@ static void ReportIntervalAndThrottle(BarRuntime& runtime, island::BarSystems& s
                 pacing.commitSuccesses - previous.commitSuccesses,
                 pacing.commitFailures - previous.commitFailures,
                 pacing.frameSlotFailures - previous.frameSlotFailures);
+            island::LogAndPrint(
+                "  animation dt: clamped=%llu rawMax=%.2fms cap=%.2fms",
+                runtime.animationDtClamps - runtime.lastAnimationDtClamps,
+                runtime.rawAnimationDtMaximumMs,
+                static_cast<double>(island::kMaximumAnimationStepSeconds) * 1000.0);
             runtime.lastPresentSucceeded = presents;
             runtime.lastBlockingWaits = runtime.blockingWaits;
             runtime.lastPollChecks = runtime.pollChecks;
             runtime.lastPacing = pacing;
+            runtime.lastAnimationDtClamps = runtime.animationDtClamps;
+            runtime.rawAnimationDtMaximumMs = 0.0;
         }
 
         const auto logTiming = [](const char* name, const island::TimingSeries& series) {
@@ -1805,7 +1815,7 @@ static void UpdateCardOwner(BarRuntime& runtime, island::FrameState& frame, isla
 //
 // Moved out of the loop. `previous` is carried across frames, so it comes in by reference; `dt` is what every
 // later phase in this frame is driven by, so it is returned.
-static float AdvanceAnimationClock(LARGE_INTEGER& previous, const LARGE_INTEGER& frequency) {
+static float AdvanceRawFrameClock(LARGE_INTEGER& previous, const LARGE_INTEGER& frequency) {
     LARGE_INTEGER now = {};
     QueryPerformanceCounter(&now);
     const float dt = static_cast<float>(
@@ -4389,7 +4399,7 @@ static bool DecideNeedDraw(BarRuntime& runtime, island::BarState& bar, island::B
     // Only while music is what the bar is showing: a wave nobody can see is a redraw nobody
     // asked for.
     if (musicVisible) {
-        runtime.musicMeterSeconds += std::clamp(dt, 0.0f, 0.1f);
+        runtime.musicMeterSeconds += dt;
         constexpr float kMusicMeterSeconds = 1.0f / 20.0f;
         if (runtime.musicMeterSeconds >= kMusicMeterSeconds) {
             musicMeterDue = true;
@@ -4663,11 +4673,11 @@ static void PickRestingLyricLine(BarRuntime& runtime, island::BarState& bar, isl
                                   const char*& lyricLine, const char*& fallbackLine, bool& lyricsScrolling,
                                   bool& lyricLineAnimating, bool& lyricLineChanged, float& musicWavePhase) {
     if (musicResting) {
-        bar.lyricLineAge += static_cast<float>(dt > 0.1 ? 0.1 : dt);
+        bar.lyricLineAge += dt;
         // The wave drifts even while the level sits still, which is what keeps it looking
         // alive between the beats. A paused session does not request animation frames.
         if (musicPlaying) {
-            musicWavePhase += static_cast<float>(dt > 0.1 ? 0.1 : dt) * 1.15f;
+            musicWavePhase += dt * 1.15f;
             if (musicWavePhase > 6.2831853f * 64.0f) musicWavePhase -= 6.2831853f * 64.0f;
         }
         if (runtime.currentLyrics && !runtime.currentLyrics->Empty()) {
@@ -7743,13 +7753,14 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
 
             // --- advance the animation ---
             // The frame's own clock and the track position: both phases live above RunBar, in this order.
-            const float dt = AdvanceAnimationClock(previous, frequency);
-            UpdateTrackPosition(bar, runtime.nowPlaying, runtime.musicPositionAt, dt);
+            const float rawDt = AdvanceRawFrameClock(previous, frequency);
+            const float animationDt = island::AnimationDeltaFor(rawDt);
+            UpdateTrackPosition(bar, runtime.nowPlaying, runtime.musicPositionAt, rawDt);
             {
                 constexpr float kSearchAnimationSeconds = 0.30f;
                 const float target = bar.inlineSearchOpen ? 1.0f : 0.0f;
                 const float previousProgress = bar.inlineSearchProgress;
-                const float step = dt / kSearchAnimationSeconds;
+                const float step = animationDt / kSearchAnimationSeconds;
                 const unsigned long long nowMs = GetTickCount64();
                 if (bar.inlineSearchOpen && nowMs < bar.inlineSearchHoldUntil) {
                     bar.inlineSearchProgress = 0.0f;
@@ -7771,7 +7782,7 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                     bar.startSearchQuery[0] != L'\0';
                 const float target = resultsWanted ? 1.0f : 0.0f;
                 const float previousProgress = bar.inlineSearchResultsProgress;
-                const float step = dt / kSearchResultsAnimationSeconds;
+                const float step = animationDt / kSearchResultsAnimationSeconds;
                 if (bar.inlineSearchResultsProgress < target) {
                     bar.inlineSearchResultsProgress =
                         std::min(target, bar.inlineSearchResultsProgress + step);
@@ -7792,7 +7803,7 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                 if (armed) bar.railPowerConfirmShown = bar.startPowerConfirm;
                 const float target = armed ? 1.0f : 0.0f;
                 const float previousProgress = bar.railPowerConfirmProgress;
-                const float step = dt / kPowerConfirmAnimationSeconds;
+                const float step = animationDt / kPowerConfirmAnimationSeconds;
                 if (bar.railPowerConfirmProgress < target) {
                     bar.railPowerConfirmProgress =
                         std::min(target, bar.railPowerConfirmProgress + step);
@@ -7832,7 +7843,8 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                     const float target = (i == pointed) ? 1.0f : 0.0f;
                     // A spring per button, not a linear ramp: see RowOpenStep for why, and for the
                     // sub-stepping that keeps it stable at this machine's worst frame times.
-                    if (island::RowOpenStep(&bar.taskHoverAmount[i], &bar.taskHoverVelocity[i], target, dt)) {
+                    if (island::RowOpenStep(&bar.taskHoverAmount[i], &bar.taskHoverVelocity[i],
+                                            target, animationDt)) {
                         bar.iconAnimating = true;
                     }
                 }
@@ -7860,7 +7872,7 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
             // Clamp: a long stall (a debugger break, a sleep) must not teleport
             // the animation to its end, which would read as a jump cut.
             const bool wasAnimating = systems.window.IsAnimating();
-            const bool animating = systems.window.Tick(dt > 0.1f ? 0.1f : dt);
+            const bool animating = systems.window.Tick(animationDt);
             const bool settledFrame = wasAnimating && !animating;
             const bool motionFrame = animating || settledFrame;
 
@@ -7906,7 +7918,8 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
             // "我现在正在播放音乐 但是点击系统按钮的时候 灵动岛就不显示歌词了".
             PickRestingLyricLine(runtime, bar, systems, musicVisible,
                                  island::MusicWaveNeedsFrames(musicVisible, bar.activePlaying),
-                                 kLyricScrollDipPerSec, dt, lyricLine, fallbackLine, lyricsScrolling,
+                                 kLyricScrollDipPerSec, animationDt, lyricLine, fallbackLine,
+                                 lyricsScrolling,
                                  lyricLineAnimating, lyricLineChanged, musicWavePhase);
             UpdateFullscreenHudLayout(runtime, bar, systems, active, monitor,
                                       lyricLine, fallbackLine);
@@ -7963,7 +7976,7 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                                                  lyricLineChanged, lyricLineAnimating,
                                                  island::MusicWaveNeedsFrames(musicVisible,
                                                                               bar.activePlaying),
-                                                 dt,
+                                                 animationDt,
                                                  volumeAvailable, soundOutputStarted, haveDrawn,
                                                  progressChanged, weatherChanged, musicMeterDue,
                                                  startHoverChanged, startSearchChanged, startPowerChanged,
@@ -8103,12 +8116,13 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                 AddElapsed(runtime.trayIntervals, trayStartedTicks, PerformanceNowTicks(), frequency);
                 // The tray and the panel as the frame sees them. The phase lives above RunBar; the order
                 // against the Start card below is unchanged.
-                FillTrayAndPanelFrame(runtime, frame, bar, systems, motionFrame, dt, forcedStartHover,
+                FillTrayAndPanelFrame(runtime, frame, bar, systems, motionFrame, animationDt,
+                                      forcedStartHover,
                                       trayPageShown);
 
                 // The Start card as the frame and the window see it. The phase lives above RunBar; the order
                 // against the card-owner latch below is unchanged.
-                FillStartCardFrame(frame, bar, systems, startPageShown, dt);
+                FillStartCardFrame(frame, bar, systems, startPageShown, animationDt);
                 frame.niriSearchResultsProgress = bar.inlineSearchResultsProgress;
                 frame.niriSearchResults.results =
                     bar.startSearchResults.empty() ? nullptr : bar.startSearchResults.data();
@@ -8156,7 +8170,7 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                 // sequence is unchanged.
                 const long long panelFillStartedTicks = PerformanceNowTicks();
                 FillPanelFrame(runtime, frame, bar, systems, soundPageShown, trayPageShown, startPageShown,
-                               centerPageShown, weatherPageShown, dt);
+                               centerPageShown, weatherPageShown, animationDt);
                 AddElapsed(runtime.panelFillIntervals, panelFillStartedTicks,
                            PerformanceNowTicks(), frequency);
 
@@ -8272,7 +8286,6 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                 //
                 // The order of the LISTED ones is untouched: the departing ones are appended, so nothing
                 // that is staying moves because something else left.
-                const float rowDt = static_cast<float>(dt > 0.1 ? 0.1 : dt);
                 for (int i = 0; i < bar.rowSlotCount;) {
                     bool listedNow = false;
                     for (int j = 0; j < listed; ++j) {
@@ -8282,7 +8295,7 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                         }
                     }
                     bar.rowSlots[i].appear =
-                        island::TaskIconAppearStep(bar.rowSlots[i].appear, listedNow, rowDt);
+                        island::TaskIconAppearStep(bar.rowSlots[i].appear, listedNow, animationDt);
                     if (!listedNow && bar.rowSlots[i].appear <= 0.0f) {
                         bar.rowSlots[i] = bar.rowSlots[bar.rowSlotCount - 1];   // swap the last one in
                         --bar.rowSlotCount;
@@ -8377,9 +8390,11 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                         const float rightTarget =
                             island::NiriSideGroupTarget(sideGroupsHidden, drawn > 0);
                         const bool leftAnimating =
-                            island::NiriNotchExtentStep(&bar.niriNotchLeftExtent, leftTarget, dt);
+                            island::NiriNotchExtentStep(&bar.niriNotchLeftExtent, leftTarget,
+                                                        animationDt);
                         const bool rightAnimating =
-                            island::NiriNotchExtentStep(&bar.niriNotchRightExtent, rightTarget, dt);
+                            island::NiriNotchExtentStep(&bar.niriNotchRightExtent, rightTarget,
+                                                        animationDt);
                         bar.niriNotchExtentAnimating = leftAnimating || rightAnimating;
                         frame.niriNotchLeftExtent = bar.niriNotchLeftExtent;
                         frame.niriNotchRightExtent = bar.niriNotchRightExtent;
@@ -8525,7 +8540,8 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                 // The hover preview (and the notice line that shares this stretch). The phase lives above
                 // RunBar; the drawn count it needs is the one the row was laid out with, above.
                 const long long hoverFillStartedTicks = PerformanceNowTicks();
-                FillHoverPreview(runtime, frame, bar, systems, runtime.nowPlaying, previewReady, drawn, listed, dt,
+                FillHoverPreview(runtime, frame, bar, systems, runtime.nowPlaying, previewReady,
+                                 drawn, listed, animationDt,
                                  musicWavePhase, lyricLine, fallbackLine, noticeLine, frameWork,
                                  kWorkThumbnail, kThumbnailDwellMs, traceCardFrames);
                 AddElapsed(runtime.hoverFillIntervals, hoverFillStartedTicks,
@@ -8533,7 +8549,8 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
 
                 // The CALL strip and the date/weather strip. The phase lives above RunBar; its place in the
                 // sequence is unchanged.
-                FillCallAndStatusStrip(frame, bar, systems, active, runtime.lyricsScrollDip, dt);
+                FillCallAndStatusStrip(frame, bar, systems, active, runtime.lyricsScrollDip,
+                                       animationDt);
 
                 // The card's printed time and the fill of its bar, from the ONE playhead at the top of
                 // this iteration -- the same number the pill's lyric line is chosen by.
@@ -8576,7 +8593,7 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                             bar.shownVolume = level;
                         } else {
                             bar.shownVolume += (level - bar.shownVolume) *
-                                           (1.0f - std::exp(-dt / kVolumeChaseSeconds));
+                                           (1.0f - std::exp(-animationDt / kVolumeChaseSeconds));
                             if (std::fabs(level - bar.shownVolume) < 0.002f) bar.shownVolume = level;
                         }
                     }
@@ -8621,6 +8638,12 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                     haveDrawn = true;
                     runtime.lastDrawAtTicks = frameStartedTicks;
                     frameWork |= kWorkDraw;
+                    runtime.rawAnimationDtMaximumMs =
+                        std::max(runtime.rawAnimationDtMaximumMs,
+                                 static_cast<double>(rawDt) * 1000.0);
+                    if (rawDt > island::kMaximumAnimationStepSeconds) {
+                        ++runtime.animationDtClamps;
+                    }
                     if (runtime.lastFrameStartTicks != 0) {
                         runtime.frameStartIntervals.Add(
                             ElapsedMilliseconds(
