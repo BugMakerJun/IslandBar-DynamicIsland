@@ -764,14 +764,20 @@ public:
 
     // --- pacing -----------------------------------------------------------------------------------
     //
-    // The swap chain's own frame-latency waitable object is the signal the frame loop should block
-    // on: it is the compositor saying "the next frame may go now", so a wait on it ends when there is
-    // something to wait for. Without it the loop can only guess, which is what a fixed 4 ms timer is.
-    // Null when the swap chain was built without DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT or
-    // the runtime refused the object; the loop then falls back to the compositor clock, then to a timer.
+    // The swap chain's frame-latency object provides backpressure: after the compositor clock has
+    // released the next display tick, the frame loop consumes this object before touching the back
+    // buffer. Null when the swap chain was built without the waitable flag or the runtime refused it.
     HANDLE FrameLatencyWaitable() const { return frameLatencyWaitable_; }
-    bool PacingIsWaitable() const { return frameLatencyWaitable_ != nullptr; }
+    bool PacingIsWaitable() const { return waitablePacing_; }
+    // Called by the loop when waiting on the object fails at runtime, so the next present switches
+    // back to its synchronous form and the diagnostic line stops claiming this path is active.
+    void DisableWaitablePacing();
+    // True once Present or Commit has established that the device cannot be used any more.
+    bool DeviceLost() const { return deviceLost_; }
     bool HasCompositorClock() const { return waitForClock_ != nullptr; }
+    // True after the most recent compositor-clock wait succeeded. Present uses sync 0 only when
+    // both the compositor clock and the waitable established the frame slot.
+    bool CompositorPacing() const { return compositorPacing_; }
 
     // Frames handed to the compositor. Reported per second by the throttle line: a count far above the
     // monitor's refresh rate is the sign that the pacing is not pacing anything.
@@ -849,6 +855,11 @@ private:
     // Owned by this class: the swap chain hands it over and expects CloseHandle (the swap chain must
     // outlive it, which Shutdown's ordering guarantees).
     HANDLE                   frameLatencyWaitable_ = nullptr;
+    // The handle can exist while pacing is disabled: losing the device or failing a runtime wait
+    // switches the loop back to Present(1, 0) without invalidating the handle before Shutdown.
+    bool                     waitablePacing_ = false;
+    bool                     compositorPacing_ = false;
+    bool                     deviceLost_ = false;
     unsigned long long       framesPresented_ = 0;
     ID2D1Factory3*           d2dFactory_  = nullptr;
     ID2D1Device2*            d2dDevice_   = nullptr;

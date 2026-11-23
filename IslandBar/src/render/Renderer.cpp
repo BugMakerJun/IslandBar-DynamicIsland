@@ -251,6 +251,8 @@ bool Renderer::CreateDeviceResources() {
 }
 
 bool Renderer::CreateSwapChain(UINT widthPx, UINT heightPx) {
+    waitablePacing_ = false;
+    compositorPacing_ = false;
     IDXGIDevice* dxgiDevice = nullptr;
     HRESULT hr = d3dDevice_->QueryInterface(__uuidof(IDXGIDevice),
                                             reinterpret_cast<void**>(&dxgiDevice));
@@ -303,8 +305,14 @@ bool Renderer::CreateSwapChain(UINT widthPx, UINT heightPx) {
     // interval 1 and waited twice per frame.
     if (SUCCEEDED(swapChain_->QueryInterface(__uuidof(IDXGISwapChain2),
                                              reinterpret_cast<void**>(&swapChain2_))) && swapChain2_) {
-        swapChain2_->SetMaximumFrameLatency(1);
-        frameLatencyWaitable_ = swapChain2_->GetFrameLatencyWaitableObject();
+        const HRESULT latencyHr = swapChain2_->SetMaximumFrameLatency(1);
+        if (SUCCEEDED(latencyHr)) {
+            frameLatencyWaitable_ = swapChain2_->GetFrameLatencyWaitableObject();
+            waitablePacing_ = frameLatencyWaitable_ != nullptr;
+        } else {
+            LogLine(L"  frame pacing: SetMaximumFrameLatency failed (0x%08lX)",
+                    static_cast<unsigned long>(latencyHr));
+        }
     }
 
     return true;
@@ -320,6 +328,9 @@ void Renderer::ReleaseTarget() {
 bool Renderer::Initialize(HWND hwnd, UINT widthPx, UINT heightPx, float scale) {
     Shutdown();
 
+    waitablePacing_ = false;
+    compositorPacing_ = false;
+    deviceLost_ = false;
     scale_ = (scale > 0.0f) ? scale : 1.0f;
     dpi_   = static_cast<UINT>(std::lround(scale_ * kDipPerInch));
     window_ = hwnd;
@@ -654,7 +665,7 @@ void Renderer::PrepareTaskButtons(const FrameState& frame) {
 }
 
 void Renderer::RenderFrame(const FrameState& frame) {
-    if (!d2dContext_ || !swapChain_) return;
+    if (!d2dContext_ || !swapChain_ || deviceLost_) return;
 
     const PillAppearance& pill = frame.pill;
 
@@ -1934,22 +1945,56 @@ if (FAILED(hr)) {
 d2dContext_->SetTarget(nullptr);
 SafeRelease(&d2dTarget_);
 
-// Present WITH vsync, and let the VSync be the animation's clock.
-//
-// The line before this read Present(0, 0): the loop blocked on the swap chain's frame-latency waitable
-// and the present never waited. Measured here that produced ~85 fps on a 60 Hz display -- the extra
-// frames are torn or dropped by the compositor, and every animation (the tray icons' hover wash, the
-// cards growing open) visibly juddered: "右侧图标 鼠标移入 和 所有弹出卡片都卡卡的". The interval log
-// also carried 50-100 ms tails whose work was "none logged", which is a frame that missed the compositor.
-//
-// A present that waits for vsync paces the animation at the refresh rate and drops the tails. It costs
-// at most one frame of input latency, which a bar can afford; judder is what cannot be afforded.
-swapChain_->Present(1, 0);
+// A composition swap chain hands its buffer to DirectComposition before the screen presents it, so
+// the DXGI waitable alone can return several times per display tick. Present without sync is used
+// only after the compositor clock and the waitable establish this frame slot. Any fallback uses
+// Present(1, 0), and no fixed wait follows it.
+const UINT syncInterval = (waitablePacing_ && compositorPacing_) ? 0u : 1u;
+const HRESULT presentHr = swapChain_->Present(syncInterval, 0);
+if (FAILED(presentHr)) {
+    const HRESULT deviceReason =
+        d3dDevice_ ? d3dDevice_->GetDeviceRemovedReason() : static_cast<HRESULT>(S_OK);
+    static bool reportedPresentFailure = false;
+    if (!reportedPresentFailure) {
+        reportedPresentFailure = true;
+        LogLine(L"  render: Present(%u, 0) failed (0x%08lX); device reason 0x%08lX",
+                syncInterval, static_cast<unsigned long>(presentHr),
+                static_cast<unsigned long>(deviceReason));
+    }
+    if (presentHr == DXGI_ERROR_DEVICE_REMOVED || presentHr == DXGI_ERROR_DEVICE_RESET ||
+        FAILED(deviceReason)) {
+        deviceLost_ = true;
+        waitablePacing_ = false;
+    }
+    return;
+}
+
 framesPresented_ += 1;
 
 if (compDevice_) {
-    compDevice_->Commit();
+    const HRESULT commitHr = compDevice_->Commit();
+    if (FAILED(commitHr)) {
+        const HRESULT deviceReason =
+            d3dDevice_ ? d3dDevice_->GetDeviceRemovedReason() : static_cast<HRESULT>(S_OK);
+        static bool reportedCommitFailure = false;
+        if (!reportedCommitFailure) {
+            reportedCommitFailure = true;
+            LogLine(L"  render: Commit failed (0x%08lX); device reason 0x%08lX",
+                    static_cast<unsigned long>(commitHr),
+                    static_cast<unsigned long>(deviceReason));
+        }
+        if (commitHr == DXGI_ERROR_DEVICE_REMOVED || commitHr == DXGI_ERROR_DEVICE_RESET ||
+            FAILED(deviceReason)) {
+            deviceLost_ = true;
+            waitablePacing_ = false;
+        }
+    }
 }
+}
+
+void Renderer::DisableWaitablePacing() {
+    waitablePacing_ = false;
+    compositorPacing_ = false;
 }
 
 bool Renderer::VideoMemory(unsigned long long* localBytes, unsigned long long* nonLocalBytes) {
@@ -2249,12 +2294,17 @@ void Renderer::ReleaseBitmapCache() {
 }
 
 bool Renderer::WaitForCompositorClock(DWORD timeoutMs) {
-    if (!waitForClock_) return false;
+    if (!waitForClock_) {
+        compositorPacing_ = false;
+        return false;
+    }
 
-    // The API returns the count of signaled objects, or WAIT_TIMEOUT. Passing no
-    // handles makes it a pure "wait for the next composition tick".
+    // This API returns an NTSTATUS rather than a WAIT_* code. A negative status means the display
+    // is occluded or the compositor cannot tick right now, so Present must fall back to sync 1.
     const DWORD result = waitForClock_(0, nullptr, timeoutMs);
-    return result != WAIT_TIMEOUT && result != WAIT_FAILED;
+    compositorPacing_ =
+        result != WAIT_TIMEOUT && result != WAIT_FAILED && static_cast<LONG>(result) >= 0;
+    return compositorPacing_;
 }
 
 bool Renderer::ReadBackFrame(float insideXDip, float insideYDip,
@@ -2611,6 +2661,9 @@ void Renderer::Shutdown() {
         CloseHandle(frameLatencyWaitable_);
         frameLatencyWaitable_ = nullptr;
     }
+    waitablePacing_ = false;
+    compositorPacing_ = false;
+    deviceLost_ = false;
     SafeRelease(&swapChain2_);
     SafeRelease(&dxgiAdapter3_);
     SafeRelease(&swapChain_);

@@ -1206,8 +1206,8 @@ struct BarRuntime {
     int whyTrayPage = 0;
     // The frame times of the interval being measured, described and reset by the same report.
     island::FrameStats liveStats;
-    // Continuous redraw reasons must not turn the message loop into an
-    // uncapped render loop when a compositor present returns immediately.
+    // The last successful present, used only by the deliberate 20 Hz full-screen music cap.
+    // Ordinary animation pacing comes from the compositor clock and swap-chain backpressure.
     unsigned long long lastDrawAtTicks = 0;
     // --- the memory line's own clock ------------------------------------------------------------------
     //
@@ -1315,9 +1315,9 @@ struct BarRuntime {
 //
 // Moved out of the frame loop verbatim (indentation aside). Everything it needs that outlives a pass is in
 // BarRuntime -- the ten redraw counters, the frame statistics, and the four numbers the throttle line
-// subtracts -- which is what that struct was extended for; the pacing path is the pass own.
+// subtracts -- which is what that struct was extended for. The path itself is queried live so a runtime
+// wait failure is reported as the fallback that is actually in use.
 static void ReportIntervalAndThrottle(BarRuntime& runtime, island::BarSystems& systems,
-                                      const char* pacingPath,
                                       island::FullscreenHudMode fullscreenHudMode) {
     const unsigned long long nowMs = GetTickCount64();
     const unsigned long long intervalMs = nowMs - runtime.lastIntervalReport;
@@ -1351,6 +1351,12 @@ static void ReportIntervalAndThrottle(BarRuntime& runtime, island::BarSystems& s
                 static_cast<double>(frames - runtime.lastFramesPresented) / intervalSeconds;
             const double waitsPerSecond =
                 static_cast<double>(runtime.frameWaits - runtime.lastFrameWaits) / intervalSeconds;
+            const bool waitable = systems.renderer.PacingIsWaitable();
+            const bool compositor = systems.renderer.CompositorPacing();
+            const char* pacingPath =
+                (waitable && compositor) ? "compositor+waitable" : "vsync";
+            const char* syncPath = (waitable && compositor) ? "present0" : "present1";
+            const unsigned presentInterval = (waitable && compositor) ? 0u : 1u;
             const char* hudName = fullscreenHudMode == island::FullscreenHudMode::MusicNotch
                                       ? "music"
                                       : (fullscreenHudMode == island::FullscreenHudMode::CallOrb
@@ -1362,9 +1368,10 @@ static void ReportIntervalAndThrottle(BarRuntime& runtime, island::BarSystems& s
                                      ? "20fps"
                                      : "vsync";
             island::LogAndPrint(
-                "  throttle: path=%s frames=%.1f/s waits=%.1f/s maxLatency=1 "
-                "hud=%s cap=%s",
-                pacingPath, framesPerSecond, waitsPerSecond, hudName, hudCap);
+                "  throttle: path=%s sync=%s present=%u frames=%.1f/s "
+                "waits=%.1f/s maxLatency=1 hud=%s cap=%s",
+                pacingPath, syncPath, presentInterval, framesPerSecond, waitsPerSecond, hudName,
+                hudCap);
             runtime.lastFramesPresented = frames;
             runtime.lastFrameWaits = runtime.frameWaits;
         }
@@ -5503,53 +5510,85 @@ static void FillPanelFrame(BarRuntime& runtime, island::FrameState& frame, islan
 
 // --- pace ---
 //
-// Moved out of the frame loop verbatim (indentation aside), and it is the last thing a pass does: while
-// animating, wait for the next compositor tick (or a short message wait as a fallback); when idle, block on
-// input instead of spinning, because the clock only needs a wake-up once a second. It needs the window
-// services, whether the compositor clock answered, and the wait counter BarRuntime carries.
-static void PaceTheLoop(island::BarSystems& systems, bool clockDriven,
-                        BarRuntime& runtime, bool frameRequested,
-                        DWORD drawWaitMs) {
-    // Kept in the signature because it still records what the compositor clock answered, but the pacing
-    // is now the vsync present: see below.
-    (void)clockDriven;
-    // --- pace ---
-    //
-    // While animating, wait for the next compositor tick (or a short
-    // message wait as a fallback). When idle, block on input instead of
-    // spinning: the clock only needs a wake-up once a second, so a 250 ms
-    // cap is plenty and costs nothing on an idle desktop.
-    if (frameRequested) {
-        // Continuous redraw reasons must not turn the loop into an uncapped
-        // render loop. Input messages still wake the wait immediately.
-        ::MsgWaitForMultipleObjectsEx(0, nullptr, drawWaitMs, QS_ALLINPUT,
-                                      MWMO_INPUTAVAILABLE);
+// The waitable is joined with QS_ALLINPUT rather than used on its own: while a frame slot is
+// pending the bar still receives pointer, keyboard and shutdown messages. Input is pumped and the
+// wait resumes; it does not authorise a draw before the compositor says the frame slot is ready.
+static bool WaitForFrameSlot(island::BarSystems& systems, BarRuntime& runtime) {
+    const HANDLE waitable = systems.renderer.FrameLatencyWaitable();
+
+    for (;;) {
+        const DWORD waitResult =
+            ::MsgWaitForMultipleObjectsEx(1, &waitable, INFINITE, QS_ALLINPUT,
+                                          MWMO_INPUTAVAILABLE);
         runtime.frameWaits += 1;
-    } else if (systems.window.IsAnimating()) {
-        // THE PRESENT IS THE PACING NOW. It waits for vsync (Renderer::RenderFrame), so blocking here
-        // again on the swap chain's frame-latency waitable waits TWICE for one frame -- which is the
-        // "感觉有点不跟鼠标" report, and it also spaces the animation frames unevenly. Only drain input
-        // without blocking; the present blocks for the next refresh.
+
+        if (waitResult == WAIT_OBJECT_0) return true;
+        if (waitResult == WAIT_OBJECT_0 + 1) {
+            if (!systems.window.PumpMessages()) return false;
+            continue;
+        }
+        if (waitResult == WAIT_TIMEOUT) return true;
+        if (waitResult == WAIT_FAILED) {
+            const DWORD waitError = GetLastError();
+            systems.renderer.DisableWaitablePacing();
+            island::LogAndPrint(
+                "  throttle: waitable wait failed (error %lu); path=vsync sync=present1 present=1\n",
+                static_cast<unsigned long>(waitError));
+            std::fflush(stdout);
+            return true;
+        }
+    }
+}
+
+// The last thing a pass does. The draw gate has already waited for the compositor clock and consumed
+// the frame-latency object, so only input is drained here. The fallback Present(1, 0) has also supplied
+// the display clock by this point. Neither path adds a fixed wait after rendering.
+static bool PaceTheLoop(island::BarSystems& systems, BarRuntime& runtime,
+                        bool frameRequested, bool framePresented, DWORD drawWaitMs) {
+    if (systems.renderer.DeviceLost()) {
+        ::MsgWaitForMultipleObjectsEx(0, nullptr, 250, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        return true;
+    }
+
+    if (framePresented) {
+        ::MsgWaitForMultipleObjectsEx(0, nullptr, 0, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        runtime.frameWaits += 1;
+        return true;
+    }
+
+    if (frameRequested) {
+        if (drawWaitMs > 0) {
+            ::MsgWaitForMultipleObjectsEx(0, nullptr, drawWaitMs, QS_ALLINPUT,
+                                          MWMO_INPUTAVAILABLE);
+            runtime.frameWaits += 1;
+            return true;
+        }
+        // Reached only when the draw attempt did not produce a presented frame. Keep a failed
+        // EndDraw/Present from becoming an uncapped spin while the next attempt is prepared.
+        ::MsgWaitForMultipleObjectsEx(0, nullptr, 16, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        runtime.frameWaits += 1;
+        return true;
+    }
+
+    if (systems.window.IsAnimating()) {
         ::MsgWaitForMultipleObjectsEx(0, nullptr, 0, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
         runtime.frameWaits += 1;
     } else if (systems.scrollTiling.Animating(GetTickCount64())) {
         // External windows are not part of the island's render tree, so there is
         // no present here to block on VBlank. A short input-aware wait paces the
         // viewport animation without turning the loop into a spin.
-        ::MsgWaitForMultipleObjectsEx(0, nullptr, 16, QS_ALLINPUT,
-                                      MWMO_INPUTAVAILABLE);
+        ::MsgWaitForMultipleObjectsEx(0, nullptr, 16, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
         runtime.frameWaits += 1;
     } else if (systems.scrollTiling.Active()) {
         // Modifier-only gestures cannot be registered as a hotkey. While the
         // experimental mode is active, wake often enough to notice Win+Alt
         // without introducing a global keyboard hook.
-        ::MsgWaitForMultipleObjectsEx(0, nullptr, 32, QS_ALLINPUT,
-                                      MWMO_INPUTAVAILABLE);
+        ::MsgWaitForMultipleObjectsEx(0, nullptr, 32, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
         runtime.frameWaits += 1;
     } else {
-        ::MsgWaitForMultipleObjectsEx(0, nullptr, 250, QS_ALLINPUT,
-                                      MWMO_INPUTAVAILABLE);
+        ::MsgWaitForMultipleObjectsEx(0, nullptr, 250, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
     }
+    return true;
 }
 
 // --- the CALL strip, and the date / time / weather strip ---
@@ -6782,16 +6821,16 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
         island::LogAndPrint("WARNING: composition surface unavailable; the window stays empty\n");
         std::fflush(stdout);
     } else {
-        // Frame pacing. The compositor clock drives this when available, so an
-        // idle desktop costs nothing; otherwise MsgWaitForMultipleObjects blocks
-        // on input, which is also event-driven rather than a spin.
-    const bool clockDriven = systems.renderer.WaitForCompositorClock(1);
-    // Which wait the loop will use, named once here and repeated on every throttle line below. The
-    // order is the order of preference: the swap chain's own frame-latency object, then the compositor
-    // clock, then a short message wait.
-    const char* pacingPath = systems.renderer.PacingIsWaitable() ? "waitable"
-                                                        : (clockDriven ? "compositor" : "timer");
-    island::LogAndPrint("  frame pacing: %s\n", pacingPath);
+        // Frame pacing. The compositor clock selects the display tick; the swap chain's waitable
+        // then establishes the back buffer slot. Present(1, 0) is the synchronous fallback. There
+        // is no fixed ordinary-animation timer.
+        const bool clockAndWaitable = systems.renderer.HasCompositorClock() &&
+                                      systems.renderer.PacingIsWaitable();
+        const char* pacingPath = clockAndWaitable ? "compositor+waitable" : "vsync";
+        const char* syncPath = clockAndWaitable ? "present0-or-1" : "present1";
+        const char* presentInterval = clockAndWaitable ? "0-or-1" : "1";
+        island::LogAndPrint("  frame pacing: path=%s sync=%s present=%s\n", pacingPath, syncPath,
+                            presentInterval);
         std::fflush(stdout);
 
         LARGE_INTEGER frequency = {};
@@ -7151,11 +7190,6 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
         constexpr unsigned long long kWorkDraw = 1ull << 7;
         unsigned long long frameWork = 0;
         unsigned long long lastWork = 0;
-        constexpr unsigned long long kMinimumDrawIntervalMs = 16;
-        const unsigned long long minimumDrawTicks =
-            (static_cast<unsigned long long>(frequency.QuadPart) * kMinimumDrawIntervalMs +
-             999ull) /
-            1000ull;
         constexpr unsigned long long kFullscreenMusicFrameIntervalMs =
             1000ull / static_cast<unsigned long long>(island::kFullscreenMusicMaxFps);
         const unsigned long long fullscreenMusicFrameTicks =
@@ -7696,13 +7730,25 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                 island::FullscreenMusicFrameIsRateLimited(bar.fullscreenHudMode,
                                                           fullscreenMusicEventFrame);
             const unsigned long long drawSpacingTicks =
-                fullscreenMusicSpacing ? fullscreenMusicFrameTicks : minimumDrawTicks;
+                fullscreenMusicSpacing ? fullscreenMusicFrameTicks : 0ull;
             const bool drawDue =
                 settledFrame || runtime.lastDrawAtTicks == 0 ||
+                drawSpacingTicks == 0 ||
                 frameStartedTicks - runtime.lastDrawAtTicks >= drawSpacingTicks;
+            bool framePresented = false;
             if (needDraw && drawDue) {
+                if (systems.renderer.HasCompositorClock()) {
+                    if (systems.renderer.WaitForCompositorClock(8)) {
+                        runtime.frameWaits += 1;
+                    }
+                }
+                // DXGI requires the waitable before rendering. The compositor tick above normally
+                // leaves it signaled, so this is backpressure rather than a second display interval.
+                if (systems.renderer.CompositorPacing() && systems.renderer.PacingIsWaitable() &&
+                    !WaitForFrameSlot(systems, runtime)) {
+                    break;
+                }
                 bar.statusWakePending = false;
-                runtime.lastDrawAtTicks = frameStartedTicks;
                 // Which condition forced this redraw, counted per report interval.
                 //
                 // The frame INTERVAL only says the loop is running at 62 fps; that is a
@@ -7725,8 +7771,6 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                 if (bar.startWashAnimating) ++runtime.whyStartWash;
                 if (trayPageChanged) ++runtime.whyTrayPage;
                 if (!haveDrawn) ++runtime.whyFirst;
-
-                haveDrawn = true;
 
                 island::FrameState frame;
                 frame.accountAvatarPng =
@@ -8256,8 +8300,14 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                 FillDecodedPictures(runtime, frame, runtime.nowPlaying);
 
                 ApplyFullscreenHudFrame(bar, systems, frame);
+                const unsigned long long framesBefore = systems.renderer.FramesPresented();
                 systems.renderer.Render(frame);
-                frameWork |= kWorkDraw;
+                framePresented = systems.renderer.FramesPresented() != framesBefore;
+                if (framePresented) {
+                    haveDrawn = true;
+                    runtime.lastDrawAtTicks = frameStartedTicks;
+                    frameWork |= kWorkDraw;
+                }
 
                 // What the page looked like, recorded AFTER the draw: these are the values the next
                 // iteration's redraw decision compares against, so recording them before the draw would
@@ -8321,7 +8371,7 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
 
             // The two periodic reports: what the frames did, and whether the loop paced itself. The phase
             // lives above RunBar; its cross-frame state is BarRuntime's.
-            ReportIntervalAndThrottle(runtime, systems, pacingPath, bar.fullscreenHudMode);
+            ReportIntervalAndThrottle(runtime, systems, bar.fullscreenHudMode);
 
             // The wait that paces the loop. The phase lives above RunBar and it is the last thing a pass
             // does; the work flags below are the loop own bookkeeping and stay here.
@@ -8337,7 +8387,7 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                         static_cast<unsigned long long>(frequency.QuadPart));
                 }
             }
-            PaceTheLoop(systems, clockDriven, runtime, needDraw, drawWaitMs);
+            if (!PaceTheLoop(systems, runtime, needDraw, framePresented, drawWaitMs)) break;
 
             // What this pass did, for the slow-frame line above: the interval it will be measured against
             // is the gap from the END of this pass to the next, so these flags describe it.
