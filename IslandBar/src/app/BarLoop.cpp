@@ -1253,7 +1253,7 @@ struct BarRuntime {
     island::TimingSeries panelFillIntervals;
     island::TimingSeries hoverFillIntervals;
     island::TimingSeries decodedPictureIntervals;
-    island::TimingSeries reportDurationIntervals;
+    double lastReportDurationMs = 0.0;
     unsigned long long lastFrameStartTicks = 0;
     unsigned long long lastPresentStartTicks = 0;
     unsigned long long lastAnimationFrameStartTicks = 0;
@@ -1496,7 +1496,7 @@ static bool ReportIntervalAndThrottle(BarRuntime& runtime, island::BarSystems& s
         logTiming("frameSlotWait", runtime.frameSlotWaitIntervals);
         logTiming("messagePump", runtime.messagePumpIntervals);
         logTiming("frameWork", runtime.frameWorkIntervals);
-        logTiming("report interval", runtime.reportDurationIntervals);
+        island::LogAndPrint("  report duration: last=%.2fms", runtime.lastReportDurationMs);
         wchar_t traceSetting[8] = {};
         const bool traceBusiness =
             GetEnvironmentVariableW(L"ISLANDBAR_TRACE_TIMING", traceSetting, 8) > 0;
@@ -1545,7 +1545,6 @@ static bool ReportIntervalAndThrottle(BarRuntime& runtime, island::BarSystems& s
         runtime.panelFillIntervals.Reset();
         runtime.hoverFillIntervals.Reset();
         runtime.decodedPictureIntervals.Reset();
-        runtime.reportDurationIntervals.Reset();
         runtime.whyAnimating = runtime.whyClock = runtime.whyNotification = runtime.whyMusic = 0;
         runtime.whyLyrics = runtime.whyProgress = runtime.whyFirst = runtime.whyStatusStrip = 0;
         runtime.whyStartHover = runtime.whyStartWash = 0;
@@ -8762,8 +8761,8 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
             // lives above RunBar; its cross-frame state is BarRuntime's.
             const long long reportStartedTicks = PerformanceNowTicks();
             if (ReportIntervalAndThrottle(runtime, systems, bar.fullscreenHudMode)) {
-                runtime.reportDurationIntervals.Add(
-                    ElapsedMilliseconds(reportStartedTicks, PerformanceNowTicks(), frequency));
+                runtime.lastReportDurationMs =
+                    ElapsedMilliseconds(reportStartedTicks, PerformanceNowTicks(), frequency);
             }
 
             // The wait that paces the loop. The phase lives above RunBar and it is the last thing a pass

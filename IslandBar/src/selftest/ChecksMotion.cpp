@@ -24,6 +24,7 @@
 #include <shellapi.h>   // APPBARDATA / ABM_* for the native-taskbar probe
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cmath>
 #include <cstring>
@@ -683,6 +684,27 @@ void TestClock() {
                       static_cast<int>(island::kTimingSampleCapacity - 1) &&
                   buckets[island::TimingBucketFor(13.0)] == 1,
               L"overwriting the ring removes the evicted sample from its old histogram bucket");
+    }
+
+    {
+        island::TimingSeries timing;
+        std::array<double, island::kTimingSampleCapacity> retained{};
+        std::array<int, island::kTimingBucketCount> expectedBuckets{};
+        const double values[] = {4.2, 6.5, 9.2, 13.1};
+        bool matching = true;
+        for (size_t i = 0; i < island::kTimingSampleCapacity * 3 + 97; ++i) {
+            const double value = values[i % 4];
+            const size_t slot = i % retained.size();
+            if (i >= retained.size()) {
+                --expectedBuckets[island::TimingBucketFor(retained[slot])];
+            }
+            retained[slot] = value;
+            ++expectedBuckets[island::TimingBucketFor(value)];
+            timing.Add(value);
+            if (timing.Buckets() != expectedBuckets) matching = false;
+        }
+        Check(matching && timing.BucketCountSum() == timing.SampleCount(),
+              L"multi-bucket ring overwrites keep the retained histogram exact");
     }
 
     {
