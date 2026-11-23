@@ -695,7 +695,7 @@ void WeatherReader::Stop() {
 
 bool WeatherReader::Get(double* temperatureC, int* code, int* sunriseMinutes,
                         int* sunsetMinutes) const {
-    if (!worker_.Prepared() || !haveReading_) return false;
+    if (!worker_.Prepared()) return false;
 
     lock_.Enter();
     const bool have = haveReading_;

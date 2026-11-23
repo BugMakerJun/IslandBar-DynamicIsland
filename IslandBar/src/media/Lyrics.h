@@ -304,16 +304,8 @@ public:
     // Safe to call every frame.
     void Request(const char* title, const char* artist);
 
-    // Returns the held lyrics, or nullptr when there are none.
-    //
-    // A POINTER, not a copy. Lyrics is ~132 KB (512 lines x 260 bytes), and copying
-    // it took a megabyte-scale memcpy plus a long hold on the lock -- the same size
-    // problem that overflowed the stack in the self-test. The returned pointer stays
-    // valid until the next Request() or Stop(); the frame loop only reads it within
-    // a frame, which is well inside that.
-    const Lyrics* Current() const;
-
-    // Copies the lyrics. Kept for callers that want their own copy; prefer Current().
+    // Copies one complete generation of lyrics under the worker lock. The frame
+    // loop keeps this copy and updates it only when Revision() changes.
     // Returns false when none are available.
     bool Snapshot(Lyrics* out) const;
 

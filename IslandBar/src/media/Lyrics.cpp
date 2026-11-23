@@ -1092,15 +1092,6 @@ void LyricsProvider::Request(const char* title, const char* artist) {
     SetEvent(requestEvent_);
 }
 
-const Lyrics* LyricsProvider::Current() const {
-    if (!worker_.Prepared() || !haveLyrics_) return nullptr;
-    // Deliberately no lock. The pointer refers to a member the worker replaces only
-    // when a fetch completes, and the frame loop reads it within a single frame, so
-    // the worst a race can do is show the previous track's line for one frame --
-    // against taking the lock on every frame forever.
-    return &lyrics_;
-}
-
 bool LyricsProvider::Snapshot(Lyrics* out) const {
     if (!out || !worker_.Prepared()) return false;
     bool have = false;

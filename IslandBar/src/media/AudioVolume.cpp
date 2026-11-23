@@ -100,13 +100,17 @@ bool AudioVolume::Start() {
 
     // Wait for the first read, so Start() returning true means the level is known and the
     // control can be drawn on the very first frame rather than popping in half a second later.
-    for (int i = 0; i < 400 && !haveLevel_; ++i) {
+    const auto haveLevel = [this]() {
+        CriticalSection::Guard guard(lock_);
+        return haveLevel_;
+    };
+    for (int i = 0; i < 400 && !haveLevel(); ++i) {
         Sleep(5);
     }
 
-    const bool haveLevel = haveLevel_;
-    running_.store(haveLevel, std::memory_order_release);
-    if (!haveLevel) {
+    const bool firstReadArrived = haveLevel();
+    running_.store(firstReadArrived, std::memory_order_release);
+    if (!firstReadArrived) {
         Stop();
         return false;
     }
@@ -133,14 +137,15 @@ void AudioVolume::Stop() {
 }
 
 bool AudioVolume::Available() const {
+    CriticalSection::Guard guard(lock_);
     return haveLevel_;
 }
 
 bool AudioVolume::Get(float* level) const {
-    if (!level || !worker_.Prepared() || !haveLevel_) return false;
-    lock_.Enter();
+    if (!level || !worker_.Prepared()) return false;
+    CriticalSection::Guard guard(lock_);
+    if (!haveLevel_) return false;
     *level = level_;
-    lock_.Leave();
     return true;
 }
 
@@ -153,10 +158,10 @@ bool AudioVolume::IsMuted() const {
 }
 
 bool AudioVolume::Peak(float* level) const {
-    if (!level || !worker_.Prepared() || !havePeak_) return false;
-    lock_.Enter();
+    if (!level || !worker_.Prepared()) return false;
+    CriticalSection::Guard guard(lock_);
+    if (!havePeak_) return false;
     *level = peak_;
-    lock_.Leave();
     return true;
 }
 

@@ -160,14 +160,18 @@ bool SoundOutput::Start() {
 
     // Wait for the first reading, so the page has something to draw the first time it is opened rather
     // than filling in a second later.
-    for (int i = 0; i < 800 && !haveReading_; ++i) {
+    const auto haveReading = [this]() {
+        CriticalSection::Guard guard(lock_);
+        return haveReading_;
+    };
+    for (int i = 0; i < 800 && !haveReading(); ++i) {
         Sleep(5);
     }
-    const bool haveReading = haveReading_;
-    running_.store(haveReading, std::memory_order_release);
+    const bool firstReadArrived = haveReading();
+    running_.store(firstReadArrived, std::memory_order_release);
     // NOT stopped when the first reading never came: the worker keeps asking, and the page can still fill
     // in later. What it must not do is leak the attempt -- Prepare() ends it before the next Start().
-    return haveReading;
+    return firstReadArrived;
 }
 
 void SoundOutput::Stop() {

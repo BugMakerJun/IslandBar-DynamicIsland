@@ -22,6 +22,7 @@
 #include <cwctype>      // towlower: comparing an executable's name with a window's process image
 #include <tlhelp32.h>   // CreateToolhelp32Snapshot: ending every process of one image
 #include <memory>       // make_unique: the sound page's worker object
+#include <new>          // nothrow: the frame loop owns its lyrics snapshot
 #include <atomic>       // the flag the tray-learning worker shares with the frame loop
 #include <vector>
 
@@ -1344,7 +1345,9 @@ struct BarRuntime {
     unsigned long long musicPositionAt = 0;
     bool haveMusicReading = false;
     unsigned long long lastMusicRevision = 0;
-    const island::Lyrics* currentLyrics = nullptr;
+    // UI-owned copy. The provider's worker may replace its copy at any time, so
+    // the frame loop never retains a pointer into provider-owned storage.
+    std::unique_ptr<island::Lyrics> currentLyrics;
     unsigned long long lastLyricsRevision = 0;
     int lastLyricIndex = -2;        // -2 forces the first evaluation
     float lyricsScrollDip = 0.0f;
@@ -2016,7 +2019,12 @@ static void ReadWhatIsPlaying(BarRuntime& runtime, island::BarState& bar, island
     // provider is the same one for both sources, so this belongs to neither of them.
     if (systems.lyrics.Revision() != runtime.lastLyricsRevision) {
         runtime.lastLyricsRevision = systems.lyrics.Revision();
-        runtime.currentLyrics = systems.lyrics.Current();
+        std::unique_ptr<island::Lyrics> snapshot(new (std::nothrow) island::Lyrics());
+        if (snapshot && systems.lyrics.Snapshot(snapshot.get())) {
+            runtime.currentLyrics = std::move(snapshot);
+        } else {
+            runtime.currentLyrics.reset();
+        }
         runtime.lastLyricIndex = -2;
         runtime.lyricsScrollDip = 0.0f;
         // The catalogue's length is on this line because it is what the card prints and the bar
@@ -8763,7 +8771,8 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
             }
             // The memory line: the five-minute cadence plus one shortly after a suspected grower. The phase
             // lives above RunBar; the cadence state it keeps is carried across frames through references.
-            ReportMemoryLine(runtime, systems, kMemorySampleMs, runtime.nowPlaying, runtime.currentLyrics);
+            ReportMemoryLine(runtime, systems, kMemorySampleMs, runtime.nowPlaying,
+                             runtime.currentLyrics.get());
 
             // The two periodic reports: what the frames did, and whether the loop paced itself. The phase
             // lives above RunBar; its cross-frame state is BarRuntime's.
