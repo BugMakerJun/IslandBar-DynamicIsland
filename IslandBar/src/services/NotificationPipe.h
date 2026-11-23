@@ -39,6 +39,11 @@ inline constexpr const wchar_t* kPipeName = L"IslandBar.Notify";
 // service.
 inline constexpr uint32_t kMaxMessageBytes = 64 * 1024;
 
+// The exact rights a client receives. The server adds FILE_CREATE_PIPE_INSTANCE
+// for the next listener instance; no generic read/write masks are granted.
+inline constexpr DWORD kNotificationClientPipeAccess =
+    FILE_READ_DATA | FILE_WRITE_DATA | FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES | SYNCHRONIZE;
+
 // The server side. One thread accepts connections and reads framed messages.
 //
 // Threading note: the caller's UI thread must never block on a client, so the

@@ -450,7 +450,7 @@ void TestNotifications() {
         std::swprintf(fullName, 96, L"\\\\.\\pipe\\%s", pipeName);
         const auto connectClient = [&]() {
             (void)WaitNamedPipeW(fullName, 2000);
-            return CreateFileW(fullName, GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+            return CreateFileW(fullName, kNotificationClientPipeAccess, 0, nullptr,
                                OPEN_EXISTING, 0, nullptr);
         };
 
@@ -459,7 +459,7 @@ void TestNotifications() {
         wchar_t remoteName[112] = {};
         std::swprintf(remoteName, 112, L"\\\\127.0.0.1\\pipe\\%s", pipeName);
         const HANDLE remoteClient = CreateFileW(
-            remoteName, GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
+            remoteName, kNotificationClientPipeAccess, 0, nullptr, OPEN_EXISTING, 0, nullptr);
         const DWORD remoteError = GetLastError();
         const bool remoteRejected = remoteClient == INVALID_HANDLE_VALUE;
         if (remoteClient != INVALID_HANDLE_VALUE) CloseHandle(remoteClient);

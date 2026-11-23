@@ -13,6 +13,7 @@
 #pragma comment(lib, "advapi32.lib")
 
 #include "domain/MiniJson.h"
+#include "platform/ScopeExit.h"
 
 namespace island {
 namespace {
@@ -43,7 +44,8 @@ public:
         if (!CopySid(sizeof(userSid_), userSid_, user->User.Sid)) return;
 
         EXPLICIT_ACCESSW access = {};
-        access.grfAccessPermissions = GENERIC_READ | GENERIC_WRITE | SYNCHRONIZE;
+        access.grfAccessPermissions =
+            kNotificationClientPipeAccess | FILE_CREATE_PIPE_INSTANCE;
         access.grfAccessMode = SET_ACCESS;
         access.grfInheritance = NO_INHERITANCE;
         access.Trustee.TrusteeForm = TRUSTEE_IS_SID;
@@ -385,11 +387,18 @@ unsigned long __stdcall NotificationServer::ThreadEntry(void* self) {
 void NotificationServer::Run() {
     const WorkerThread::Signal workerSignal = WorkerThread::CurrentSignal();
     const HANDLE stopEvent = workerSignal.StopEvent();
+    auto runExit = MakeScopeExit([this]() noexcept {
+        running_.store(false, std::memory_order_release);
+    });
     // One security descriptor for every instance the loop creates.
     PipeSecurity security;
-    LogLine(security.CurrentUserOnly()
-                ? L"  notifications: access=current-user read/write/synchronize\n"
-                : L"  notifications: access=default DACL (explicit user ACL unavailable)\n");
+    if (!security.CurrentUserOnly()) {
+        LogLine(L"  notifications: refused because the current-user DACL could not be built");
+        return;
+    }
+    LogLine(L"  notifications: access=current-user "
+            L"client=read-data/write-data/read-attributes/write-attributes/synchronize "
+            L"server-add=create-instance");
 
     // The loop owns one pipe instance at a time: create, wait for a client, serve
     // it, and close. That serialises clients without any extra locking, and a
@@ -501,7 +510,6 @@ void NotificationServer::Run() {
         if (WaitForSingleObject(stopEvent, 0) == WAIT_OBJECT_0) break;
     }
 
-    running_.store(false, std::memory_order_release);
 }
 
 void NotificationServer::Enqueue(const Notification& notification) {
@@ -567,7 +575,7 @@ bool SendNotification(const Notification& notification, const wchar_t* pipeName,
         return false;
     }
 
-    HANDLE pipe = CreateFileW(name, GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+    HANDLE pipe = CreateFileW(name, kNotificationClientPipeAccess, 0, nullptr,
                               OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr);
     if (pipe == INVALID_HANDLE_VALUE) {
         const DWORD error = GetLastError();
