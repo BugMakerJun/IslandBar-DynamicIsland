@@ -141,7 +141,7 @@ inline bool WorkerThread::Prepare() {
 }
 
 inline bool WorkerThread::Start(EntryPoint entry, std::shared_ptr<void> owner) {
-    if (!entry || !Prepare()) return false;
+    if (!entry || !owner || !Prepare()) return false;
 
     void* context = owner.get();
     auto* launch = new (std::nothrow) Launch{state_, std::move(owner), entry, context};

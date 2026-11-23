@@ -456,6 +456,17 @@ void TestNotifications() {
 
         auto server = std::make_shared<NotificationServer>();
         Check(server->Start(pipeName), L"the notification server starts on a test pipe");
+        wchar_t remoteName[112] = {};
+        std::swprintf(remoteName, 112, L"\\\\127.0.0.1\\pipe\\%s", pipeName);
+        const HANDLE remoteClient = CreateFileW(
+            remoteName, GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
+        const DWORD remoteError = GetLastError();
+        const bool remoteRejected = remoteClient == INVALID_HANDLE_VALUE;
+        if (remoteClient != INVALID_HANDLE_VALUE) CloseHandle(remoteClient);
+        wchar_t remoteDetail[96] = {};
+        std::swprintf(remoteDetail, 96, L"CreateFile win32=%lu", remoteError);
+        Check(remoteRejected,
+              L"the notification pipe rejects a remote loopback client", remoteDetail);
         HANDLE silentClient = connectClient();
         Check(silentClient != INVALID_HANDLE_VALUE,
               L"a test client connects before sending anything");

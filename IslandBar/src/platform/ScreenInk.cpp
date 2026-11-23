@@ -54,8 +54,15 @@ struct ScreenInk::State {
     }
 
     ~State() {
-        if (dib) DeleteObject(dib);
-        if (memoryDc) DeleteDC(memoryDc);
+        // DeleteDC first: a bitmap must not be destroyed while it is the selected object of a DC.
+        if (memoryDc) {
+            DeleteDC(memoryDc);
+            memoryDc = nullptr;
+        }
+        if (dib) {
+            DeleteObject(dib);
+            dib = nullptr;
+        }
         if (screenDc) ReleaseDC(nullptr, screenDc);
     }
 };
@@ -176,12 +183,17 @@ void ScreenInk::Run(State& state) {
                     HBITMAP dib = CreateDIBSection(state.screenDc, &info, DIB_RGB_COLORS, &bits,
                                                    nullptr, 0);
                     if (dib && bits) {
-                        if (state.dib) DeleteObject(state.dib);
-                        state.dib = dib;
-                        state.pixels = bits;
-                        state.dibWidth = width;
-                        state.dibHeight = height;
-                        SelectObject(state.memoryDc, state.dib);
+                        const HGDIOBJ previous = SelectObject(state.memoryDc, dib);
+                        if (!previous || previous == HGDI_ERROR) {
+                            DeleteObject(dib);
+                        } else {
+                            // Once the new bitmap is selected, the old one is no longer referenced by the DC.
+                            if (state.dib) DeleteObject(state.dib);
+                            state.dib = dib;
+                            state.pixels = bits;
+                            state.dibWidth = width;
+                            state.dibHeight = height;
+                        }
                     } else if (dib) {
                         DeleteObject(dib);
                     }

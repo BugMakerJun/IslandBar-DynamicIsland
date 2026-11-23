@@ -14651,3 +14651,37 @@ event 和 OVERLAPPED；buffer 与 pipe 在调用帧内保持，直到操作完�
 * 8 小时采样：最终采样器 PID `46744`，目标 IslandBar PID `19828`，CSV
   `C:\Users\18340\IslandBar\runtime-soak-20261123-030448.csv`。
 
+---
+
+## 8.189 **第三轮复审：远程管道、空 owner、ScreenInk GDI**
+
+### 8.189.1 命名管道远程拒绝
+
+`CreateNamedPipeW` 模式加入 `PIPE_REJECT_REMOTE_CLIENTS`，保留
+`PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT`。Everyone DACL 的同机兼容性保持不变，
+但本机隔离不再由 DACL 推导。
+
+自检从 `\\127.0.0.1\pipe\...` 发起远程 loopback 连接，返回 `win32=5 (ACCESS_DENIED)`；
+同机 `--notify` 仍退出 0 并进入通知队列。
+
+### 8.189.2 WorkerThread 空 owner
+
+`WorkerThread::Start(entry, shared_ptr owner)` 现在在 `Prepare()` 前拒绝空 owner，不会留下 stop
+event 或线程。自检覆盖空 owner 拒绝、状态保持空、随即使用 `StartUnmanaged()` 正常启动。
+
+### 8.189.3 ScreenInk DIB
+
+扩容时先把新 DIB 选入 memory DC，确认成功后再删除旧 DIB；失败则删除新 DIB并保留旧状态。
+析构先销毁 memory DC，再删除 DIB，避免删除仍被 DC 选择的位图。
+
+自检执行两轮、每轮四次递增尺寸的扩容与重建，GDI Objects `41 -> 41`。
+
+### 8.189.4 验证
+
+* Debug/Release `/WX`：零告警。
+* Debug/Release `--self-test`：`1228 OK / 0 FAIL`。
+* Debug/Release `island_smoke`：PASS。
+* 最终 Release 已部署运行，PID `4788`。
+* 新 8 小时采样器 PID `28696`，CSV
+  `C:\Users\18340\IslandBar\runtime-soak-20261123-200030.csv`。
+

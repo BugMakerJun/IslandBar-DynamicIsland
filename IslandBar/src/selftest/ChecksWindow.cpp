@@ -2597,6 +2597,28 @@ void TestWorkerThread() {
     }
 
     {
+        struct NullOwnerEntry {
+            static unsigned long __stdcall Entry(void*) { return 0; }
+        };
+        WorkerThread worker;
+        Check(!worker.Start(&NullOwnerEntry::Entry, std::shared_ptr<void>{}),
+              L"a shared-owner worker refuses an empty owner");
+        Check(!worker.Started() && !worker.Prepared(),
+              L"an empty-owner start leaves no thread state or stop event");
+        struct IndependentEntry {
+            static unsigned long __stdcall Entry(void*) {
+                const WorkerThread::Signal signal = WorkerThread::CurrentSignal();
+                if (signal.StopEvent()) WaitForSingleObject(signal.StopEvent(), 5000);
+                return 0;
+            }
+        };
+        Check(worker.StartUnmanaged(&IndependentEntry::Entry, nullptr) &&
+                  worker.Started() && worker.Prepared() &&
+                  worker.Stop(3000) == WorkerThread::StopResult::Stopped,
+              L"the same worker can start an independent context after an empty-owner refusal");
+    }
+
+    {
         // A timed-out worker keeps its shared owner alive until the blocking call returns. This is
         // the owner-lifetime half of the rule; the check above only proves the WorkerThread state.
         std::atomic<bool> touchedAfterRelease{false};
@@ -2677,6 +2699,23 @@ void TestWorkerThread() {
     wchar_t detail[96] = {};
     std::swprintf(detail, 96, L"after stop/retry cycles: %lu -> %lu handle(s)", before, after);
     Check(after <= before + 8, L"a retried start leaves no handles behind", detail);
+
+    {
+        const DWORD gdiBefore = GetGuiResources(GetCurrentProcess(), GR_GDIOBJECTS);
+        for (int round = 0; round < 2; ++round) {
+            ScreenInk ink;
+            for (int side = 64; side <= 512; side *= 2) {
+                RECT patch = {0, 0, side, side};
+                ink.Request(&patch, 1);
+                Sleep(240);
+            }
+        }
+        const DWORD gdiAfter = GetGuiResources(GetCurrentProcess(), GR_GDIOBJECTS);
+        std::swprintf(detail, 96, L"GDI objects after resize/rebuild: %lu -> %lu",
+                      gdiBefore, gdiAfter);
+        Check(gdiAfter <= gdiBefore + 2,
+              L"ScreenInk releases every DIB when resizing and rebuilding", detail);
+    }
 }
 
 // THE LENS PROFILE (2026-10-18). The displacement is a pure function (render/LensProfile.h), so it is
