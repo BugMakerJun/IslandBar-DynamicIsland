@@ -65,6 +65,9 @@ public:
     void Stop();
 
     bool IsRunning() const { return running_.load(std::memory_order_acquire); }
+    bool PipeDaclValidated() const {
+        return pipeDaclValidated_.load(std::memory_order_acquire);
+    }
 
     // Pops one received notification into `out`. Returns false when none are
     // waiting. Non-blocking: call it from the frame loop.
@@ -79,6 +82,7 @@ private:
     WorkerThread  worker_;
     wchar_t       name_[256] = {};   // full \\.\pipe\... path
     std::atomic<bool> running_{false};
+    std::atomic<bool> pipeDaclValidated_{false};
 
     // Received notifications awaiting pickup by the UI thread.
     CriticalSection lock_;

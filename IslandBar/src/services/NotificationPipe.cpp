@@ -84,6 +84,70 @@ private:
     bool ready_ = false;
 };
 
+bool PipeDaclIsExpected(HANDLE pipe) {
+    if (!pipe || pipe == INVALID_HANDLE_VALUE) return false;
+
+    HANDLE token = nullptr;
+    BYTE tokenBuffer[sizeof(TOKEN_USER) + SECURITY_MAX_SID_SIZE] = {};
+    DWORD tokenBytes = 0;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
+        LogLine(L"  notifications: DACL token open failed win32=%lu",
+                static_cast<unsigned long>(GetLastError()));
+        return false;
+    }
+    if (!GetTokenInformation(token, TokenUser, tokenBuffer, sizeof(tokenBuffer), &tokenBytes)) {
+        LogLine(L"  notifications: DACL token user read failed win32=%lu",
+                static_cast<unsigned long>(GetLastError()));
+        CloseHandle(token);
+        return false;
+    }
+    CloseHandle(token);
+    const PSID userSid = reinterpret_cast<TOKEN_USER*>(tokenBuffer)->User.Sid;
+
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    PACL dacl = nullptr;
+    const DWORD status = GetSecurityInfo(
+        pipe, SE_KERNEL_OBJECT, DACL_SECURITY_INFORMATION, nullptr, nullptr, &dacl, nullptr,
+        &descriptor);
+    if (status != ERROR_SUCCESS || !dacl) {
+        LogLine(L"  notifications: DACL read failed status=%lu",
+                static_cast<unsigned long>(status));
+        if (descriptor) LocalFree(descriptor);
+        return false;
+    }
+
+    bool exact = false;
+    bool onlyCurrentUser = true;
+    DWORD allowedAceCount = 0;
+    DWORD userMask = 0;
+    ACL_SIZE_INFORMATION size = {};
+    if (GetAclInformation(dacl, &size, sizeof(size), AclSizeInformation)) {
+        for (DWORD i = 0; i < size.AceCount; ++i) {
+            void* rawAce = nullptr;
+            if (!GetAce(dacl, i, &rawAce) || !rawAce) continue;
+            const auto* ace = static_cast<const ACCESS_ALLOWED_ACE*>(rawAce);
+            if (ace->Header.AceType != ACCESS_ALLOWED_ACE_TYPE) continue;
+            ++allowedAceCount;
+            const PSID aceSid = const_cast<DWORD*>(&ace->SidStart);
+            if (!EqualSid(aceSid, userSid)) {
+                onlyCurrentUser = false;
+                continue;
+            }
+            userMask = ace->Mask;
+            exact = ace->Mask ==
+                    (kNotificationClientPipeAccess | FILE_CREATE_PIPE_INSTANCE);
+        }
+    }
+    LogLine(L"  notifications: DACL check status=%lu aces=%lu userMask=0x%08lX expected=0x%08lX "
+            L"exact=%d onlyCurrentUser=%d",
+            static_cast<unsigned long>(status), static_cast<unsigned long>(allowedAceCount),
+            static_cast<unsigned long>(userMask),
+            static_cast<unsigned long>(kNotificationClientPipeAccess | FILE_CREATE_PIPE_INSTANCE),
+            exact ? 1 : 0, onlyCurrentUser ? 1 : 0);
+    LocalFree(descriptor);
+    return exact && onlyCurrentUser;
+}
+
 // MESSAGE mode keeps compatibility with callers that expect the original Windows named-pipe behaviour.
 // The length-prefixed protocol writes its header, body and response with separate WriteFile calls, so each
 // piece is one message. The kernel buffer must still hold the largest accepted payload.
@@ -340,6 +404,7 @@ NotificationServer::~NotificationServer() {
 
 bool NotificationServer::Start(const wchar_t* pipeName) {
     if (running_.load(std::memory_order_acquire)) return true;
+    pipeDaclValidated_.store(false, std::memory_order_release);
 
     swprintf(name_, 256, L"\\\\.\\pipe\\%s", pipeName ? pipeName : kPipeName);
 
@@ -420,6 +485,13 @@ void NotificationServer::Run() {
             continue;
         }
 
+        if (!PipeDaclIsExpected(pipe)) {
+            LogLine(L"  notifications: creation refused because the DACL did not match "
+                    L"the current-user access contract");
+            CloseHandle(pipe);
+            break;
+        }
+        pipeDaclValidated_.store(true, std::memory_order_release);
         running_.store(true, std::memory_order_release);
 
         const IoStatus connected = ConnectPipe(pipe, stopEvent);

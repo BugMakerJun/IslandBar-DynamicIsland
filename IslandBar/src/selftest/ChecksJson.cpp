@@ -456,6 +456,10 @@ void TestNotifications() {
 
         auto server = std::make_shared<NotificationServer>();
         Check(server->Start(pipeName), L"the notification server starts on a test pipe");
+        Check(server->PipeDaclValidated(),
+              L"the notification pipe DACL contains only the current user and exact client rights",
+              server->PipeDaclValidated() ? L"DACL verified from the pipe handle" : L"DACL mismatch");
+
         wchar_t remoteName[112] = {};
         std::swprintf(remoteName, 112, L"\\\\127.0.0.1\\pipe\\%s", pipeName);
         const HANDLE remoteClient = CreateFileW(
