@@ -1177,6 +1177,7 @@ static void ReadTrayAndStartLearning(island::BarState& bar, island::BarSystems& 
 struct PacingCounters {
     unsigned long long compositorSuccess = 0;
     unsigned long long compositorTimeout = 0;
+    unsigned long long compositorOccluded = 0;
     unsigned long long compositorUnavailable = 0;
     unsigned long long compositorFailed = 0;
     unsigned long long present0 = 0;
@@ -1447,11 +1448,13 @@ static bool ReportIntervalAndThrottle(BarRuntime& runtime, island::BarSystems& s
             const PacingCounters& pacing = runtime.pacing;
             const PacingCounters& previous = runtime.lastPacing;
             island::LogAndPrint(
-                "  pacing results: compositor ok=%llu timeout=%llu unavailable=%llu failed=%llu | "
+                "  pacing results: compositor ok=%llu timeout=%llu occluded=%llu "
+                "unavailable=%llu failed=%llu | "
                 "present0=%llu present1=%llu presentFailures=%llu | "
                 "commitOk=%llu commitFailures=%llu frameSlotFailures=%llu",
                 pacing.compositorSuccess - previous.compositorSuccess,
                 pacing.compositorTimeout - previous.compositorTimeout,
+                pacing.compositorOccluded - previous.compositorOccluded,
                 pacing.compositorUnavailable - previous.compositorUnavailable,
                 pacing.compositorFailed - previous.compositorFailed, pacing.present0 - previous.present0,
                 pacing.present1 - previous.present1,
@@ -7998,6 +8001,9 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                             break;
                         case island::Renderer::CompositorWaitResult::Timeout:
                             ++runtime.pacing.compositorTimeout;
+                            break;
+                        case island::Renderer::CompositorWaitResult::Occluded:
+                            ++runtime.pacing.compositorOccluded;
                             break;
                         case island::Renderer::CompositorWaitResult::Unavailable:
                             ++runtime.pacing.compositorUnavailable;

@@ -708,9 +708,11 @@ public:
     enum class CompositorWaitResult {
         Success,
         Timeout,
+        Occluded,
         Unavailable,
         Failed,
     };
+    static constexpr DWORD kStatusGraphicsPresentOccluded = 0xC01E0006u;
     // Pure mapping used by the wait and by the self-test. WAIT_TIMEOUT is a
     // Win32 status and must be classified before the NTSTATUS sign test.
     static CompositorWaitResult ClassifyCompositorWaitStatus(DWORD status) noexcept;

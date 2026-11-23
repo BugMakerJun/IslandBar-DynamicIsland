@@ -252,7 +252,8 @@ bool Renderer::CreateDeviceResources() {
     hr = compDevice_->CreateEffectGroup(&effectGroup_);
     if (FAILED(hr)) return false;
 
-    // Optional: present on the compositor's clock. Absent before Windows 10 1809.
+    // Optional: present on the compositor's clock from Windows 11 build 22000 onward. It is resolved
+    // dynamically so older systems and missing exports keep the documented fallback path.
     if (HMODULE dcomp = GetModuleHandleW(L"dcomp.dll")) {
         waitForClock_ = reinterpret_cast<WaitForCompositorClockFn>(
             reinterpret_cast<void*>(GetProcAddress(dcomp, "DCompositionWaitForCompositorClock")));
@@ -2349,6 +2350,9 @@ Renderer::CompositorWaitResult Renderer::WaitForCompositorClock(DWORD timeoutMs)
 Renderer::CompositorWaitResult Renderer::ClassifyCompositorWaitStatus(DWORD result) noexcept {
     if (result == WAIT_TIMEOUT) {
         return CompositorWaitResult::Timeout;
+    }
+    if (result == kStatusGraphicsPresentOccluded) {
+        return CompositorWaitResult::Occluded;
     }
     if (static_cast<LONG>(result) < 0) {
         return CompositorWaitResult::Failed;

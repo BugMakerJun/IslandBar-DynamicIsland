@@ -543,7 +543,10 @@ void TestRenderer(IslandWindow& window) {
                   Renderer::CompositorWaitResult::Success &&
               Renderer::ClassifyCompositorWaitStatus(WAIT_TIMEOUT) ==
                   Renderer::CompositorWaitResult::Timeout &&
-              Renderer::ClassifyCompositorWaitStatus(static_cast<DWORD>(0xC01E0006u)) ==
+              Renderer::ClassifyCompositorWaitStatus(
+                  Renderer::kStatusGraphicsPresentOccluded) ==
+                  Renderer::CompositorWaitResult::Occluded &&
+              Renderer::ClassifyCompositorWaitStatus(static_cast<DWORD>(0xC0000001u)) ==
                   Renderer::CompositorWaitResult::Failed &&
               Renderer::ClassifyCompositorWaitStatus(WAIT_FAILED) ==
                   Renderer::CompositorWaitResult::Failed,
