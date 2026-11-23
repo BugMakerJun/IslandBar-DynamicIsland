@@ -761,11 +761,31 @@ void WeatherReader::Run() {
     // this thread's. Entering MTA keeps the UI thread out of the location call entirely -- which
     // matters here, because asking can block for seconds while a provider is found.
     const HRESULT apartment = RoInitialize(RO_INIT_MULTITHREADED);
-    const bool haveApartment = SUCCEEDED(apartment);
+    const bool initializedHere = SUCCEEDED(apartment);
+    const bool haveApartment = initializedHere || apartment == RPC_E_CHANGED_MODE;
+
+    // Every exit path, including an exception caught by WorkerThread, must publish
+    // that this worker is no longer running. RoUninitialize is paired only with an
+    // initialization this call actually acquired.
+    struct Completion {
+        std::atomic<bool>& running;
+        bool uninitialize;
+        ~Completion() {
+            running.store(false, std::memory_order_release);
+            if (uninitialize) RoUninitialize();
+        }
+    } completion{running_, initializedHere};
 
     char resolvedCity[128] = {};
     double latitude = 0.0;
     double longitude = 0.0;
+
+    if (!haveApartment) {
+        LogAndPrint(L"  weather: no Windows Runtime apartment -- location cannot be asked for; "
+                    L"a city in weather.txt still works\n");
+        std::fflush(stdout);
+        return;
+    }
 
     // The first pass runs immediately -- starting the bar must not mean waiting fifteen
     // minutes for the weather to appear -- and each pass says how long to wait for the next.
@@ -776,16 +796,8 @@ void WeatherReader::Run() {
         }
         if (WaitForSingleObject(stopEvent, 0) == WAIT_OBJECT_0) break;
 
-        if (!haveApartment) {
-            LogAndPrint(L"  weather: no Windows Runtime apartment -- location cannot be asked for; "
-                        L"a city in weather.txt still works\n");
-            std::fflush(stdout);
-            return;
-        }
         waitMs = Refresh(resolvedCity, sizeof(resolvedCity), &latitude, &longitude);
     }
-
-    if (haveApartment) RoUninitialize();
 }
 
 unsigned WeatherReader::Refresh(char* resolvedCity, size_t resolvedCapacity, double* latitude,

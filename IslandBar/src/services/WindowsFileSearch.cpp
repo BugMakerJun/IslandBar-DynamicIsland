@@ -14,6 +14,7 @@
 #include <cwchar>
 
 #include "core/Log.h"
+#include "platform/ComApartment.h"
 
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "shell32.lib")
@@ -292,8 +293,8 @@ unsigned long __stdcall WindowsFileSearch::ThreadEntry(void* self) {
 void WindowsFileSearch::Run() {
     const WorkerThread::Signal workerSignal = WorkerThread::CurrentSignal();
     const HANDLE stopEvent = workerSignal.StopEvent();
-    const HRESULT apartment = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-    const bool haveApartment = SUCCEEDED(apartment) || apartment == RPC_E_CHANGED_MODE;
+    ComApartment apartment(COINIT_MULTITHREADED);
+    const bool haveApartment = apartment.Usable();
     while (haveApartment) {
         HANDLE waits[2] = {stopEvent, wakeEvent_};
         const DWORD signalled = WaitForMultipleObjects(2, waits, FALSE, INFINITE);
@@ -320,7 +321,6 @@ void WindowsFileSearch::Run() {
             published_ = true;
         }
     }
-    if (haveApartment) CoUninitialize();
     running_.store(false, std::memory_order_release);
 }
 

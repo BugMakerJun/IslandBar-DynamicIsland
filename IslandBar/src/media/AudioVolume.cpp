@@ -10,6 +10,7 @@
 #include <new>
 
 #include "core/Log.h"
+#include "platform/ComApartment.h"
 
 #pragma comment(lib, "ole32.lib")
 
@@ -334,8 +335,8 @@ void AudioVolume::Run() {
     const HANDLE stopEvent = workerSignal.StopEvent();
     // This thread owns its own apartment. `IAudioEndpointVolume` is created here and used
     // here, so it never crosses into the frame loop's apartment.
-    const HRESULT apartment = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-    const bool haveApartment = SUCCEEDED(apartment) || apartment == RPC_E_CHANGED_MODE;
+    ComApartment apartment(COINIT_MULTITHREADED);
+    const bool haveApartment = apartment.Usable();
 
     EndpointVolumeCallback* callback = nullptr;
     if (haveApartment && volumeEvent_) {
@@ -430,7 +431,6 @@ void AudioVolume::Run() {
 
     ReleaseEndpointVolume();
     if (callback) callback->Release();
-    if (haveApartment) CoUninitialize();
     running_.store(false, std::memory_order_release);
 }
 

@@ -16,6 +16,7 @@
 
 #include "core/Log.h"
 #include "media/MusicSession.h"   // FetchAppIconForTest: the same icon path the media card uses
+#include "platform/ComApartment.h"
 
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "propsys.lib")
@@ -238,8 +239,8 @@ void SoundOutput::Run() {
     const HANDLE stopEvent = workerSignal.StopEvent();
     // This thread owns its own apartment: every interface created here is used here and released here, so
     // none of them crosses into the frame loop's apartment.
-    const HRESULT apartment = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-    const bool haveApartment = SUCCEEDED(apartment) || apartment == RPC_E_CHANGED_MODE;
+    ComApartment apartment(COINIT_MULTITHREADED);
+    const bool haveApartment = apartment.Usable();
 
     if (haveApartment) ReadAll();
 
@@ -261,7 +262,6 @@ void SoundOutput::Run() {
         ApplyWrites();
     }
 
-    if (haveApartment) CoUninitialize();
 }
 
 void SoundOutput::ReadAll() {

@@ -28,6 +28,7 @@
 #include <windows.h>
 
 #include <atomic>
+#include <exception>
 #include <memory>
 #include <new>
 
@@ -104,7 +105,15 @@ private:
         std::unique_ptr<Launch> launch(static_cast<Launch*>(argument));
         g_currentState = launch->state;
         launch->state->threadId.store(GetCurrentThreadId(), std::memory_order_release);
-        launch->entry(launch->context);
+        try {
+            launch->entry(launch->context);
+        } catch (const std::exception& error) {
+            LogLine(L"  worker thread: uncaught exception tid=%lu text=%hs",
+                    static_cast<unsigned long>(GetCurrentThreadId()), error.what());
+        } catch (...) {
+            LogLine(L"  worker thread: uncaught non-standard exception tid=%lu",
+                    static_cast<unsigned long>(GetCurrentThreadId()));
+        }
         g_currentState.reset();
         return 0;
     }

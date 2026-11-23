@@ -31,6 +31,7 @@
 #include <vector>
 #include <cwchar>
 #include <string>
+#include <stdexcept>
 
 #include "domain/Geometry.h"
 #include "core/Log.h"
@@ -949,6 +950,38 @@ void TestRenderer(IslandWindow& window) {
             std::swprintf(detailN, 224, L"exe path -> '%ls'", name);
             Check(std::wcscmp(name, L"QQMusic.exe") == 0,
                   L"a handler that is an executable keeps its file name", detailN);
+
+            // Failed SQLite initialization must release the DLL and any handle the
+            // open attempt returned. Repeating the failure is what catches a leaked
+            // module reference or database handle.
+            wchar_t missingDatabase[MAX_PATH] = {};
+            const DWORD used = GetTempPathW(MAX_PATH, missingDatabase);
+            std::swprintf(missingDatabase + used, MAX_PATH - used,
+                          L"islandbar-toast-missing-%lu",
+                          static_cast<unsigned long>(GetCurrentProcessId()));
+            CreateDirectoryW(missingDatabase, nullptr);
+            RemoveDirectoryW(missingDatabase);
+            const size_t missingLength = std::wcslen(missingDatabase);
+            std::swprintf(missingDatabase + missingLength, MAX_PATH - missingLength,
+                          L"\\wpndatabase.db");
+
+            DWORD beforeToast = 0;
+            DWORD afterToast = 0;
+            GetProcessHandleCount(GetCurrentProcess(), &beforeToast);
+            bool allRejected = true;
+            for (int attempt = 0; attempt < 8; ++attempt) {
+                ToastReader failedReader;
+                allRejected = !failedReader.Start(missingDatabase) &&
+                              !failedReader.Available() && allRejected;
+            }
+            GetProcessHandleCount(GetCurrentProcess(), &afterToast);
+            wchar_t detailToast[192] = {};
+            std::swprintf(detailToast, 192, L"8 failed starts: %lu -> %lu handle(s)",
+                          static_cast<unsigned long>(beforeToast),
+                          static_cast<unsigned long>(afterToast));
+            Check(allRejected && afterToast <= beforeToast + 2,
+                  L"a failed toast database start releases its handle and can be retried",
+                  detailToast);
         }
         // --- the sender's icon ------------------------------------------------------
         //
@@ -2637,6 +2670,27 @@ void TestWorkerThread() {
                   worker.Started() && worker.Prepared() &&
                   worker.Stop(3000) == WorkerThread::StopResult::Stopped,
               L"the same worker can start an independent context after an empty-owner refusal");
+    }
+
+    {
+        struct ThrowsStandard {
+            static unsigned long __stdcall Entry(void*) {
+                throw std::runtime_error("worker self-test exception");
+            }
+        };
+        struct ThrowsUnknown {
+            static unsigned long __stdcall Entry(void*) { throw 7; }
+        };
+
+        WorkerThread standardException;
+        Check(standardException.StartUnmanaged(&ThrowsStandard::Entry, nullptr) &&
+                  standardException.Stop(3000) == WorkerThread::StopResult::Stopped,
+              L"a standard worker exception is contained and the thread joins");
+
+        WorkerThread unknownException;
+        Check(unknownException.StartUnmanaged(&ThrowsUnknown::Entry, nullptr) &&
+                  unknownException.Stop(3000) == WorkerThread::StopResult::Stopped,
+              L"an unknown worker exception is contained and the thread joins");
     }
 
     {

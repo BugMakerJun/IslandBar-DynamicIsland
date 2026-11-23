@@ -4,6 +4,7 @@
 #include "shell/SystemStatus.h"
 
 #include "core/Log.h"
+#include "platform/ComApartment.h"
 #include "platform/UiWake.h"
 #include "shell/SystemToggles.h"   // NightLightOn / LiveCaptionsRunning: the two switches that are not radios
 
@@ -230,8 +231,7 @@ unsigned long __stdcall SystemStatusReader::ThreadEntry(void* self) {
 void SystemStatusReader::Run() {
     const WorkerThread::Signal workerSignal = WorkerThread::CurrentSignal();
     const HANDLE stopEvent = workerSignal.StopEvent();
-    const HRESULT apartment = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-    const bool haveApartment = SUCCEEDED(apartment) || apartment == RPC_E_CHANGED_MODE;
+    ComApartment apartment(COINIT_MULTITHREADED);
 
     Open();
     SystemStatus current{};
@@ -253,7 +253,6 @@ void SystemStatusReader::Run() {
     }
 
     Close();
-    if (haveApartment) CoUninitialize();
     running_.store(false, std::memory_order_release);
 }
 

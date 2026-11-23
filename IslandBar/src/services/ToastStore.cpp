@@ -250,13 +250,22 @@ ToastReader::~ToastReader() {
 bool ToastReader::Start(const wchar_t* databasePath) {
     if (database_) return true;
 
-    sqlite_ = new Sqlite();
-    sqlite_->api.module = LoadLibraryW(L"winsqlite3.dll");
-    if (!sqlite_->api.module) {
+    struct SqliteDeleter {
+        void operator()(Sqlite* sqlite) const noexcept {
+            if (!sqlite) return;
+            if (sqlite->api.module) FreeLibrary(sqlite->api.module);
+            delete sqlite;
+        }
+    };
+    std::unique_ptr<Sqlite, SqliteDeleter> pending(new (std::nothrow) Sqlite());
+    if (!pending) return false;
+
+    pending->api.module = LoadLibraryW(L"winsqlite3.dll");
+    if (!pending->api.module) {
         LogLine(L"  toasts: winsqlite3.dll is not present; the system toast channel is unavailable");
         return false;
     }
-    SqliteApi& api = sqlite_->api;
+    SqliteApi& api = pending->api;
     api.open_v2 = reinterpret_cast<decltype(api.open_v2)>(GetProcAddress(api.module, "sqlite3_open_v2"));
     api.close = reinterpret_cast<decltype(api.close)>(GetProcAddress(api.module, "sqlite3_close"));
     api.prepare_v2 = reinterpret_cast<decltype(api.prepare_v2)>(
@@ -277,7 +286,9 @@ bool ToastReader::Start(const wchar_t* databasePath) {
     api.column_bytes =
         reinterpret_cast<decltype(api.column_bytes)>(GetProcAddress(api.module, "sqlite3_column_bytes"));
     api.errmsg = reinterpret_cast<decltype(api.errmsg)>(GetProcAddress(api.module, "sqlite3_errmsg"));
-    if (!api.open_v2 || !api.prepare_v2 || !api.step || !api.column_text || !api.column_blob) {
+    if (!api.open_v2 || !api.close || !api.prepare_v2 || !api.step || !api.finalize ||
+        !api.bind_int64 || !api.column_int64 || !api.column_text || !api.column_blob ||
+        !api.column_bytes) {
         LogLine(L"  toasts: winsqlite3.dll does not export the sqlite3 API this reader needs");
         return false;
     }
@@ -296,15 +307,19 @@ bool ToastReader::Start(const wchar_t* databasePath) {
 
     char narrow[520] = {};
     WideCharToMultiByte(CP_UTF8, 0, path, -1, narrow, sizeof(narrow), nullptr, nullptr);
-    const int opened = api.open_v2(narrow, reinterpret_cast<sqlite3**>(&database_), kSqliteOpenReadOnly,
+    void* database = nullptr;
+    const int opened = api.open_v2(narrow, reinterpret_cast<sqlite3**>(&database), kSqliteOpenReadOnly,
                                    nullptr);
-    if (opened != kSqliteOk || !database_) {
+    if (opened != kSqliteOk || !database) {
         // Reported with the code, because "the database is locked" and "the file is not there" are different
         // problems with the same symptom.
         LogLine(L"  toasts: could not open '%ls' read-only (sqlite rc %d); no system toasts", path,
                 opened);
+        if (database) api.close(reinterpret_cast<sqlite3*>(database));
         return false;
     }
+    sqlite_ = pending.release();
+    database_ = database;
     wcsncpy_s(openedPath_, 260, path, _TRUNCATE);
     primed_ = false;
     LogLine(L"  toasts: reading '%ls'", path);
