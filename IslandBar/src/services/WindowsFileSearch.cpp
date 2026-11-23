@@ -15,6 +15,7 @@
 
 #include "core/Log.h"
 #include "platform/ComApartment.h"
+#include "platform/ScopeExit.h"
 
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "shell32.lib")
@@ -293,6 +294,9 @@ unsigned long __stdcall WindowsFileSearch::ThreadEntry(void* self) {
 void WindowsFileSearch::Run() {
     const WorkerThread::Signal workerSignal = WorkerThread::CurrentSignal();
     const HANDLE stopEvent = workerSignal.StopEvent();
+    auto runExit = MakeScopeExit([this]() noexcept {
+        running_.store(false, std::memory_order_release);
+    });
     ComApartment apartment(COINIT_MULTITHREADED);
     const bool haveApartment = apartment.Usable();
     while (haveApartment) {
@@ -321,7 +325,6 @@ void WindowsFileSearch::Run() {
             published_ = true;
         }
     }
-    running_.store(false, std::memory_order_release);
 }
 
 } // namespace island

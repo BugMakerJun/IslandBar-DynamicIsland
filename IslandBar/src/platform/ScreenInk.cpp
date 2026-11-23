@@ -118,7 +118,8 @@ ScreenInk::~ScreenInk() {
 }
 
 bool ScreenInk::Start() {
-    if (state_) return true;
+    if (state_ && state_->worker.Started()) return true;
+    state_.reset();
     auto state = std::make_shared<State>();
     if (!state->worker.Start(&ScreenInk::ThreadEntry, state)) {
         state->worker.Stop();

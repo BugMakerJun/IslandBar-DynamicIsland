@@ -18,6 +18,7 @@
 #include "shell/TrayLearn.h"
 
 #include "core/Log.h"
+#include "platform/ScopeExit.h"
 
 // The channel the module publishes on, and the wire format of one record (see platform/TrayRing.h).
 #include "domain/TrayRegistration.h"
@@ -64,6 +65,12 @@ unsigned long __stdcall TrayWakeThreadEntry(void*) {
     if (RegOpenKeyExW(HKEY_CURRENT_USER, settings, 0, KEY_NOTIFY, &key) != ERROR_SUCCESS) {
         key = nullptr;
     }
+    auto cleanup = MakeScopeExit([&]() noexcept {
+        if (key) RegCloseKey(key);
+        if (registry) CloseHandle(registry);
+        if (ring) CloseHandle(ring);
+        g_trayWakePump.running.store(false, std::memory_order_release);
+    });
     auto armRegistry = [&]() {
         if (!key || !registry) return;
         ResetEvent(registry);
@@ -92,9 +99,6 @@ unsigned long __stdcall TrayWakeThreadEntry(void*) {
         PostUiWake(g_trayWakePump.window.load(std::memory_order_acquire), kUiWakeTray);
     }
 
-    if (key) RegCloseKey(key);
-    if (registry) CloseHandle(registry);
-    if (ring) CloseHandle(ring);
     return 0;
 }
 

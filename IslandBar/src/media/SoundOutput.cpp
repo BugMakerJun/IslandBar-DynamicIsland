@@ -17,6 +17,7 @@
 #include "core/Log.h"
 #include "media/MusicSession.h"   // FetchAppIconForTest: the same icon path the media card uses
 #include "platform/ComApartment.h"
+#include "platform/ScopeExit.h"
 
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "propsys.lib")
@@ -237,6 +238,9 @@ unsigned long __stdcall SoundOutput::ThreadEntry(void* self) {
 void SoundOutput::Run() {
     const WorkerThread::Signal workerSignal = WorkerThread::CurrentSignal();
     const HANDLE stopEvent = workerSignal.StopEvent();
+    auto runExit = MakeScopeExit([this]() noexcept {
+        running_.store(false, std::memory_order_release);
+    });
     // This thread owns its own apartment: every interface created here is used here and released here, so
     // none of them crosses into the frame loop's apartment.
     ComApartment apartment(COINIT_MULTITHREADED);

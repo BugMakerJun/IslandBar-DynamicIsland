@@ -84,7 +84,10 @@ public:
     // context at all). Do not pass an object's `this` here.
     bool StartUnmanaged(EntryPoint entry, void* context);
 
-    bool Started() const { return state_ && state_->thread != nullptr; }
+    bool Started() const {
+        return state_ && state_->thread &&
+               WaitForSingleObject(state_->thread, 0) == WAIT_TIMEOUT;
+    }
     bool Prepared() const { return state_ && state_->stopEvent != nullptr; }
 
     // The thread itself acquires this before running the owner's entry point. It stays valid even if

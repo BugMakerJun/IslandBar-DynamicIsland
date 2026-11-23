@@ -40,6 +40,7 @@
 #include "domain/TrayLedger.h"     // which registrations the shell is holding (see the tray checks)
 #include "platform/TrayRing.h"     // the channel the module publishes registrations on
 #include "platform/WorkerThread.h"   // the stop-event/thread rule the readers share (TestWorkerThread)
+#include "platform/ScopeExit.h"
 #include "domain/CardLayout.h"
 #include "domain/StatePolicy.h"
 #include "domain/TrayEncoding.h"   // the only place a tray click is encoded (see its header)
@@ -2709,6 +2710,13 @@ void TestWorkerThread() {
         struct ThrowsUnknown {
             static unsigned long __stdcall Entry(void*) { throw 7; }
         };
+        struct RestartEntry {
+            static unsigned long __stdcall Entry(void*) {
+                const WorkerThread::Signal signal = WorkerThread::CurrentSignal();
+                if (signal.StopEvent()) WaitForSingleObject(signal.StopEvent(), 5000);
+                return 0;
+            }
+        };
 
         WorkerThread standardException;
         Check(standardException.StartUnmanaged(&ThrowsStandard::Entry, nullptr) &&
@@ -2719,6 +2727,34 @@ void TestWorkerThread() {
         Check(unknownException.StartUnmanaged(&ThrowsUnknown::Entry, nullptr) &&
                   unknownException.Stop(3000) == WorkerThread::StopResult::Stopped,
               L"an unknown worker exception is contained and the thread joins");
+
+        WorkerThread restartAfterException;
+        Check(restartAfterException.StartUnmanaged(&ThrowsStandard::Entry, nullptr),
+              L"a worker that will throw starts");
+        for (int i = 0; i < 200 && restartAfterException.Started(); ++i) Sleep(5);
+        Check(!restartAfterException.Started(),
+              L"an exception-finished worker reports that its thread is no longer live");
+        Check(restartAfterException.StartUnmanaged(&RestartEntry::Entry, nullptr) &&
+                  restartAfterException.Stop(3000) == WorkerThread::StopResult::Stopped,
+              L"the same worker restarts after its previous entry threw");
+
+        std::atomic<bool> normalCleanup{false};
+        {
+            auto cleanup = MakeScopeExit([&normalCleanup]() noexcept {
+                normalCleanup.store(true, std::memory_order_release);
+            });
+        }
+        std::atomic<bool> exceptionCleanup{false};
+        try {
+            auto cleanup = MakeScopeExit([&exceptionCleanup]() noexcept {
+                exceptionCleanup.store(true, std::memory_order_release);
+            });
+            throw std::runtime_error("scope exit self-test");
+        } catch (const std::exception&) {
+        }
+        Check(normalCleanup.load(std::memory_order_acquire) &&
+                  exceptionCleanup.load(std::memory_order_acquire),
+              L"worker state cleanup runs on both normal and exception exits");
     }
 
     {

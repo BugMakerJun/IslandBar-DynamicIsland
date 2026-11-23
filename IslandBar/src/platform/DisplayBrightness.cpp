@@ -4,6 +4,7 @@
 #include "platform/DisplayBrightness.h"
 
 #include "core/Log.h"
+#include "platform/ScopeExit.h"
 #include "platform/WorkerThread.h"
 
 #include <mutex>
@@ -211,6 +212,12 @@ unsigned long __stdcall ReadThread(void* self) {
     const WorkerThread::Signal workerSignal = WorkerThread::CurrentSignal();
     const HANDLE stopEvent = workerSignal.StopEvent();
     auto& state = *static_cast<AsyncRead*>(self);
+    auto cleanup = MakeScopeExit([&state]() noexcept {
+        std::lock_guard<std::mutex> lock(state.mutex);
+        state.pending = false;
+        state.finished = true;
+        state.ok = false;
+    });
     const HANDLE events[2] = {stopEvent, state.wake};
     while (true) {
         if (WaitForMultipleObjects(2, events, FALSE, INFINITE) != WAIT_OBJECT_0 + 1) break;
@@ -233,6 +240,10 @@ unsigned long __stdcall ReadThread(void* self) {
 
 bool StartReader(AsyncRead& state) {
     if (state.worker.Started()) return true;
+    if (state.wake) {
+        CloseHandle(state.wake);
+        state.wake = nullptr;
+    }
     state.wake = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     if (!state.wake) {
         state.worker.Stop();

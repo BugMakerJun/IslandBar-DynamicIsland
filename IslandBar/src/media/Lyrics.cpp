@@ -12,6 +12,7 @@
 #include "domain/MiniJson.h"
 #include "core/Log.h"
 #include "platform/Http.h"
+#include "platform/ScopeExit.h"
 
 namespace island {
 namespace {
@@ -1116,6 +1117,9 @@ unsigned long __stdcall LyricsProvider::ThreadEntry(void* self) {
 void LyricsProvider::Run() {
     const WorkerThread::Signal workerSignal = WorkerThread::CurrentSignal();
     const HANDLE stopEvent = workerSignal.StopEvent();
+    auto runExit = MakeScopeExit([this]() noexcept {
+        running_.store(false, std::memory_order_release);
+    });
     char title[256] = {};
     char artist[256] = {};
 
@@ -1164,7 +1168,6 @@ void LyricsProvider::Run() {
         lock_.Leave();
     }
 
-    running_.store(false, std::memory_order_release);
 }
 
 } // namespace island

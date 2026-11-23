@@ -11,6 +11,7 @@
 
 #include "core/Log.h"
 #include "platform/ComApartment.h"
+#include "platform/ScopeExit.h"
 
 #pragma comment(lib, "ole32.lib")
 
@@ -339,6 +340,11 @@ void AudioVolume::Run() {
     const bool haveApartment = apartment.Usable();
 
     EndpointVolumeCallback* callback = nullptr;
+    auto runExit = MakeScopeExit([this, &callback]() noexcept {
+        ReleaseEndpointVolume();
+        if (callback) callback->Release();
+        running_.store(false, std::memory_order_release);
+    });
     if (haveApartment && volumeEvent_) {
         callback = new (std::nothrow) EndpointVolumeCallback(volumeEvent_);
     }
@@ -429,9 +435,6 @@ void AudioVolume::Run() {
         }
     }
 
-    ReleaseEndpointVolume();
-    if (callback) callback->Release();
-    running_.store(false, std::memory_order_release);
 }
 
 } // namespace island

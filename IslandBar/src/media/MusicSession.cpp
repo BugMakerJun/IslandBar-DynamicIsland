@@ -3,6 +3,7 @@
 // =====================================================================
 #include "media/MusicSession.h"
 #include "core/Log.h"
+#include "platform/ScopeExit.h"
 
 #include <roapi.h>
 #include <shellapi.h>   // SHGetFileInfoW, for the source application's icon
@@ -689,11 +690,18 @@ unsigned long __stdcall MusicSession::ThreadEntry(void* self) {
 void MusicSession::Run() {
     const WorkerThread::Signal workerSignal = WorkerThread::CurrentSignal();
     const HANDLE stopEvent = workerSignal.StopEvent();
+    auto runExit = MakeScopeExit([this]() noexcept {
+        running_.store(false, std::memory_order_release);
+    });
     // The worker owns its own apartment. WinRT objects are not usable across
     // apartments unless they are agile, and the session manager is; entering MTA
     // here keeps the UI thread out of it entirely.
     const HRESULT apartment = RoInitialize(RO_INIT_MULTITHREADED);
-    const bool haveApartment = SUCCEEDED(apartment);
+    const bool initializedHere = SUCCEEDED(apartment);
+    const bool haveApartment = initializedHere || apartment == RPC_E_CHANGED_MODE;
+    auto apartmentExit = MakeScopeExit([initializedHere]() noexcept {
+        if (initializedHere) RoUninitialize();
+    });
     wchar_t noArtworkSetting[8] = {};
     const bool artworkEnabled =
         GetEnvironmentVariableW(L"ISLANDBAR_NO_ARTWORK", noArtworkSetting, 8) == 0 ||
@@ -719,6 +727,10 @@ void MusicSession::Run() {
     DWORD nextPlaybackRefreshAt = GetTickCount() + 2000;
     unsigned managerRefreshAttempts = 0;
     HANDLE playbackChangedEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    auto playbackEventExit = MakeScopeExit([&playbackChangedEvent]() noexcept {
+        if (playbackChangedEvent) CloseHandle(playbackChangedEvent);
+        playbackChangedEvent = nullptr;
+    });
     MediaSession watchedSession{nullptr};
     winrt::event_token playbackChangedToken{};
 
@@ -1151,9 +1163,6 @@ void MusicSession::Run() {
         } catch (const winrt::hresult_error&) {
         }
     }
-    if (playbackChangedEvent) CloseHandle(playbackChangedEvent);
-    if (haveApartment) RoUninitialize();
-    running_.store(false, std::memory_order_release);
 }
 
 } // namespace island

@@ -5,6 +5,7 @@
 
 #include "core/Log.h"
 #include "platform/ComApartment.h"
+#include "platform/ScopeExit.h"
 #include "platform/UiWake.h"
 #include "shell/SystemToggles.h"   // NightLightOn / LiveCaptionsRunning: the two switches that are not radios
 
@@ -232,6 +233,10 @@ void SystemStatusReader::Run() {
     const WorkerThread::Signal workerSignal = WorkerThread::CurrentSignal();
     const HANDLE stopEvent = workerSignal.StopEvent();
     ComApartment apartment(COINIT_MULTITHREADED);
+    auto runExit = MakeScopeExit([this]() noexcept {
+        Close();
+        running_.store(false, std::memory_order_release);
+    });
 
     Open();
     SystemStatus current{};
@@ -252,8 +257,6 @@ void SystemStatusReader::Run() {
         }
     }
 
-    Close();
-    running_.store(false, std::memory_order_release);
 }
 
 bool SystemStatusReader::Publish(const SystemStatus& status) {

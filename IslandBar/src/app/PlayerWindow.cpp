@@ -4,6 +4,7 @@
 // =====================================================================
 
 #include "app/PlayerWindow.h"
+#include "platform/ScopeExit.h"
 
 #include <cwchar>
 #include <cwctype>
@@ -189,6 +190,9 @@ unsigned long __stdcall PlayerWindowWatch::ThreadEntry(void* self) {
 void PlayerWindowWatch::Run() {
     const WorkerThread::Signal workerSignal = WorkerThread::CurrentSignal();
     const HANDLE stopEvent = workerSignal.StopEvent();
+    auto runExit = MakeScopeExit([this]() noexcept {
+        running_.store(false, std::memory_order_release);
+    });
     // The FIRST pass runs at once: a bar started while a song is playing should have the words
     // straight away, not one poll interval later.
     while (true) {

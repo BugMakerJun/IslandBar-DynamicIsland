@@ -7,6 +7,7 @@
 #include "core/Log.h"
 #include "media/WicImage.h"
 #include "platform/ComApartment.h"
+#include "platform/ScopeExit.h"
 
 #include <shellapi.h>
 #include <appmodel.h>
@@ -758,6 +759,9 @@ unsigned long __stdcall StartApps::IconThreadEntry(void* self) {
 void StartApps::RunIconWorker() {
     const WorkerThread::Signal workerSignal = WorkerThread::CurrentSignal();
     const HANDLE stopEvent = workerSignal.StopEvent();
+    auto runExit = MakeScopeExit([this]() noexcept {
+        iconWorkerRunning_.store(false);
+    });
     ComApartment apartment(COINIT_APARTMENTTHREADED);
     const bool haveApartment = apartment.Usable();
     while (haveApartment) {
@@ -795,7 +799,6 @@ void StartApps::RunIconWorker() {
             iconCompleted_.push_back({std::move(request.target), request.pin, std::move(png)});
         }
     }
-    iconWorkerRunning_.store(false);
     LogLine(L"  start.icons.summary requested=%d resolved=%d failed=%d threads_active=0",
             iconRequested_.load(std::memory_order_relaxed),
             iconResolved_.load(std::memory_order_relaxed),

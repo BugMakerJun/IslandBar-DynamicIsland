@@ -11,6 +11,7 @@
 #include <cwchar>
 
 #include "core/Log.h"
+#include "platform/ScopeExit.h"
 #include "platform/UiWake.h"
 
 namespace island {
@@ -362,6 +363,9 @@ unsigned long __stdcall ToastReader::ThreadEntry(void* self) {
 void ToastReader::Run() {
     const WorkerThread::Signal workerSignal = WorkerThread::CurrentSignal();
     const HANDLE stopEvent = workerSignal.StopEvent();
+    auto runExit = MakeScopeExit([this]() noexcept {
+        running_.store(false, std::memory_order_release);
+    });
     while (running_.load(std::memory_order_acquire)) {
         if (WaitForSingleObject(stopEvent, pollMs_) != WAIT_TIMEOUT) break;
 
@@ -372,7 +376,6 @@ void ToastReader::Run() {
         PublishBatch(batch);
         PostUiWake(wakeWindow_, kUiWakeToast);
     }
-    running_.store(false, std::memory_order_release);
 }
 
 void ToastReader::PublishBatch(const NotificationStore& batch) {
