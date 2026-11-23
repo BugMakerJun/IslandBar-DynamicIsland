@@ -102,6 +102,37 @@ void TestMotion(float originX, float originY, float monitorWidthDip) {
         const float searchAfterStall = AdvanceProgressBy(0.0f, 1.0f, 0.5f, 0.30f);
         Check(Nearly(searchAfterStall, kMaximumAnimationStepSeconds / 0.30f, 0.0001f),
               L"a 500 ms search-animation stall advances only the capped 100 ms distance");
+        const float infinity = std::numeric_limits<float>::infinity();
+        Check(AdvanceProgressBy(std::numeric_limits<float>::quiet_NaN(), 1.0f, 0.006f, 0.3f) ==
+                      0.0f &&
+                  AdvanceProgressBy(0.35f, std::numeric_limits<float>::quiet_NaN(), 0.006f,
+                                    0.3f) == 0.35f &&
+                  AdvanceProgressBy(0.35f, 1.0f, std::numeric_limits<float>::quiet_NaN(),
+                                    0.3f) == 0.35f &&
+                  AdvanceProgressBy(0.35f, 1.0f, infinity, 0.3f) == 0.35f &&
+                  AdvanceProgressBy(0.35f, 1.0f, 0.006f,
+                                    std::numeric_limits<float>::quiet_NaN()) == 0.35f &&
+                  AdvanceProgressBy(0.35f, 1.0f, 0.006f, infinity) == 0.35f &&
+                  AdvanceProgressBy(0.35f, 1.0f, 0.006f, 0.0f) == 1.0f,
+              L"progress animation invalid inputs stay finite and do not jump");
+
+        float progress = AdvanceProgressBy(0.0f, 1.0f, 0.5f, 0.30f);
+        progress = AdvanceProgressBy(progress, 1.0f, 1.0f, 0.30f);
+        float previousProgress = progress;
+        bool recoveredForward = true;
+        for (int i = 0; i < 10; ++i) {
+            progress = AdvanceProgressBy(progress, 1.0f, 1.0f / 165.0f, 0.30f);
+            recoveredForward =
+                recoveredForward && progress >= previousProgress && progress <= 1.0f;
+            previousProgress = progress;
+        }
+        const float reversed =
+            AdvanceProgressBy(progress, 0.0f, 0.5f, 0.30f);
+        Check(recoveredForward && std::isfinite(progress) &&
+                  Nearly(progress, 2.0f / 3.0f + 10.0f * (1.0f / 165.0f) / 0.30f,
+                         0.0001f) &&
+                  reversed < progress && reversed >= 0.0f,
+              L"continuous long frames, 165 Hz recovery, and reversal remain bounded");
 
         Motion stalled;
         stalled.SetAnchor(anchor);
@@ -117,6 +148,30 @@ void TestMotion(float originX, float originY, float monitorWidthDip) {
                   widthAfterStall >= widthBeforeStall &&
                   widthAfterStall <= kExpandedWidthDip,
               L"the main motion remains finite and monotonic after a long frame");
+        float previousWidth = widthAfterStall;
+        bool motionRecovered = true;
+        for (int i = 0; i < 10; ++i) {
+            stalled.Tick(1.0f / 165.0f);
+            const RoundedBox box = stalled.Current();
+            const float width = box.rect.right - box.rect.left;
+            motionRecovered =
+                motionRecovered && std::isfinite(width) && width >= previousWidth &&
+                width <= kExpandedWidthDip && box.rect.bottom >= box.rect.top;
+            previousWidth = width;
+        }
+        stalled.SetTarget(IslandState::Collapsed);
+        bool reversedMonotonically = true;
+        for (int i = 0; i < 20; ++i) {
+            stalled.Tick(1.0f / 165.0f);
+            const RoundedBox box = stalled.Current();
+            const float width = box.rect.right - box.rect.left;
+            reversedMonotonically =
+                reversedMonotonically && std::isfinite(width) && width <= previousWidth &&
+                width >= kCollapsedWidthDip;
+            previousWidth = width;
+        }
+        Check(motionRecovered && reversedMonotonically,
+              L"the main motion recovers at normal frames and reverses without jumps");
 
         float hoverAmount = 0.0f;
         float hoverVelocity = 0.0f;
@@ -125,6 +180,15 @@ void TestMotion(float originX, float originY, float monitorWidthDip) {
         Check(hoverMoving && std::isfinite(hoverAmount) && std::isfinite(hoverVelocity) &&
                   std::fabs(hoverAmount) < 2.0f && std::fabs(hoverVelocity) < 20.0f,
               L"the icon-hover spring remains finite and bounded after a long frame");
+        bool hoverRecovered = true;
+        for (int i = 0; i < 60; ++i) {
+            RowOpenStep(&hoverAmount, &hoverVelocity, 1.0f, 1.0f / 165.0f);
+            hoverRecovered =
+                hoverRecovered && std::isfinite(hoverAmount) &&
+                std::isfinite(hoverVelocity);
+        }
+        Check(hoverRecovered && hoverAmount > 0.9f && hoverAmount < 1.1f,
+              L"the icon-hover spring recovers to rest at 165 Hz");
     }
 
     // --- target geometry ---

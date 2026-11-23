@@ -460,13 +460,13 @@ inline float AnimationDeltaFor(float elapsedSeconds) noexcept {
 // identical.
 inline float AdvanceProgressBy(float progress, float target, float elapsedSeconds,
                                float durationSeconds) noexcept {
-    if (!std::isfinite(progress) || !std::isfinite(target) ||
-        !std::isfinite(durationSeconds)) {
-        return target;
-    }
+    if (!std::isfinite(progress)) return 0.0f;
     progress = std::clamp(progress, 0.0f, 1.0f);
+    if (!std::isfinite(target)) return progress;
     target = std::clamp(target, 0.0f, 1.0f);
+    if (!std::isfinite(durationSeconds)) return progress;
     if (durationSeconds <= 0.0f) return target;
+    if (!std::isfinite(elapsedSeconds) || elapsedSeconds <= 0.0f) return progress;
     const float step = AnimationDeltaFor(elapsedSeconds) / durationSeconds;
     if (progress < target) return std::min(target, progress + step);
     if (progress > target) return std::max(target, progress - step);
