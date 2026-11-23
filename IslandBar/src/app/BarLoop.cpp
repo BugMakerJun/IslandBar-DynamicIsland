@@ -1206,6 +1206,24 @@ struct BarRuntime {
     int whyTrayPage = 0;
     // The frame times of the interval being measured, described and reset by the same report.
     island::FrameStats liveStats;
+    island::TimingSeries frameStartIntervals;
+    island::TimingSeries animationFrameStartIntervals;
+    island::TimingSeries renderCpuIntervals;
+    island::TimingSeries targetIntervals;
+    island::TimingSeries drawIntervals;
+    island::TimingSeries endDrawIntervals;
+    island::TimingSeries presentIntervals;
+    island::TimingSeries animationPresentIntervals;
+    island::TimingSeries presentDurationIntervals;
+    island::TimingSeries commitIntervals;
+    island::TimingSeries compositorWaitIntervals;
+    island::TimingSeries frameSlotWaitIntervals;
+    island::TimingSeries messagePumpIntervals;
+    island::TimingSeries frameWorkIntervals;
+    unsigned long long lastFrameStartTicks = 0;
+    unsigned long long lastPresentStartTicks = 0;
+    unsigned long long lastAnimationFrameStartTicks = 0;
+    unsigned long long lastAnimationPresentStartTicks = 0;
     // The last successful present, used only by the deliberate 20 Hz full-screen music cap.
     // Ordinary animation pacing comes from the compositor clock and swap-chain backpressure.
     unsigned long long lastDrawAtTicks = 0;
@@ -1227,11 +1245,13 @@ struct BarRuntime {
     bool lastMemoryCardUp = false;
     // --- the throttle line's own clock ----------------------------------------------------------------
     //
-    // Frames presented and waits taken, both per second. The pair is the difference between "the loop
-    // paced itself on the compositor" and "the loop spun and presented whenever it happened to wake".
+    // Frames presented, real blocking waits, and zero-time message polls. The old single "waits"
+    // counter mixed the last two and therefore overstated blocking.
     unsigned long long lastFramesPresented = 0;
-    unsigned long long frameWaits = 0;
-    unsigned long long lastFrameWaits = 0;
+    unsigned long long blockingWaits = 0;
+    unsigned long long pollChecks = 0;
+    unsigned long long lastBlockingWaits = 0;
+    unsigned long long lastPollChecks = 0;
     // When the interval report was last written, and how many window regions had been applied then.
     unsigned long long lastIntervalReport = 0;
     unsigned long long lastRegionApplications = 0;
@@ -1325,9 +1345,18 @@ static void ReportIntervalAndThrottle(BarRuntime& runtime, island::BarSystems& s
         runtime.lastIntervalReport = nowMs;
         const double intervalSeconds = static_cast<double>(intervalMs) / 1000.0;
         wchar_t intervalSummary[256] = {};
+        wchar_t animationSummary[256] = {};
+        wchar_t fullscreenSummary[256] = {};
+        wchar_t bucketSummary[256] = {};
         runtime.liveStats.Describe(intervalSummary, 256);
+        runtime.liveStats.DescribeAnimation(animationSummary, 256);
+        runtime.liveStats.DescribeFullscreen(fullscreenSummary, 256);
+        runtime.liveStats.DescribeBuckets(bucketSummary, 256);
         island::LogAndPrint("  interval [%ls] %ls", island::StateName(systems.window.State()),
                             intervalSummary);
+        island::LogAndPrint("  frame timing: animation %ls", animationSummary);
+        island::LogAndPrint("  frame timing: fullscreen %ls", fullscreenSummary);
+        island::LogAndPrint("  frame timing: loop buckets %ls", bucketSummary);
         island::LogAndPrint("  redraws: animating=%d clock=%d notify=%d music=%d "
                             "lyrics=%d progress=%d strip=%d first=%d startHover=%d "
                             "startWash=%d startSearch=%d startPower=%d trayPage=%d",
@@ -1349,8 +1378,11 @@ static void ReportIntervalAndThrottle(BarRuntime& runtime, island::BarSystems& s
             const unsigned long long frames = systems.renderer.FramesPresented();
             const double framesPerSecond =
                 static_cast<double>(frames - runtime.lastFramesPresented) / intervalSeconds;
-            const double waitsPerSecond =
-                static_cast<double>(runtime.frameWaits - runtime.lastFrameWaits) / intervalSeconds;
+            const double blockingWaitsPerSecond =
+                static_cast<double>(runtime.blockingWaits - runtime.lastBlockingWaits) /
+                intervalSeconds;
+            const double pollsPerSecond =
+                static_cast<double>(runtime.pollChecks - runtime.lastPollChecks) / intervalSeconds;
             const bool waitable = systems.renderer.PacingIsWaitable();
             const bool compositor = systems.renderer.CompositorPacing();
             const char* pacingPath =
@@ -1369,14 +1401,53 @@ static void ReportIntervalAndThrottle(BarRuntime& runtime, island::BarSystems& s
                                      : "vsync";
             island::LogAndPrint(
                 "  throttle: path=%s sync=%s present=%u frames=%.1f/s "
-                "waits=%.1f/s maxLatency=1 hud=%s cap=%s",
-                pacingPath, syncPath, presentInterval, framesPerSecond, waitsPerSecond, hudName,
-                hudCap);
+                "blockingWaits=%.1f/s polls=%.1f/s maxLatency=1 hud=%s cap=%s",
+                pacingPath, syncPath, presentInterval, framesPerSecond,
+                blockingWaitsPerSecond, pollsPerSecond, hudName, hudCap);
             runtime.lastFramesPresented = frames;
-            runtime.lastFrameWaits = runtime.frameWaits;
+            runtime.lastBlockingWaits = runtime.blockingWaits;
+            runtime.lastPollChecks = runtime.pollChecks;
         }
+
+        const auto logTiming = [](const char* name, const island::TimingSeries& series) {
+            const island::TimingSummary summary = series.Summarize();
+            island::LogAndPrint(
+                "  frame timing: %s samples=%lld p50=%.2fms p95=%.2fms "
+                "p99=%.2fms max=%.2fms avg=%.2fms",
+                name, summary.samples, summary.p50Ms, summary.p95Ms, summary.p99Ms,
+                summary.maximumMs, summary.meanMs);
+        };
+        logTiming("frameStart(active)", runtime.frameStartIntervals);
+        logTiming("frameStart(animation)", runtime.animationFrameStartIntervals);
+        logTiming("presentInterval", runtime.presentIntervals);
+        logTiming("presentInterval(animation)", runtime.animationPresentIntervals);
+        logTiming("renderCpu", runtime.renderCpuIntervals);
+        logTiming("target", runtime.targetIntervals);
+        logTiming("draw", runtime.drawIntervals);
+        logTiming("endDraw", runtime.endDrawIntervals);
+        logTiming("present", runtime.presentDurationIntervals);
+        logTiming("commit", runtime.commitIntervals);
+        logTiming("compositorWait", runtime.compositorWaitIntervals);
+        logTiming("frameSlotWait", runtime.frameSlotWaitIntervals);
+        logTiming("messagePump", runtime.messagePumpIntervals);
+        logTiming("frameWork", runtime.frameWorkIntervals);
+
         std::fflush(stdout);
         runtime.liveStats.Reset();
+        runtime.frameStartIntervals.Reset();
+        runtime.animationFrameStartIntervals.Reset();
+        runtime.renderCpuIntervals.Reset();
+        runtime.targetIntervals.Reset();
+        runtime.drawIntervals.Reset();
+        runtime.endDrawIntervals.Reset();
+        runtime.presentIntervals.Reset();
+        runtime.animationPresentIntervals.Reset();
+        runtime.presentDurationIntervals.Reset();
+        runtime.commitIntervals.Reset();
+        runtime.compositorWaitIntervals.Reset();
+        runtime.frameSlotWaitIntervals.Reset();
+        runtime.messagePumpIntervals.Reset();
+        runtime.frameWorkIntervals.Reset();
         runtime.whyAnimating = runtime.whyClock = runtime.whyNotification = runtime.whyMusic = 0;
         runtime.whyLyrics = runtime.whyProgress = runtime.whyFirst = runtime.whyStatusStrip = 0;
         runtime.whyStartHover = runtime.whyStartWash = 0;
@@ -1654,6 +1725,30 @@ static float AdvanceAnimationClock(LARGE_INTEGER& previous, const LARGE_INTEGER&
         static_cast<double>(frequency.QuadPart));
     previous = now;
     return dt;
+}
+
+static long long PerformanceNowTicks() {
+    LARGE_INTEGER now = {};
+    QueryPerformanceCounter(&now);
+    return now.QuadPart;
+}
+
+static double ElapsedMilliseconds(long long start, long long end,
+                                  const LARGE_INTEGER& frequency) {
+    if (frequency.QuadPart <= 0 || end < start) return 0.0;
+    return static_cast<double>(end - start) * 1000.0 /
+           static_cast<double>(frequency.QuadPart);
+}
+
+static double RecordWait(BarRuntime& runtime, long long start, long long end,
+                         const LARGE_INTEGER& frequency) {
+    const double milliseconds = ElapsedMilliseconds(start, end, frequency);
+    if (island::TimingCountsAsBlocking(milliseconds)) {
+        runtime.blockingWaits += 1;
+    } else {
+        runtime.pollChecks += 1;
+    }
+    return milliseconds;
 }
 
 // --- where the song is ---
@@ -5513,21 +5608,38 @@ static void FillPanelFrame(BarRuntime& runtime, island::FrameState& frame, islan
 // The waitable is joined with QS_ALLINPUT rather than used on its own: while a frame slot is
 // pending the bar still receives pointer, keyboard and shutdown messages. Input is pumped and the
 // wait resumes; it does not authorise a draw before the compositor says the frame slot is ready.
-static bool WaitForFrameSlot(island::BarSystems& systems, BarRuntime& runtime) {
+static bool WaitForFrameSlot(island::BarSystems& systems, BarRuntime& runtime,
+                             const LARGE_INTEGER& frequency, double* waitedMilliseconds) {
     const HANDLE waitable = systems.renderer.FrameLatencyWaitable();
+    double totalWaitMilliseconds = 0.0;
 
     for (;;) {
+        const long long waitStartedTicks = PerformanceNowTicks();
         const DWORD waitResult =
             ::MsgWaitForMultipleObjectsEx(1, &waitable, INFINITE, QS_ALLINPUT,
                                           MWMO_INPUTAVAILABLE);
-        runtime.frameWaits += 1;
+        totalWaitMilliseconds +=
+            RecordWait(runtime, waitStartedTicks, PerformanceNowTicks(), frequency);
 
-        if (waitResult == WAIT_OBJECT_0) return true;
+        if (waitResult == WAIT_OBJECT_0) {
+            if (waitedMilliseconds) *waitedMilliseconds = totalWaitMilliseconds;
+            return true;
+        }
         if (waitResult == WAIT_OBJECT_0 + 1) {
-            if (!systems.window.PumpMessages()) return false;
+            const long long pumpStartedTicks = PerformanceNowTicks();
+            const bool alive = systems.window.PumpMessages();
+            runtime.messagePumpIntervals.Add(
+                ElapsedMilliseconds(pumpStartedTicks, PerformanceNowTicks(), frequency));
+            if (!alive) {
+                if (waitedMilliseconds) *waitedMilliseconds = totalWaitMilliseconds;
+                return false;
+            }
             continue;
         }
-        if (waitResult == WAIT_TIMEOUT) return true;
+        if (waitResult == WAIT_TIMEOUT) {
+            if (waitedMilliseconds) *waitedMilliseconds = totalWaitMilliseconds;
+            return true;
+        }
         if (waitResult == WAIT_FAILED) {
             const DWORD waitError = GetLastError();
             systems.renderer.DisableWaitablePacing();
@@ -5535,6 +5647,7 @@ static bool WaitForFrameSlot(island::BarSystems& systems, BarRuntime& runtime) {
                 "  throttle: waitable wait failed (error %lu); path=vsync sync=present1 present=1\n",
                 static_cast<unsigned long>(waitError));
             std::fflush(stdout);
+            if (waitedMilliseconds) *waitedMilliseconds = totalWaitMilliseconds;
             return true;
         }
     }
@@ -5544,49 +5657,58 @@ static bool WaitForFrameSlot(island::BarSystems& systems, BarRuntime& runtime) {
 // the frame-latency object, so only input is drained here. The fallback Present(1, 0) has also supplied
 // the display clock by this point. Neither path adds a fixed wait after rendering.
 static bool PaceTheLoop(island::BarSystems& systems, BarRuntime& runtime,
-                        bool frameRequested, bool framePresented, DWORD drawWaitMs) {
+                        const LARGE_INTEGER& frequency, bool frameRequested,
+                        bool framePresented, DWORD drawWaitMs) {
     if (systems.renderer.DeviceLost()) {
+        const long long waitStartedTicks = PerformanceNowTicks();
         ::MsgWaitForMultipleObjectsEx(0, nullptr, 250, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        (void)RecordWait(runtime, waitStartedTicks, PerformanceNowTicks(), frequency);
         return true;
     }
 
     if (framePresented) {
         ::MsgWaitForMultipleObjectsEx(0, nullptr, 0, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
-        runtime.frameWaits += 1;
+        runtime.pollChecks += 1;
         return true;
     }
 
     if (frameRequested) {
         if (drawWaitMs > 0) {
+            const long long waitStartedTicks = PerformanceNowTicks();
             ::MsgWaitForMultipleObjectsEx(0, nullptr, drawWaitMs, QS_ALLINPUT,
                                           MWMO_INPUTAVAILABLE);
-            runtime.frameWaits += 1;
+            (void)RecordWait(runtime, waitStartedTicks, PerformanceNowTicks(), frequency);
             return true;
         }
         // Reached only when the draw attempt did not produce a presented frame. Keep a failed
         // EndDraw/Present from becoming an uncapped spin while the next attempt is prepared.
+        const long long waitStartedTicks = PerformanceNowTicks();
         ::MsgWaitForMultipleObjectsEx(0, nullptr, 16, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
-        runtime.frameWaits += 1;
+        (void)RecordWait(runtime, waitStartedTicks, PerformanceNowTicks(), frequency);
         return true;
     }
 
     if (systems.window.IsAnimating()) {
         ::MsgWaitForMultipleObjectsEx(0, nullptr, 0, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
-        runtime.frameWaits += 1;
+        runtime.pollChecks += 1;
     } else if (systems.scrollTiling.Animating(GetTickCount64())) {
         // External windows are not part of the island's render tree, so there is
         // no present here to block on VBlank. A short input-aware wait paces the
         // viewport animation without turning the loop into a spin.
+        const long long waitStartedTicks = PerformanceNowTicks();
         ::MsgWaitForMultipleObjectsEx(0, nullptr, 16, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
-        runtime.frameWaits += 1;
+        (void)RecordWait(runtime, waitStartedTicks, PerformanceNowTicks(), frequency);
     } else if (systems.scrollTiling.Active()) {
         // Modifier-only gestures cannot be registered as a hotkey. While the
         // experimental mode is active, wake often enough to notice Win+Alt
         // without introducing a global keyboard hook.
+        const long long waitStartedTicks = PerformanceNowTicks();
         ::MsgWaitForMultipleObjectsEx(0, nullptr, 32, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
-        runtime.frameWaits += 1;
+        (void)RecordWait(runtime, waitStartedTicks, PerformanceNowTicks(), frequency);
     } else {
+        const long long waitStartedTicks = PerformanceNowTicks();
         ::MsgWaitForMultipleObjectsEx(0, nullptr, 250, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        (void)RecordWait(runtime, waitStartedTicks, PerformanceNowTicks(), frequency);
     }
     return true;
 }
@@ -7188,6 +7310,8 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
         constexpr unsigned long long kWorkTaskbarCheck = 1ull << 5;
         constexpr unsigned long long kWorkThumbnail = 1ull << 6;
         constexpr unsigned long long kWorkDraw = 1ull << 7;
+        constexpr unsigned long long kWorkAnimation = 1ull << 8;
+        constexpr unsigned long long kWorkFullscreen = 1ull << 9;
         unsigned long long frameWork = 0;
         unsigned long long lastWork = 0;
         constexpr unsigned long long kFullscreenMusicFrameIntervalMs =
@@ -7202,7 +7326,11 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
         std::wstring tilingDetail;
 
         while (true) {
-            if (!systems.window.PumpMessages()) break;
+            const long long messagePumpStartedTicks = PerformanceNowTicks();
+            const bool messagesAlive = systems.window.PumpMessages();
+            runtime.messagePumpIntervals.Add(
+                ElapsedMilliseconds(messagePumpStartedTicks, PerformanceNowTicks(), frequency));
+            if (!messagesAlive) break;
             const unsigned wakeBits = island::TakeUiWakeBits();
             if ((wakeBits & island::kUiWakeTray) != 0) bar.trayWakePending = true;
             if ((wakeBits & island::kUiWakeStatus) != 0) {
@@ -7736,17 +7864,36 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                 drawSpacingTicks == 0 ||
                 frameStartedTicks - runtime.lastDrawAtTicks >= drawSpacingTicks;
             bool framePresented = false;
+            bool animationPass = false;
+            unsigned long long actualDrawStartedTicks = 0;
+            double compositorWaitThisPassMs = 0.0;
+            double frameSlotWaitThisPassMs = 0.0;
             if (needDraw && drawDue) {
                 if (systems.renderer.HasCompositorClock()) {
+                    const long long waitStartedTicks = PerformanceNowTicks();
                     if (systems.renderer.WaitForCompositorClock(8)) {
-                        runtime.frameWaits += 1;
+                        compositorWaitThisPassMs =
+                            RecordWait(runtime, waitStartedTicks, PerformanceNowTicks(), frequency);
+                        runtime.compositorWaitIntervals.Add(compositorWaitThisPassMs);
+                    } else {
+                        compositorWaitThisPassMs =
+                            ElapsedMilliseconds(waitStartedTicks, PerformanceNowTicks(), frequency);
+                        runtime.compositorWaitIntervals.Add(compositorWaitThisPassMs);
+                        if (island::TimingCountsAsBlocking(compositorWaitThisPassMs)) {
+                            runtime.blockingWaits += 1;
+                        } else {
+                            runtime.pollChecks += 1;
+                        }
                     }
                 }
                 // DXGI requires the waitable before rendering. The compositor tick above normally
                 // leaves it signaled, so this is backpressure rather than a second display interval.
-                if (systems.renderer.CompositorPacing() && systems.renderer.PacingIsWaitable() &&
-                    !WaitForFrameSlot(systems, runtime)) {
-                    break;
+                if (systems.renderer.CompositorPacing() && systems.renderer.PacingIsWaitable()) {
+                    if (!WaitForFrameSlot(systems, runtime, frequency,
+                                          &frameSlotWaitThisPassMs)) {
+                        break;
+                    }
+                    runtime.frameSlotWaitIntervals.Add(frameSlotWaitThisPassMs);
                 }
                 bar.statusWakePending = false;
                 // Which condition forced this redraw, counted per report interval.
@@ -7771,6 +7918,15 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                 if (bar.startWashAnimating) ++runtime.whyStartWash;
                 if (trayPageChanged) ++runtime.whyTrayPage;
                 if (!haveDrawn) ++runtime.whyFirst;
+                animationPass =
+                    motionFrame || lyricsScrolling || lyricLineAnimating || musicMeterDue ||
+                    bar.statusStripAnimating || startHoverChanged || bar.startWashAnimating ||
+                    startSearchChanged || startPowerChanged || trayPageChanged ||
+                    island::MusicWaveNeedsFrames(musicVisible, bar.activePlaying);
+                if (animationPass) frameWork |= kWorkAnimation;
+                if (bar.fullscreenHudMode != island::FullscreenHudMode::None) {
+                    frameWork |= kWorkFullscreen;
+                }
 
                 island::FrameState frame;
                 frame.accountAvatarPng =
@@ -8300,6 +8456,8 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                 FillDecodedPictures(runtime, frame, runtime.nowPlaying);
 
                 ApplyFullscreenHudFrame(bar, systems, frame);
+                actualDrawStartedTicks =
+                    static_cast<unsigned long long>(PerformanceNowTicks());
                 const unsigned long long framesBefore = systems.renderer.FramesPresented();
                 systems.renderer.Render(frame);
                 framePresented = systems.renderer.FramesPresented() != framesBefore;
@@ -8307,6 +8465,53 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                     haveDrawn = true;
                     runtime.lastDrawAtTicks = frameStartedTicks;
                     frameWork |= kWorkDraw;
+                    if (runtime.lastFrameStartTicks != 0) {
+                        runtime.frameStartIntervals.Add(
+                            ElapsedMilliseconds(
+                                static_cast<long long>(runtime.lastFrameStartTicks),
+                                static_cast<long long>(actualDrawStartedTicks), frequency));
+                    }
+                    runtime.lastFrameStartTicks = actualDrawStartedTicks;
+
+                    const island::Renderer::FrameTiming timing =
+                        systems.renderer.LastFrameTiming();
+                    const unsigned long long presentStartTicks =
+                        static_cast<unsigned long long>(timing.presentStartTicks);
+                    if (runtime.lastPresentStartTicks != 0) {
+                        runtime.presentIntervals.Add(
+                            ElapsedMilliseconds(
+                                static_cast<long long>(runtime.lastPresentStartTicks),
+                                static_cast<long long>(presentStartTicks), frequency));
+                    }
+                    runtime.lastPresentStartTicks = presentStartTicks;
+                    if (animationPass) {
+                        if (runtime.lastAnimationFrameStartTicks != 0) {
+                            runtime.animationFrameStartIntervals.Add(
+                                ElapsedMilliseconds(
+                                    static_cast<long long>(
+                                        runtime.lastAnimationFrameStartTicks),
+                                    static_cast<long long>(actualDrawStartedTicks), frequency));
+                        }
+                        if (runtime.lastAnimationPresentStartTicks != 0) {
+                            runtime.animationPresentIntervals.Add(
+                                ElapsedMilliseconds(
+                                    static_cast<long long>(
+                                        runtime.lastAnimationPresentStartTicks),
+                                    static_cast<long long>(presentStartTicks), frequency));
+                        }
+                        runtime.lastAnimationFrameStartTicks = actualDrawStartedTicks;
+                        runtime.lastAnimationPresentStartTicks = presentStartTicks;
+                    } else {
+                        runtime.lastAnimationFrameStartTicks = 0;
+                        runtime.lastAnimationPresentStartTicks = 0;
+                    }
+
+                    runtime.renderCpuIntervals.Add(timing.renderCpuMilliseconds);
+                    runtime.targetIntervals.Add(timing.targetMilliseconds);
+                    runtime.drawIntervals.Add(timing.drawMilliseconds);
+                    runtime.endDrawIntervals.Add(timing.endDrawMilliseconds);
+                    runtime.presentDurationIntervals.Add(timing.presentMilliseconds);
+                    runtime.commitIntervals.Add(timing.commitMilliseconds);
                 }
 
                 // What the page looked like, recorded AFTER the draw: these are the values the next
@@ -8346,7 +8551,24 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
             // "something took 90 ms", and the last three rounds of guessing which periodic task it was
             // would have been three rounds of guessing.
             // ... and whether that pass drew, which is what separates a slow frame from a sleeping loop.
-            const double intervalMs = runtime.liveStats.Record((lastWork & kWorkDraw) != 0);
+            if (!framePresented) {
+                runtime.lastFrameStartTicks = 0;
+                runtime.lastPresentStartTicks = 0;
+                runtime.lastAnimationFrameStartTicks = 0;
+                runtime.lastAnimationPresentStartTicks = 0;
+            }
+            if (framePresented) {
+                const double passMilliseconds =
+                    ElapsedMilliseconds(static_cast<long long>(frameStartedTicks),
+                                        PerformanceNowTicks(), frequency);
+                runtime.frameWorkIntervals.Add(
+                    std::max(0.0, passMilliseconds - compositorWaitThisPassMs -
+                                      frameSlotWaitThisPassMs));
+            }
+            const double intervalMs =
+                runtime.liveStats.Record((lastWork & kWorkDraw) != 0,
+                                         (lastWork & kWorkAnimation) != 0,
+                                         (lastWork & kWorkFullscreen) != 0);
             if (intervalMs >= island::FrameStats::kSlowFrameMs) {
                 char work[192] = {};
                 auto add = [&work](const char* name) {
@@ -8387,7 +8609,9 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                         static_cast<unsigned long long>(frequency.QuadPart));
                 }
             }
-            if (!PaceTheLoop(systems, runtime, needDraw, framePresented, drawWaitMs)) break;
+            if (!PaceTheLoop(systems, runtime, frequency, needDraw, framePresented, drawWaitMs)) {
+                break;
+            }
 
             // What this pass did, for the slow-frame line above: the interval it will be measured against
             // is the gap from the END of this pass to the next, so these flags describe it.

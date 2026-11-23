@@ -676,10 +676,26 @@ public:
                                : 0.0;
     }
     long long FrameCount() const { return frameCount_; }
+
+    // CPU-observed phase timings from QueryPerformanceCounter. presentStartTicks
+    // lets the caller calculate intervals; no Present call is proof that the display changed.
+    struct FrameTiming {
+        double targetMilliseconds = 0.0;
+        double drawMilliseconds = 0.0;
+        double endDrawMilliseconds = 0.0;
+        double renderCpuMilliseconds = 0.0;
+        double presentMilliseconds = 0.0;
+        double commitMilliseconds = 0.0;
+        long long presentStartTicks = 0;
+        bool presented = false;
+    };
+    const FrameTiming& LastFrameTiming() const { return lastFrameTiming_; }
+
     void ResetFrameStats() {
         lastFrameMicroseconds_ = 0.0;
         frameMicrosecondsTotal_ = 0.0;
         frameCount_ = 0;
+        lastFrameTiming_ = {};
     }
 
     // Blocks until the compositor is ready for the next frame, or the timeout
@@ -957,6 +973,8 @@ private:
     double    lastFrameMicroseconds_ = 0.0;
     double    frameMicrosecondsTotal_ = 0.0;
     long long frameCount_ = 0;
+    FrameTiming lastFrameTiming_{};
+    long long qpcFrequency_ = 1;
 
     UINT  dpi_    = 96;
     float scale_  = 1.0f;

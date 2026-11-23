@@ -33,6 +33,7 @@
 
 #include "domain/Geometry.h"
 #include "core/Log.h"
+#include "core/FrameStats.h"
 #include "domain/MiniJson.h"
 #include "domain/TrayRegistration.h"
 #include "domain/TrayLedger.h"     // which registrations the shell is holding (see the tray checks)
@@ -579,6 +580,56 @@ void TestMotion(float originX, float originY, float monitorWidthDip) {
 
 void TestClock() {
     Section(L"clock");
+
+    {
+        island::TimingSeries timing;
+        for (int value = 1; value <= 100; ++value) {
+            timing.Add(static_cast<double>(value));
+        }
+        const island::TimingSummary summary = timing.Summarize();
+        wchar_t detail[160] = {};
+        std::swprintf(detail, 160,
+                      L"samples=%lld p50=%.1f p95=%.1f p99=%.1f max=%.1f",
+                      summary.samples, summary.p50Ms, summary.p95Ms, summary.p99Ms,
+                      summary.maximumMs);
+        Check(summary.samples == 100 &&
+                  Nearly(static_cast<float>(summary.p50Ms), 50.0f, 0.01f) &&
+                  Nearly(static_cast<float>(summary.p95Ms), 95.0f, 0.01f) &&
+                  Nearly(static_cast<float>(summary.p99Ms), 99.0f, 0.01f) &&
+                  Nearly(static_cast<float>(summary.maximumMs), 100.0f, 0.01f),
+              L"the fixed timing window computes nearest-rank percentiles",
+              detail);
+    }
+
+    {
+        island::TimingSeries timing;
+        for (size_t i = 0; i < island::kTimingSampleCapacity + 37; ++i) {
+            timing.Add(static_cast<double>(i));
+        }
+        Check(timing.SampleCount() ==
+                  static_cast<long long>(island::kTimingSampleCapacity),
+              L"the timing window remains bounded after overwriting old samples");
+    }
+
+    {
+        const struct {
+            double milliseconds;
+            size_t bucket;
+        } cases[] = {
+            {3.99, 0},  {4.0, 1},   {5.99, 2},  {6.0, 3},   {7.0, 4},   {8.0, 5},
+            {10.0, 6},  {12.0, 7},  {16.0, 8},  {24.0, 9},  {33.0, 10}, {50.0, 11},
+        };
+        bool everyBoundary = true;
+        for (const auto& item : cases) {
+            everyBoundary =
+                everyBoundary && island::TimingBucketFor(item.milliseconds) == item.bucket;
+        }
+        Check(everyBoundary, L"the 165 Hz timing histogram uses the intended boundaries");
+        Check(!island::TimingCountsAsBlocking(0.0) &&
+                  island::TimingCountsAsBlocking(0.1) &&
+                  island::TimingCountsAsBlocking(6.06),
+              L"zero-time polls are not counted as blocking waits");
+    }
 
     TextRenderer text;
     const bool ready = text.Initialize();

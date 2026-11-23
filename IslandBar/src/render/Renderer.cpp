@@ -45,6 +45,17 @@ void SafeRelease(T** pp) {
     }
 }
 
+long long PerformanceTicks() {
+    LARGE_INTEGER ticks = {};
+    QueryPerformanceCounter(&ticks);
+    return ticks.QuadPart;
+}
+
+double MillisecondsBetween(long long start, long long end, long long frequency) {
+    if (frequency <= 0 || end < start) return 0.0;
+    return static_cast<double>(end - start) * 1000.0 / static_cast<double>(frequency);
+}
+
 // The swap chain surface is created in DIPs and the composition visual scales it
 // to physical pixels. At 100% scaling the two are the same thing, so this costs
 // nothing on the common case; on a scaled display the GPU upsamples rather than
@@ -328,6 +339,10 @@ void Renderer::ReleaseTarget() {
 bool Renderer::Initialize(HWND hwnd, UINT widthPx, UINT heightPx, float scale) {
     Shutdown();
 
+    LARGE_INTEGER frequency = {};
+    QueryPerformanceFrequency(&frequency);
+    qpcFrequency_ = frequency.QuadPart > 0 ? frequency.QuadPart : 1;
+    lastFrameTiming_ = {};
     waitablePacing_ = false;
     compositorPacing_ = false;
     deviceLost_ = false;
@@ -666,6 +681,8 @@ void Renderer::PrepareTaskButtons(const FrameState& frame) {
 
 void Renderer::RenderFrame(const FrameState& frame) {
     if (!d2dContext_ || !swapChain_ || deviceLost_) return;
+    lastFrameTiming_ = {};
+    const long long renderStartedTicks = PerformanceTicks();
 
     const PillAppearance& pill = frame.pill;
 
@@ -703,8 +720,11 @@ void Renderer::RenderFrame(const FrameState& frame) {
     // which is how an earlier revision of this file produced a perfectly
     // transparent frame while every call returned success: the Clear and the
     // fill both ran outside the pair, so the surface was never written at all.
+    const long long drawStartedTicks = PerformanceTicks();
+    lastFrameTiming_.targetMilliseconds =
+        MillisecondsBetween(renderStartedTicks, drawStartedTicks, qpcFrequency_);
     LARGE_INTEGER renderStart = {};
-    QueryPerformanceCounter(&renderStart);
+    renderStart.QuadPart = drawStartedTicks;
 
     d2dContext_->BeginDraw();
 
@@ -1893,7 +1913,15 @@ void Renderer::RenderFrame(const FrameState& frame) {
     }
 }
 
+const long long endDrawStartedTicks = PerformanceTicks();
 hr = d2dContext_->EndDraw();
+const long long drawEndedTicks = PerformanceTicks();
+lastFrameTiming_.endDrawMilliseconds =
+    MillisecondsBetween(endDrawStartedTicks, drawEndedTicks, qpcFrequency_);
+lastFrameTiming_.drawMilliseconds =
+    MillisecondsBetween(drawStartedTicks, drawEndedTicks, qpcFrequency_);
+lastFrameTiming_.renderCpuMilliseconds =
+    MillisecondsBetween(renderStartedTicks, drawEndedTicks, qpcFrequency_);
 
 // How long one frame's drawing took, in microseconds.
 //
@@ -1904,14 +1932,9 @@ hr = d2dContext_->EndDraw();
 // a cache -- but the measurement has to exist first, or "it feels laggy" is not
 // something a change can be shown to improve.
 {
-    LARGE_INTEGER renderEnd = {};
-    LARGE_INTEGER frequency = {};
-    QueryPerformanceCounter(&renderEnd);
-    QueryPerformanceFrequency(&frequency);
-    if (frequency.QuadPart > 0) {
+    if (qpcFrequency_ > 0) {
         lastFrameMicroseconds_ =
-            static_cast<double>(renderEnd.QuadPart - renderStart.QuadPart) * 1000000.0 /
-            static_cast<double>(frequency.QuadPart);
+            MillisecondsBetween(renderStart.QuadPart, drawEndedTicks, qpcFrequency_) * 1000.0;
         frameCount_ += 1;
         frameMicrosecondsTotal_ += lastFrameMicroseconds_;
     }
@@ -1950,7 +1973,11 @@ SafeRelease(&d2dTarget_);
 // only after the compositor clock and the waitable establish this frame slot. Any fallback uses
 // Present(1, 0), and no fixed wait follows it.
 const UINT syncInterval = (waitablePacing_ && compositorPacing_) ? 0u : 1u;
+const long long presentStartedTicks = PerformanceTicks();
+lastFrameTiming_.presentStartTicks = presentStartedTicks;
 const HRESULT presentHr = swapChain_->Present(syncInterval, 0);
+lastFrameTiming_.presentMilliseconds =
+    MillisecondsBetween(presentStartedTicks, PerformanceTicks(), qpcFrequency_);
 if (FAILED(presentHr)) {
     const HRESULT deviceReason =
         d3dDevice_ ? d3dDevice_->GetDeviceRemovedReason() : static_cast<HRESULT>(S_OK);
@@ -1970,9 +1997,13 @@ if (FAILED(presentHr)) {
 }
 
 framesPresented_ += 1;
+lastFrameTiming_.presented = true;
 
 if (compDevice_) {
+    const long long commitStartedTicks = PerformanceTicks();
     const HRESULT commitHr = compDevice_->Commit();
+    lastFrameTiming_.commitMilliseconds =
+        MillisecondsBetween(commitStartedTicks, PerformanceTicks(), qpcFrequency_);
     if (FAILED(commitHr)) {
         const HRESULT deviceReason =
             d3dDevice_ ? d3dDevice_->GetDeviceRemovedReason() : static_cast<HRESULT>(S_OK);
@@ -2664,6 +2695,7 @@ void Renderer::Shutdown() {
     waitablePacing_ = false;
     compositorPacing_ = false;
     deviceLost_ = false;
+    lastFrameTiming_ = {};
     SafeRelease(&swapChain2_);
     SafeRelease(&dxgiAdapter3_);
     SafeRelease(&swapChain_);
