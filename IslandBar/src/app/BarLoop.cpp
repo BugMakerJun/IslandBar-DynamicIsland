@@ -1018,10 +1018,17 @@ static bool InitializeCompositionSurface(island::BarSystems& systems) {
         static_cast<UINT>(rect.bottom - rect.top),
         systems.window.Scale());
 
-    if (renderOk && systems.text.Initialize()) {
-        systems.renderer.SetTextRenderer(&systems.text);
+    if (!renderOk) return false;
+    if (!systems.text.Initialize()) {
+        systems.renderer.SetTextRenderer(nullptr);
+        systems.text.Shutdown();
+        systems.renderer.Shutdown();
+        island::LogAndPrint("  composition: DirectWrite initialization failed; surface released\n");
+        std::fflush(stdout);
+        return false;
     }
-    return renderOk;
+    systems.renderer.SetTextRenderer(&systems.text);
+    return true;
 }
 
 // --- the weather reader, and the hover preview window ---
