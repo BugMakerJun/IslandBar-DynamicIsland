@@ -718,13 +718,9 @@ public:
     static CompositorWaitResult ClassifyCompositorWaitStatus(DWORD status) noexcept;
 
     // Blocks until the compositor is ready for the next frame, or the timeout
-    // expires. The result distinguishes normal ticks from timeouts, a missing
-    // entry point, and an NTSTATUS failure such as an occluded display.
-    //
-    // This replaces the old Sleep(16) pacing: the bar wakes when the compositor
-    // ticks instead of polling a timer, which costs nothing while the desktop is
-    // idle. Returns false on builds that predate the API so the caller can fall
-    // back to a timed loop.
+    // expires. Unavailable means the optional entry point is absent, so the
+    // caller falls back to a synchronous Present. Occluded is classified
+    // separately from other NTSTATUS failures.
     CompositorWaitResult WaitForCompositorClock(DWORD timeoutMs);
 
     // Reads the last rendered frame back from the GPU and reports what is
@@ -810,6 +806,8 @@ public:
     void DisableWaitablePacing();
     // True once Present or Commit has established that the device cannot be used any more.
     bool DeviceLost() const { return deviceLost_; }
+    // Static capability: whether the optional compositor-clock entry point was
+    // resolved. Runtime wait results are counted separately.
     bool HasCompositorClock() const { return waitForClock_ != nullptr; }
     // True after the most recent compositor-clock wait succeeded. Present uses sync 0 only when
     // both the compositor clock and the waitable established the frame slot.

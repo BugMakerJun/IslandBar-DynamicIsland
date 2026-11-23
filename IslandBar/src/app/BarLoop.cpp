@@ -1449,14 +1449,16 @@ static bool ReportIntervalAndThrottle(BarRuntime& runtime, island::BarSystems& s
             const PacingCounters& previous = runtime.lastPacing;
             island::LogAndPrint(
                 "  pacing results: compositor ok=%llu timeout=%llu occluded=%llu "
-                "unavailable=%llu failed=%llu | "
+                "unavailable=%llu failed=%llu compositorClockAvailable=%u | "
                 "present0=%llu present1=%llu presentFailures=%llu | "
                 "commitOk=%llu commitFailures=%llu frameSlotFailures=%llu",
                 pacing.compositorSuccess - previous.compositorSuccess,
                 pacing.compositorTimeout - previous.compositorTimeout,
                 pacing.compositorOccluded - previous.compositorOccluded,
                 pacing.compositorUnavailable - previous.compositorUnavailable,
-                pacing.compositorFailed - previous.compositorFailed, pacing.present0 - previous.present0,
+                pacing.compositorFailed - previous.compositorFailed,
+                systems.renderer.HasCompositorClock() ? 1u : 0u,
+                pacing.present0 - previous.present0,
                 pacing.present1 - previous.present1,
                 pacing.presentFailures - previous.presentFailures,
                 pacing.commitSuccesses - previous.commitSuccesses,
