@@ -25,7 +25,9 @@
 
 #include <windows.h>
 
+#include <cstddef>
 #include <cstring>
+#include <type_traits>
 
 #include "domain/TrayRegistration.h"
 
@@ -34,14 +36,18 @@ namespace island {
 // Bump this when TrayRingRecord's layout changes in any way. Nothing else needs to move with it: the name
 // carries the version too, so two builds simply use two different rings and neither reads the other.
 //
-// ABI 2 added the CONTROL half of the record (see TrayRingKind below). An older build's copy -- which is
-// pinned inside the running shell, so it stays for the life of that process -- keeps publishing into the v1
-// ring, which this bar does not read: the tray learns nothing from that shell until it restarts. That is the
-// documented cost of the bump, and the alternative (reading a record whose layout changed under it) is a
-// press aimed at the wrong message number.
-inline constexpr unsigned kTrayRingAbi = 2;
-inline constexpr wchar_t kTrayRingName[] = L"Local\\IslandBar.TrayRing.v2";
-inline constexpr wchar_t kTrayRingEventName[] = L"Local\\IslandBar.TrayRing.Event.v2";
+// ABI 2 added the CONTROL half, ABI 3 widened the decoded window identity, ABI 4 added the publication
+// timestamp, and ABI 5 added per-slot sequencing so readers never return a half-written record.
+inline constexpr unsigned kTrayRingAbi = 5;
+#if defined(ISLANDBAR_TRAY_PROBE_RING)
+// The development probe owns a ring of its own. It uses the same validated record layout and ABI, but it
+// must never compete with a running bar for the production cursor.
+inline constexpr wchar_t kTrayRingName[] = L"Local\\IslandBar.TrayProbeRing.v5";
+inline constexpr wchar_t kTrayRingEventName[] = L"Local\\IslandBar.TrayProbeRing.Event.v5";
+#else
+inline constexpr wchar_t kTrayRingName[] = L"Local\\IslandBar.TrayRing.v5";
+inline constexpr wchar_t kTrayRingEventName[] = L"Local\\IslandBar.TrayRing.Event.v5";
+#endif
 inline constexpr unsigned kTrayRingCapacity = 64;
 inline constexpr unsigned kTrayRingMagic = 0x59415254u;   // 'TRAY'
 
@@ -75,10 +81,22 @@ struct TrayHookState {
 // raw bytes are the shell's private structure, and sending them across a process boundary would mean the reader
 // decoding a layout it cannot check.
 struct TrayRingRecord {
+    // 0 = empty/being written; 2 * globalIndex + 2 = this slot is complete and stable.
+    volatile LONG publishSequence = 0;
     TrayRingKind kind = TrayRingKind::Registration;
+    std::uint64_t publishedTick = 0;   // GetTickCount64 when the observer published this record
     TrayRegistration registration;
     TrayHookState hook;
 };
+
+static_assert(std::is_same_v<decltype(TrayRegistration::trayWindow), std::uint64_t>,
+              "the ring ABI carries a 64-bit window value");
+static_assert(std::is_same_v<decltype(TrayRingRecord::publishSequence), volatile LONG>);
+static_assert(offsetof(TrayRingRecord, registration) >= sizeof(TrayRingKind),
+              "the registration follows the record kind");
+static_assert(offsetof(TrayRingRecord, hook) > offsetof(TrayRingRecord, registration),
+              "the hook state follows the registration or overlaps it deliberately");
+static_assert(sizeof(TrayRingRecord) <= 512, "one ring record must remain intentionally small");
 
 struct TrayRingHeader {
     unsigned magic = kTrayRingMagic;
@@ -152,11 +170,17 @@ struct TrayRingPublisher {
         if (!Open() || !records) return;
         const LONG index = InterlockedIncrement(&header->written) - 1;
         TrayRingRecord& slot = records[index % kTrayRingCapacity];
+        const LONG complete = static_cast<LONG>((static_cast<unsigned>(index) * 2u) + 2u);
+        InterlockedExchange(&slot.publishSequence, complete - 1);
+        MemoryBarrier();
         // The kind is written on EVERY publish: the slot it lands in may still hold a control record from an
         // earlier lap round this ring, and a reader that trusted the old one would file a hook state as an
         // application's callback.
         slot.kind = TrayRingKind::Registration;
+        slot.publishedTick = GetTickCount64();
         slot.registration = registration;
+        MemoryBarrier();
+        InterlockedExchange(&slot.publishSequence, complete);
         if (event) SetEvent(event);
     }
 
@@ -165,8 +189,14 @@ struct TrayRingPublisher {
         if (!Open() || !records) return;
         const LONG index = InterlockedIncrement(&header->written) - 1;
         TrayRingRecord& slot = records[index % kTrayRingCapacity];
+        const LONG complete = static_cast<LONG>((static_cast<unsigned>(index) * 2u) + 2u);
+        InterlockedExchange(&slot.publishSequence, complete - 1);
+        MemoryBarrier();
         slot.kind = TrayRingKind::HookState;
+        slot.publishedTick = GetTickCount64();
         slot.hook = state;
+        MemoryBarrier();
+        InterlockedExchange(&slot.publishSequence, complete);
         if (event) SetEvent(event);
     }
 };
@@ -210,11 +240,20 @@ struct TrayRingReader {
             available = kTrayRingCapacity;
         }
         if (available > max) available = max;
+        unsigned stableCount = 0;
         for (unsigned i = 0; i < available; ++i) {
-            out[i] = records[(cursor + i) % kTrayRingCapacity];
+            const unsigned globalIndex = cursor + i;
+            const TrayRingRecord& slot = records[globalIndex % kTrayRingCapacity];
+            const LONG expected = static_cast<LONG>(globalIndex * 2u + 2u);
+            if (slot.publishSequence != expected) break;
+            TrayRingRecord snapshot = slot;
+            MemoryBarrier();
+            if (slot.publishSequence != expected) break;
+            out[i] = snapshot;
+            ++stableCount;
         }
-        cursor += available;
-        return available;
+        cursor += stableCount;
+        return stableCount;
     }
 };
 

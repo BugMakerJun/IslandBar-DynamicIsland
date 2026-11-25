@@ -1,26 +1,14 @@
 // =====================================================================
-//  TrayHook.cpp -- INSIDE THE APPLICATION, WHEN IT TELLS THE SHELL ABOUT ITS TRAY ICON
+//  TrayHook.cpp -- INSIDE THE SHELL PROCESS, WHEN AN APPLICATION REGISTERS A TRAY ICON
 //
-//  WHAT THIS IS FOR. Pressing a tray cell without moving the pointer means POSTING the application's own
-//  callback message to its own tray window, and that needs three things about the icon: the window, the
-//  message number and the uid. Until now the message number was learned by hand, one application at a time,
-//  with a Win32k trace and a third-party program in the room (HANDOFF 8.104) -- which the user called out,
-//  rightly, as a chore rather than a feature.
+//  WHAT THIS IS FOR. A tray press needs the application's callback HWND, callback message, uid/guid and
+//  version. Applications send that registration to Shell_TrayWnd as a synchronous WM_COPYDATA. This module is
+//  loaded into the Shell process and observes those SENT messages on the tray thread, so AppContainer,
+//  elevated and self-protecting applications are reached without injecting into each application.
 //
-//  The way out is to be present when the application REGISTERS its icon, because the structure it passes to
-//  the documented API carries every field needed. This module is that presence: the bar loads it into each
-//  running tray application with SetWindowsHookEx(WH_GETMESSAGE) on that application's threads, and once it
-//  is inside, it points the application's OWN import slots for Shell_NotifyIconW/A at the detour below. The
-//  application then writes down its own answer the next time it registers -- which the bar asks for with the
-//  standard TaskbarCreated broadcast, the same signal the shell sends when Explorer restarts.
-//
-//  WHY IMPORT TABLES AND NOT CODE PATCHING. Overwriting the first bytes of the shell's function would catch
-//  one more case -- an application that resolves the address itself and calls through its own pointer, which
-//  is what WeChat's Qt tray does (measured: 0 import slots, so it is not caught here) -- but it means copying
-//  an unknown number of instruction bytes and putting them back somewhere, in a process that is not ours. An
-//  import slot is a pointer in a table; if this module is wrong about it, the call still reaches the real
-//  function. That is the trade this file makes deliberately, and the missed case is written down in
-//  HANDOFF 8.107 rather than hidden.
+//  The import detours remain for compatibility with the earlier in-application measurements, but the product
+//  path depends on the WH_CALLWNDPROC channel. Probe builds compile observer-only so they cannot take over the
+//  production import slots while the bar is running.
 //
 //  WHAT IT WRITES: %USERPROFILE%\IslandBar\tray_learned.txt, one line per call. The bar reads that file,
 //  resolves each window's class and turns the lines into its callback cache.
@@ -135,7 +123,11 @@ void ReportPath(wchar_t* out, size_t count) {
         wcscpy_s(out, count, L"C:\\island_bar_tray_learned.txt");
         return;
     }
+#if defined(ISLANDBAR_TRAY_PROBE_RING)
+    _snwprintf_s(out, count, _TRUNCATE, L"%s\\IslandBar\\tray_probe_hook.txt", home);
+#else
     _snwprintf_s(out, count, _TRUNCATE, L"%s\\IslandBar\\tray_learned.txt", home);
+#endif
 }
 
 // One open handle per process, and the line written through it, instead of an open/write/close per line.
@@ -981,6 +973,14 @@ void EnsureHooked() {
         return;
     }
 
+#if defined(ISLANDBAR_TRAY_PROBE_RING)
+    // The probe reads SENT WM_COPYDATA on the shell's tray thread. It does not need to own Shell_NotifyIcon
+    // import slots, so it leaves those slots to the production module (or to the process itself). That keeps a
+    // probe run from taking callback-learning away from a bar that is already running.
+    InterlockedExchange(&g_hooked, 0);
+    ReportLine(L"hooked pid %lu exe %ls: probe observer-only mode; production import slots were not touched",
+               GetCurrentProcessId(), exe);
+#else
     HMODULE shell = GetModuleHandleW(L"shell32.dll");
     if (!shell) shell = LoadLibraryW(L"shell32.dll");
     void* targetW = shell ? reinterpret_cast<void*>(GetProcAddress(shell, "Shell_NotifyIconW")) : nullptr;
@@ -1015,6 +1015,7 @@ void EnsureHooked() {
                                                    : L"not yet -- it does not import Shell_NotifyIcon; if it "
                                                      L"asks for the address at run time the GetProcAddress "
                                                      L"slots above are what will catch it");
+#endif
 
     // THE SENT CHANNEL IS ALWAYS ON: it is how a registration is READ, not a diagnostic.
     //

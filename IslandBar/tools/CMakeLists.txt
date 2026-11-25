@@ -26,6 +26,13 @@ if(ISLANDBAR_BUILD_JSONPROBE)
     add_subdirectory(jsonprobe)
 endif()
 
+# A standalone tray data probe. It owns a separate ring, observes the Shell without changing production
+# callback-learned state, and prints registry/live/visible/stale counts with per-icon identity details.
+option(ISLANDBAR_BUILD_TRAYPROBE "Build the independent tray data probe" ON)
+if(ISLANDBAR_BUILD_TRAYPROBE)
+    add_subdirectory(tray_probe)
+endif()
+
 # Asks whether WeChat reports its calls through the media session API. That
 # decides whether the call pill can be driven from the C++/WinRT media path the
 # bar already uses, or has to be driven from WeChat's call window instead. The
