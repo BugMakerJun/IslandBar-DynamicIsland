@@ -1,0 +1,5 @@
+log file: C:\Users\18340\AppData\Local\Temp\island_bar.log
+tray press: [0] 'ChatGPT.exe' (registered by GUID)
+  tray press: gave 0x8001 to class 'OwlElectron_NotifyIconHostWindow' of pid 18616 (given its own callback, not a click), the pointer was NOT moved (anchor 1343,811) -- the application answered
+  -> pressed: its own callback (press 1578 ms)
+  delivered to class 'OwlElectron_NotifyIconHostWindow' of pid 18616 (given its own callback, not a click) -- its own window was in front before the press and still is

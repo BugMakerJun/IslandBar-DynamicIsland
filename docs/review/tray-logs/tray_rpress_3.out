@@ -1,0 +1,7 @@
+log file: C:\Users\18340\AppData\Local\Temp\island_bar.log
+tray press: [3] 'Wallpaper Engine' (registered by UID)
+  tray press: gave 0x0400 to class 'WPETrayWindow' of pid 11472 (given its own callback, not a click), the pointer was NOT moved (anchor 1348,934) -- the application answered
+  tray press: 'Wallpaper Engine' right button is now recorded as ctxmenu
+  tray context-menu: app=wallpaper64.exe version=4 strategy=wm-contextmenu attempts=1 busy_ms=0 outcome=native_menu evidence=probable detail='the foreground window is now its 'WPETrayWindow'' elapsed_ms=62
+  -> pressed [right click]: its own callback (press 62 ms)
+  delivered to class 'WPETrayWindow' of pid 11472 (given its own callback, not a click) -- the foreground window is now its 'WPETrayWindow'

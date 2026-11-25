@@ -1,0 +1,18 @@
+ABI 5 ten-minute soak
+
+duration_s=601.7
+logical_cpus=12
+cpu_avg_pct=2.021
+private_memory_start_mb=79.37
+private_memory_end_mb=81.62
+private_memory_delta_kb=2312
+private_memory_min_mb=78.59
+private_memory_max_mb=81.70
+
+Thresholds:
+- idle CPU target <= 0.5%: FAIL
+- 10-minute private-memory growth <= 1 MiB: FAIL
+
+This is a whole-process measurement. It includes the animated IslandBar UI and all existing
+subsystems; the tray chain was not isolated into a separate process, so the report does not claim
+that the excess is caused solely by tray polling or decoding.

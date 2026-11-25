@@ -1,0 +1,6 @@
+log file: C:\Users\18340\AppData\Local\Temp\island_bar.log
+tray press: [6] 'QQ
+  tray press: gave 0x0BD0 to class 'ATL:7976AD98' of pid 3716 (given its own callback, not a click), and the application is not in front (foreground permission was granted) -- it could not be brought forward
+  tray press: gave 0x0BD0 to class 'ATL:7976AD98' of pid 3716 (given its own callback, not a click), the pointer was NOT moved (anchor 1348,934) -- the application answered
+  -> pressed: its own callback (press 125 ms)
+  delivered to class 'ATL:7976AD98' of pid 3716 (given its own callback, not a click) -- its own 'TXGuiFoundation' was on screen before the press and is not now

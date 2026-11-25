@@ -10,7 +10,8 @@ Windows 11 上替代系统任务栏的一条横条（"岛"）：自己画 pill �
 
 二进制有两个：`island_bar.exe` 与 **`island_tray_hook.dll`**。模块**只**进 `Shell_TrayWnd` 所在的那一个进程
 （当前是 explorer），在那里读应用发给 shell 的托盘注册（`WH_CALLWNDPROC` + 导入槽/`GetProcAddress` 两个
-detour），经共享内存环回传；它钉住自己，安装器的载荷里也带它。见第 7 节。
+detour），经 ABI 5 的带发布序号共享内存环回传；它钉住自己，安装器的载荷里也带它。回调缓存是 v2，
+记录精确 HWND/PID/线程与 Shell PID。见第 7 节。
 
 ## 2. 目录与职责
 
@@ -30,7 +31,7 @@ src/
                     （`--native-tray`）/ 完全不动（`--keep-taskbar`））、托盘注册的共享内存环、Win32 薄封装
   services/         Toast 通知读取与通知管道
   selftest/         诊断与 900+ 条断言（--self-test）
-tools/              独立探针可执行文件（geo_probe / thumb_probe / jsonprobe / island_smoke）
+  tools/              独立探针可执行文件（tray_probe / geo_probe / thumb_probe / jsonprobe / island_smoke）
 setup/              安装器（payload 以 RCDATA 内嵌）
 scripts/            build.ps1 / capture-*.ps1 / snapshot.ps1
 ```
@@ -78,7 +79,7 @@ scripts/            build.ps1 / capture-*.ps1 / snapshot.ps1
 | pill 的形状、边距、命中区域 | `core/Geometry.h`（唯一一份圆角矩形判定）、`core/CardLayout.h` | 渲染与命中测试用同一个函数，改一处两边一起变 |
 | 展开/收起的动画手感 | `core/Motion.h`（spring，可中断、继承速度） | `core/StatePolicy.h` 决定状态迁移 |
 | 卡片里某个控件的位置 | `core/CardLayout.h` | `selftest/Diagnostics.cpp` 里通常已有对它的断言 |
-| **托盘页**（岛里那一页：画什么、怎么按、我们自己的菜单） | 画什么：`shell/TrayIcons.*` —— 注册表给图标与身份，`domain/TrayLedger.*` 给「现在真的注册着」，两边都有才画一格；怎么知道：`shell/TrayLearn.*`（模块 + 共享内存环 + 回调缓存）；怎么按：`shell/TrayPress.*`（编码在 `domain/TrayEncoding.h`）；我们自己的四行菜单：`shell/TrayMenu.*` | 模块在 `src/trayhook/TrayHook.cpp`，注册的线格式在 `domain/TrayRegistration.h`，通道在 `platform/TrayRing.h`；历史记录留在 `docs/TRAY-RESEARCH-RETIRED.md`，探针在 `scripts/retired/tray/` |
+| **托盘页**（岛里那一页：画什么、怎么按、我们自己的菜单） | 画什么：`shell/TrayIcons.*` —— 注册表给 PNG/稳定标签，`domain/TrayLedger.*` 给「现在真的注册着」，两边都有才画一格；怎么知道：`shell/TrayLearn.*`（模块 + ABI 5 ring + 原子 callback cache v2）；怎么按：`shell/TrayPress.*`（精确 HWND/PID/线程/Shell 代际校验；编码在 `domain/TrayEncoding.h`）；我们自己的菜单：`shell/TrayMenu.*` | 模块在 `src/trayhook/TrayHook.cpp`，注册线格式在 `domain/TrayRegistration.h`，观察通道在 `platform/TrayRing.h`，独立复现工具在 `tools/tray_probe/` |
 | 媒体卡片 | `media/MusicSession.cpp`、`media/Lyrics.cpp`、`render/` | 延迟初始化：没音乐时不该起线程 |
 | 通知纸条 | `services/`（Toast 读取）加 `app/IslandWindow` 的 NoticeStrip 状态 | |
 | 与 Win32 对话的细节 | `platform/` | 不要在 `core/` 里加 `<windows.h>` |
@@ -141,6 +142,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ".\IslandBar\scripts\regress
   **循环里现在只剩 53 条自己的语句**（2026-10-16 实测；按"缩进 12 空格、非注释、非花括号"数），其中 **19 条是相位调用**，其余是它自己的事：取消息、诊断注入的那四个 `if`、状态日志行、`if (needDraw)` 这个框、节流/内存/区间三行报告、`PaceTheLoop` 与两个工作位。**"202 条顶层语句"那个旧口径复现不出来**（同一段代码按上面这个口径当时是 70 条），所以以后只写这个口径的数字。
   **第 4 节第 4 条现在成立**（2026-10-16，提交 `51756a1`）：`main.cpp` 是"解析参数 → 跑命令或跑岛"，岛在 `app/BarLoop.*` 里。**欠的只剩形状**：`app/BarLoop.cpp` 一个翻译单元装着 43 个相位 + `RunBar`（6,016 行），与当年 `main.cpp` 是同一个形状，只是主题变成了"岛"；要再分成"一个主题一个文件"是可行的，但**没有计划**（没有实测证据说它值得）。
 - **已还的债**（留着这几行是为了说明它们不再是问题）：`core/` 已抽成 `island_domain` 独立静态库（编译期护栏见第 3 节）；模块↔主程序的通道是**共享内存环 + ABI 版本号**（`platform/TrayRing.h`），同步路径里没有磁盘 I/O；安装器的载荷里带 `island_tray_hook.dll`（构建输出那行 `Copying island_bar.exe and island_tray_hook.dll into the setup payload`）。
-- **托盘是"岛里我们自己的那一页"**（2026-10-16，HANDOFF 8.144/8.145/8.146/8.147），**默认整条隐藏原生任务栏**；`--native-tray` 才是 2026-10-15 那套"把任务栏裁到只剩通知区域、屏幕上留系统自己的托盘"，`--keep-taskbar` 是完全不动它。按压的唯一编码入口是 `domain/TrayEncoding.h`（`PlanTrayClick`）：把应用自己的 `uCallbackMessage` 投递到它自己的托盘窗口；学不到回调的格子（有应用窗口活着但不应答、或从来没注册过回调的）开我们自己的菜单，并如实标注"应用菜单（本机拿不到）"。
+- **托盘是"岛里我们自己的那一页"**，**默认整条隐藏原生任务栏**；`--native-tray` 是把任务栏裁到只剩通知区域，`--keep-taskbar` 是完全不动它。左键优先走应用自己的 callback；按压前必须通过精确 HWND、PID、线程和 Shell PID 校验。消息已送达但观察不到应用动作时结果是 `SentUnconfirmed`，不再写永久 `none` 或盲目重试第二种 shape。右键失败或身份失效时开 IslandBar 自己的菜单。
+- **稳定标签与动态 Tooltip 分开**：`TrayIcon::name` 是稳定的格子标签，`TrayIcon::tooltip` 是最新实时 tip；悬停工具提示消费后者。D2D 图标位图按 PNG hash 缓存，Tooltip 更新不会触发无意义的重新解码。
 - **卡片画什么 = 注册表 ∩ shell 里真的注册着的**（2026-10-16，HANDOFF 8.151）。注册表 `HKCU\Control Panel\NotifyIconSettings` 给图标 PNG 与身份（uid / guid），`domain/TrayLedger.h` 的账本给"现在是否真的活着"——账本由模块在 shell 里看到的 `NIM_ADD`/`NIM_MODIFY`/`NIM_DELETE` 记出来，窗口没了就剔除；第一趟学习跑完之前用注册表列表兜底。**旧口径**（只按"这条记录的 exe 有进程在跑"过滤）会把 NVIDIA 的三个常驻条目和一条死掉的 explorer 记录也画出来——实测 **13 格 vs 系统托盘的 9 个**。
 - **`--native-tray` 那条路为什么成立、边界在哪**：读 HANDOFF 8.133 的三个判别实验（占名当托盘宿主**失败**；搬托盘窗口**被系统接受但像素不跟**；`SetWindowPos` 搬整条任务栏**被忽略**；只有**裁剪**好看又零成本）。它的代价：那 144 DIP 里**包含时钟**，做不到"只留图标不留时钟"，托盘也只能待在 shell 放它的地方。

@@ -1,0 +1,17 @@
+log file: C:\Users\18340\AppData\Local\Temp\island_bar.log
+tray reach: 14 icon(s) on the card
+  [0] ChatGPT.exe (GUID) -- its own callback is known and its window is there
+  [1] RazerAppEngine.exe (RazerAppEngine.exe) -- its own callback is known and its window is there
+  [2] Weixin.exe (GUID) -- nothing learned yet: a press opens this bar's own menu
+  [3] Wallpaper Engine (Wallpaper Engine) -- its own callback is known and its window is there
+  [4] Steam - 
+  [5] clash-verge.exe (clash-verge.exe) -- its own callback is known and its window is there
+  [6] Weixin.exe (Weixin.exe) -- nothing learned yet: a press opens this bar's own menu
+  [7] WeGame (WeGame) -- its own callback is known and its window is there
+  [8] QQ
+  [9] NVIDIA 
+  [10] NVIDIA 
+  [11] explorer.exe (GUID) -- nothing learned yet: a press opens this bar's own menu
+  [12] SecurityHealthSystray.exe (GUID) -- its own callback is known and its window is there
+  [13] explorer.exe (GUID) -- its own callback is known and its window is there
+  9 of 14 can be pressed without touching the pointer

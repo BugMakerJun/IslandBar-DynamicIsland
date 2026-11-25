@@ -1,0 +1,5 @@
+log file: C:\Users\18340\AppData\Local\Temp\island_bar.log
+tray press: [3] 'Steam - 
+  tray press: gave 0x0401 to class 'vguiPopupWindow' of pid 10992 (given its own callback, not a click) but observed no action (nothing of its own appeared, and the foreground did not move to it, in 1500 ms) -- outcome=unconfirmed; no retry and no permanent left-button verdict
+  -> sent, unconfirmed: callback_sent_unconfirmed (press 1593 ms)
+  delivered to class 'vguiPopupWindow' of pid 10992 (given its own callback, not a click) -- nothing of its own appeared, and the foreground did not move to it, in 1500 ms

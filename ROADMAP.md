@@ -7,7 +7,7 @@
 ## 0. 现状（一句话一条）
 
 - 功能：岛、系统面板、媒体卡片、任务条、通知、天气/时钟、开始按钮、**自己的托盘页**（见下），全部可用；`--self-test` **1010 条**断言通过（真实会话里跑，退出码 0、`0 FAIL`）。
-- 托盘：**岛里的那一页 + 一个只读观察者模块**（2026-10-16，HANDOFF 8.144/8.145/8.151）。右键菜单是**打开 / 文件位置 / 应用菜单 / 关闭应用**四行；"应用菜单"走 `domain/TrayEncoding.h` 的**唯一编码入口**去要应用自己的菜单。为了让"按一下格子"不需要移动指针，bar 把 `island_tray_hook.dll` 递给 `Shell_TrayWnd` 所在进程，模块用 `WH_CALLWNDPROC` 读应用**发给 shell** 的那条 `WM_COPYDATA` 注册，经共享内存环回传（ABI 2），bar 落盘成 `tray_callbacks.txt`。
+- 托盘：**岛里的那一页 + 一个只读观察者模块**。bar 把 `island_tray_hook.dll` 递给 `Shell_TrayWnd` 所在进程，模块用 `WH_CALLWNDPROC` 读应用**发给 shell** 的 `WM_COPYDATA` 注册，经带发布序号的共享内存环回传（ABI 5），bar 原子更新 callback cache v2。每项记录 GUID/UID、精确 callback HWND、PID、线程、callback message、version 和 Shell PID；左键先走应用 callback，右键优先应用菜单，失败才用 IslandBar 菜单。
 - 托盘画哪几格：**注册表 ∩ shell 里真的注册着的**（HANDOFF 8.151）。`shell/TrayIcons.*` 从 `HKCU\Control Panel\NotifyIconSettings` 取图标与身份，`domain/TrayLedger.*` 从模块看到的 `NIM_ADD`/`NIM_MODIFY`/`NIM_DELETE` 记一本"现在是否真的活着"的账，两边都有才画一格（同一身份只画一格）；第一趟学习跑完之前用注册表列表兜底。验收口径就是栏自己打的那一行：`tray: 9 icon(s) -- 9 live of 32 registry entr(ies) (not shown: ...)`。
 - 代码：**每层一个静态库目标**（`domain → core → platform → media → services → shell → render → app → cli`，只向下链接；include 那一半每次构建都由 `scripts/check-layers.ps1` 检查，`layer check: clean (103 file(s) in 11 layer(s))`）；`/WX` 生效，零告警；**单 exe + 一个模块 DLL**（只在 shell 进程里，不进其它应用）。
 - 帧循环与文件的形状：**都切完了**（2026-10-16，HANDOFF 8.155 与 8.156）。`main.cpp` **588 行**（`main()` 从 257 行开始），岛在 `app/BarLoop.cpp` **6,016 行**：`RunBar` **1,347 行**（其中帧循环 **835 行**，循环里只剩 **53 条自己的语句**、19 条是相位调用），上方 **43 个相位**。

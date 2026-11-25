@@ -1,0 +1,7 @@
+log file: C:\Users\18340\AppData\Local\Temp\island_bar.log
+tray press: [4] 'Steam - 
+  tray press: gave 0x0401 to class 'vguiPopupWindow' of pid 10992 (given its own callback, not a click) but observed no action (nothing of its own appeared, and the foreground did not move to it, in 1500 ms) -- outcome=unconfirmed; no retry and no permanent left-button verdict
+  tray press: 'Steam - 
+  tray context-menu: app=steam.exe version=0 strategy=wm-contextmenu attempts=1 busy_ms=0 outcome=unknown evidence=unknown detail='nothing of its own appeared, and the foreground did not move to it, in 1500 ms' elapsed_ms=1531 -- next press of this cell: both-failed
+  -> sent, unconfirmed [right click]: native_menu_unconfirmed (press 1531 ms)
+  delivered to class 'vguiPopupWindow' of pid 10992 (given its own callback, not a click) -- nothing of its own appeared, and the foreground did not move to it, in 1500 ms

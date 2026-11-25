@@ -1,0 +1,7 @@
+log file: C:\Users\18340\AppData\Local\Temp\island_bar.log
+tray press: [5] 'clash-verge.exe' (registered by UID)
+  tray press: gave 0x1772 to class 'tray_icon_app' of pid 12340 (given its own callback, not a click), the pointer was NOT moved (anchor 1348,934) -- the application answered
+  tray press: 'clash-verge.exe' right button is now recorded as pair
+  tray context-menu: app=clash-verge.exe version=0 strategy=v3-sent-down-up attempts=1 busy_ms=1500 outcome=native_menu evidence=probable detail='its own '#32768' at 1348,663 182x271 (a window of its own that was not on screen before)' elapsed_ms=1547
+  -> pressed [right click]: its own callback (press 1547 ms)
+  delivered to class 'tray_icon_app' of pid 12340 (given its own callback, not a click) -- its own '#32768' at 1348,663 182x271 (a window of its own that was not on screen before)

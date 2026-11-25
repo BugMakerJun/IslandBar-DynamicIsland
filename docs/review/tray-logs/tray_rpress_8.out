@@ -1,0 +1,6 @@
+log file: C:\Users\18340\AppData\Local\Temp\island_bar.log
+tray press: [8] 'QQ
+  tray press: gave 0x0BD0 to class 'ATL:7976AD98' of pid 3716 (given its own callback, not a click), the pointer was NOT moved (anchor 1348,934) -- the application answered
+  tray context-menu: app=qqmusic.exe version=0 strategy=v3-sent-down-up attempts=1 busy_ms=47 outcome=native_menu evidence=probable detail='its own 'TXGuiFoundation' at 1348,934 210x374 (a window of its own that was not on screen before)' elapsed_ms=109
+  -> pressed [right click]: its own callback (press 109 ms)
+  delivered to class 'ATL:7976AD98' of pid 3716 (given its own callback, not a click) -- its own 'TXGuiFoundation' at 1348,934 210x374 (a window of its own that was not on screen before)

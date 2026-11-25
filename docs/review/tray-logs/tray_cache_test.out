@@ -1,0 +1,15 @@
+[ OK ] first update creates a cache
+[ OK ] cache can be read
+[ OK ] cache carries the schema header
+[ OK ] eight concurrent updates all report success
+[ OK ] no concurrent update was lost
+[ OK ] legacy v1 cache can be prepared
+[ OK ] legacy v1 cache remains readable
+[ OK ] legacy cache can be updated
+[ OK ] a legacy update migrates the schema to v2
+[ OK ] cache opened for failure-preservation test
+log file: C:\Users\18340\IslandBar\TrayProbe\island_bar.log
+  tray cache: read open failed: C:\Users\18340\AppData\Local\IslandBar\TrayProbe\CacheTest-21328-7808234\tray_callbacks.txt (error 32)
+[ OK ] update fails while the cache cannot be replaced
+[ OK ] failed update leaves the old cache complete
+RESULT: PASS (0 failure(s))

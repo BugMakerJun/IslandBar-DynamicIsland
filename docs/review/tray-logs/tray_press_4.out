@@ -1,0 +1,5 @@
+log file: C:\Users\18340\AppData\Local\Temp\island_bar.log
+tray press: [4] 'clash-verge.exe' (registered by UID)
+  tray press: gave 0x1772 to class 'tray_icon_app' of pid 12340 (given its own callback, not a click), the pointer was NOT moved (anchor 1348,934) -- the application answered
+  -> pressed: its own callback (press 46 ms)
+  delivered to class 'tray_icon_app' of pid 12340 (given its own callback, not a click) -- the foreground window is now its 'Tauri Window'

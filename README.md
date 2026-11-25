@@ -236,6 +236,9 @@ cmd /c "build\Debug\src\Debug\island_bar.exe" --self-test > selftest.txt 2>&1
 | `--lyrics-test <曲名> [歌手]` | 拉取一首歌的歌词并报告返回了什么 |
 | `--lyrics-verbose` | 连同请求 URL 和响应开头一起打印 |
 | `--notify` | 向正在运行的栏推送一条通知 |
+| `--tray-dump` | 学习一次回调并打印栏会绘制的托盘图标 |
+| `--tray-surface` | 打印当前图标是否具备可用的本地 callback |
+| `--tray-press N [--right]` | 按卡片第 N 个图标，调试左/右键链路 |
 | `--volume-test` / `--volume-set` | 检查 / 设置默认输出端点的音量 |
 | `--window-list` / `--icon-dump` | 打印窗口列表 / 转储图标 |
 | `--appbar` | 以 AppBar 方式认领屏幕边缘（可能被拒绝） |
@@ -250,6 +253,7 @@ CMakePresets.json         同样两套配置，按预设名使用
 cmake/WinRt.cmake         栏本体和两个探针共用的 C++/WinRT 设置
 scripts/env.ps1           把 MSVC 环境导入当前会话
 scripts/build.ps1         配置 + 构建 + 可选冒烟
+scripts/tray-probe-matrix.ps1 独立托盘 probe 的重复采样与原始日志
 scripts/snapshot.ps1      给源码树打一个带时间戳的本地快照
 docs/                     交接文档、功能清单、实测截图
 

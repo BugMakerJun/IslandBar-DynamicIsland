@@ -1,0 +1,5 @@
+log file: C:\Users\18340\AppData\Local\Temp\island_bar.log
+tray press: [5] 'WeGame' (registered by UID)
+  tray press: gave 0x0922 to class 'TGP_TRAYICON_NEW' of pid 11032 (given its own callback, not a click) but observed no action (nothing of its own appeared, and the foreground did not move to it, in 1500 ms) -- outcome=unconfirmed; no retry and no permanent left-button verdict
+  -> sent, unconfirmed: callback_sent_unconfirmed (press 1578 ms)
+  delivered to class 'TGP_TRAYICON_NEW' of pid 11032 (given its own callback, not a click) -- nothing of its own appeared, and the foreground did not move to it, in 1500 ms
