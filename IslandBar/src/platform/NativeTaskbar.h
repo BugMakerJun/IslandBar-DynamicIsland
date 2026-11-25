@@ -64,6 +64,11 @@ public:
     // Returns true if it had to act, so the caller can throttle the check.
     bool EnsureHidden();
 
+    // Whether this object is currently the reason the shell taskbar differs from
+    // what it found. This is also the condition under which the work area may be
+    // released.
+    bool HiddenByUs() const { return weHidIt_; }
+
     // --- the strip the work area reserves ---------------------------------------------------
     //
     // A hidden AppBar keeps its claim: the shell's taskbar holds the desktop's WORK AREA inset by its
@@ -120,6 +125,8 @@ private:
     // the window moved and the pixels did not).
     bool ApplyTrayRegion();
     void ClearTrayRegion();
+    bool ArmRecoverySnapshot();
+    void FinishRecovery(bool restored);
 
     HWND trayWnd_ = nullptr;        // Shell_TrayWnd: the primary taskbar
     HWND trayNotify_ = nullptr;     // TrayNotifyWnd: the clock/notification corner
@@ -132,6 +139,8 @@ private:
     bool suppressed_ = false;
     bool haveRegion_ = false;         // a region of ours is on the taskbar
     RECT appliedTrayRect_ = {};       // ... clipping it to this rectangle (screen coordinates)
+    bool recoveryArmed_ = false;      // one recovery snapshot describes the first mutation
+    bool recoveryBlockedReported_ = false;
 
     // The work area this process found, and whether it has been touched. Saved even when the values
     // look familiar: the point is to put back what was there, not what the shell would compute.

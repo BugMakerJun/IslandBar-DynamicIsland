@@ -380,7 +380,42 @@ std::wstring FirstSettingLine(const std::wstring& path) {
 } // namespace
 
 StartApps::~StartApps() {
+    StopListRefresh();
     StopIconWorker();
+}
+
+bool StartApps::StartListRefresh() {
+    bool expected = false;
+    if (!listRefreshRunning_.compare_exchange_strong(expected, true)) return true;
+    if (!listWorker_.Start(&StartApps::ListThreadEntry, weak_from_this().lock())) {
+        listRefreshRunning_.store(false, std::memory_order_release);
+        return false;
+    }
+    return true;
+}
+
+WorkerThread::StopResult StartApps::StopListRefresh() {
+    const WorkerThread::StopResult stopped = listWorker_.Stop();
+    listRefreshRunning_.store(false, std::memory_order_release);
+    if (stopped != WorkerThread::StopResult::Stopped) {
+        LogLine(L"  start apps: list refresh worker did not stop; owner retained");
+    }
+    return stopped;
+}
+
+unsigned long __stdcall StartApps::ListThreadEntry(void* self) {
+    static_cast<StartApps*>(self)->RunListRefresh();
+    return 0;
+}
+
+void StartApps::RunListRefresh() {
+    auto finished = MakeScopeExit([this]() noexcept {
+        listRefreshRunning_.store(false, std::memory_order_release);
+    });
+    (void)finished;
+    ComApartment apartment(COINIT_APARTMENTTHREADED);
+    if (!apartment.Usable()) return;
+    RefreshList();
 }
 
 void StartApps::PinsFolderSettingPath(wchar_t* out, size_t capacity) {
@@ -703,12 +738,12 @@ void StartApps::DrainIconResults() {
     if (changed) ++iconRevision_;
 }
 
-void StartApps::StopIconLoading() {
+WorkerThread::StopResult StartApps::StopIconLoading() {
     {
         std::lock_guard<std::mutex> lock(iconMutex_);
         iconQueue_.clear();
     }
-    StopIconWorker();
+    return StopIconWorker();
 }
 
 bool StartApps::StartIconWorker() {
@@ -739,16 +774,20 @@ bool StartApps::StartIconWorker() {
     return true;
 }
 
-void StartApps::StopIconWorker() {
-    if (iconWorker_.Stop() != WorkerThread::StopResult::Stopped) {
-        iconWorkerRunning_.store(false);
-        return;
+WorkerThread::StopResult StartApps::StopIconWorker() {
+    const WorkerThread::StopResult stopped = iconWorker_.Stop();
+    if (stopped != WorkerThread::StopResult::Stopped) {
+        // The thread still owns iconWakeEvent_. Its own scope-exit hook clears
+        // the running flag when it finally returns; allowing a new start now
+        // would close a handle that the old thread may still be waiting on.
+        return stopped;
     }
     if (iconWakeEvent_) {
         CloseHandle(iconWakeEvent_);
         iconWakeEvent_ = nullptr;
     }
     iconWorkerRunning_.store(false);
+    return stopped;
 }
 
 unsigned long __stdcall StartApps::IconThreadEntry(void* self) {

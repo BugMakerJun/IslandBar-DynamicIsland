@@ -176,14 +176,15 @@ bool SoundOutput::Start() {
     return firstReadArrived;
 }
 
-void SoundOutput::Stop() {
+WorkerThread::StopResult SoundOutput::Stop() {
     const WorkerThread::StopResult stopped = worker_.Stop();
     running_.store(false, std::memory_order_release);
-    if (stopped != WorkerThread::StopResult::Stopped) return;
+    if (stopped != WorkerThread::StopResult::Stopped) return stopped;
     if (workEvent_) {
         CloseHandle(workEvent_);
         workEvent_ = nullptr;
     }
+    return stopped;
 }
 
 void SoundOutput::Snapshot(SoundOutputSnapshot* out) const {

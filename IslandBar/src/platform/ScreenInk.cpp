@@ -112,7 +112,9 @@ void ScreenInk::ReleaseGdiSurface(State& state) {
 
 ScreenInk::~ScreenInk() {
     if (state_) {
-        (void)state_->worker.Stop();
+        if (state_->worker.Stop() != WorkerThread::StopResult::Stopped) {
+            LogLine(L"  ink: worker did not stop; retained by its shared owner");
+        }
         state_.reset();
     }
 }

@@ -118,12 +118,15 @@ private:
 struct FrameStats {
     LARGE_INTEGER frequency = {};
     LARGE_INTEGER last = {};
+    LARGE_INTEGER lastDrawn = {};
+    bool haveLastDrawn = false;
     bool started = false;
 
     static constexpr double kHitchMs = 50.0;
     static constexpr double kSlowFrameMs = 40.0;
 
     long long count = 0;
+    long long drawnIntervals = 0;
     double totalMs = 0.0;
     double totalDrawnMs = 0.0;
     double worstMs = 0.0;
@@ -138,35 +141,60 @@ struct FrameStats {
     void Start() {
         QueryPerformanceFrequency(&frequency);
         QueryPerformanceCounter(&last);
+        lastDrawn = {};
+        haveLastDrawn = false;
         started = true;
     }
 
-    double Record(bool drew, bool animating = false, bool fullscreen = false) {
+    double RecordAtTicks(LONGLONG nowTicks, bool drew, bool animating = false,
+                         bool fullscreen = false) {
         if (!started || frequency.QuadPart <= 0) return 0.0;
         LARGE_INTEGER now = {};
-        QueryPerformanceCounter(&now);
-        const double ms = static_cast<double>(now.QuadPart - last.QuadPart) * 1000.0 /
-                          static_cast<double>(frequency.QuadPart);
+        now.QuadPart = nowTicks;
+        const double passMs = static_cast<double>(now.QuadPart - last.QuadPart) * 1000.0 /
+                              static_cast<double>(frequency.QuadPart);
         last = now;
 
         ++count;
-        totalMs += ms;
+        totalMs += passMs;
         if (drew) {
-            totalDrawnMs += ms;
-            if (ms > worstMs) worstMs = ms;
-            if (ms > kHitchMs) ++hitches;
-            intervals.Add(ms);
-            if (animating) animationIntervals.Add(ms);
-            if (fullscreen) fullscreenIntervals.Add(ms);
+            const bool timedSequence = animating || fullscreen;
+            if (timedSequence && haveLastDrawn) {
+                const double ms = static_cast<double>(now.QuadPart - lastDrawn.QuadPart) * 1000.0 /
+                                  static_cast<double>(frequency.QuadPart);
+                ++drawnIntervals;
+                totalDrawnMs += ms;
+                if (ms > worstMs) worstMs = ms;
+                if (ms > kHitchMs) ++hitches;
+                intervals.Add(ms);
+                if (animating) animationIntervals.Add(ms);
+                if (fullscreen) fullscreenIntervals.Add(ms);
+            }
+            if (timedSequence) {
+                lastDrawn = now;
+                haveLastDrawn = true;
+            } else {
+                // A one-off clock/notification draw is not the next sample of
+                // an animation; the interval after it includes idle time.
+                haveLastDrawn = false;
+            }
         } else {
             ++idleCount;
-            if (ms > idleWorstMs) idleWorstMs = ms;
+            if (passMs > idleWorstMs) idleWorstMs = passMs;
+            haveLastDrawn = false;
         }
-        return ms;
+        return passMs;
+    }
+
+    double Record(bool drew, bool animating = false, bool fullscreen = false) {
+        LARGE_INTEGER now = {};
+        QueryPerformanceCounter(&now);
+        return RecordAtTicks(now.QuadPart, drew, animating, fullscreen);
     }
 
     void Reset() {
         count = 0;
+        drawnIntervals = 0;
         totalMs = 0.0;
         totalDrawnMs = 0.0;
         worstMs = 0.0;
@@ -184,7 +212,7 @@ struct FrameStats {
         const long long drawn = count - idleCount;
         const TimingSummary timing = intervals.Summarize();
         const double lifetimeMean =
-            drawn > 0 ? totalDrawnMs / static_cast<double>(drawn) : 0.0;
+            drawnIntervals > 0 ? totalDrawnMs / static_cast<double>(drawnIntervals) : 0.0;
         std::swprintf(
             out, capacity,
             L"drawn %lld: p50 %.1f p95 %.1f p99 %.1f mean %.1f max %.1f ms | "

@@ -751,6 +751,26 @@ void TestClock() {
     }
 
     {
+        island::FrameStats stats;
+        stats.frequency.QuadPart = 1000;
+        stats.started = true;
+        stats.last.QuadPart = 0;
+        (void)stats.RecordAtTicks(10, false);
+        (void)stats.RecordAtTicks(252, false);
+        (void)stats.RecordAtTicks(260, true, false);
+        (void)stats.RecordAtTicks(300, true, true);
+        (void)stats.RecordAtTicks(306, true, true);
+        (void)stats.RecordAtTicks(312, true, true);
+        const island::TimingSummary summary = stats.intervals.Summarize();
+        wchar_t detail[128] = {};
+        std::swprintf(detail, 128, L"samples=%lld max=%.1f idle=%lld idle_worst=%.1f",
+                      summary.samples, summary.maximumMs, stats.idleCount, stats.idleWorstMs);
+        Check(summary.samples == 2 && Nearly(static_cast<float>(summary.maximumMs), 6.0f, 0.01f) &&
+                  stats.hitches == 0 && stats.idleCount == 2,
+              L"idle and one-off draws are excluded from animation frame intervals", detail);
+    }
+
+    {
         island::TimingSeries timing;
         std::array<double, island::kTimingSampleCapacity> retained{};
         std::array<int, island::kTimingBucketCount> expectedBuckets{};

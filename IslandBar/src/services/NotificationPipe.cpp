@@ -434,7 +434,7 @@ bool NotificationServer::Start(const wchar_t* pipeName) {
     return true;
 }
 
-void NotificationServer::Stop() {
+WorkerThread::StopResult NotificationServer::Stop() {
     // The rule -- signal, wait with a timeout, close -- lives in WorkerThread, including the case its own
     // comment describes: a blocked ConnectNamedPipe on a broken client means the thread may refuse to end,
     // and the handle must be closed and the thread detached rather than waited on forever.
@@ -442,6 +442,7 @@ void NotificationServer::Stop() {
     if (stopped == WorkerThread::StopResult::Stopped) {
         running_.store(false, std::memory_order_release);
     }
+    return stopped;
 }
 
 unsigned long __stdcall NotificationServer::ThreadEntry(void* self) {

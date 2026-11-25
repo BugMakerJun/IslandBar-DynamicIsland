@@ -24,6 +24,8 @@
 
 #include <windows.h>
 
+#include "platform/WorkerThread.h"
+
 namespace island {
 
 // --- the radios: Wi-Fi and Bluetooth ---------------------------------------------------------------
@@ -110,5 +112,9 @@ bool LiveCaptionsRunning();
 // Sends Win+Ctrl+L. Reports only that the keys were put into the queue -- whether the shell acted on
 // them is what LiveCaptionsRunning answers a moment later.
 bool ToggleLiveCaptions();
+
+// Stops the single tracked toggle worker. A timeout is returned rather than
+// treated as a successful shutdown.
+WorkerThread::StopResult StopSystemToggleWorker();
 
 } // namespace island

@@ -327,9 +327,10 @@ bool ToastReader::Start(const wchar_t* databasePath) {
     return true;
 }
 
-void ToastReader::Stop() {
+WorkerThread::StopResult ToastReader::Stop() {
     running_.store(false, std::memory_order_release);
-    if (worker_.Stop() != WorkerThread::StopResult::Stopped) return;
+    const WorkerThread::StopResult stopped = worker_.Stop();
+    if (stopped != WorkerThread::StopResult::Stopped) return stopped;
     if (database_ && sqlite_ && sqlite_->api.close) {
         sqlite_->api.close(reinterpret_cast<sqlite3*>(database_));
     }
@@ -339,6 +340,7 @@ void ToastReader::Stop() {
         delete sqlite_;
         sqlite_ = nullptr;
     }
+    return stopped;
 }
 
 bool ToastReader::StartPolling(HWND wakeWindow, unsigned long pollMs) {

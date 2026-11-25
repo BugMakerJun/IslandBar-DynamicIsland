@@ -9,8 +9,9 @@
 Windows 11 上替代系统任务栏的一条横条（"岛"）：自己画 pill 与卡片，接管媒体、通知、开始菜单、任务条，并把原生任务栏藏起来。C++20 + Win32 + D3D11 + Direct2D + DirectComposition，单 exe、静态 CRT、无运行时依赖，私有内存 75-95MB。
 
 二进制有两个：`island_bar.exe` 与 **`island_tray_hook.dll`**。模块**只**进 `Shell_TrayWnd` 所在的那一个进程
-（当前是 explorer），在那里读应用发给 shell 的托盘注册（`WH_CALLWNDPROC` + 导入槽/`GetProcAddress` 两个
-detour），经 ABI 5 的带发布序号共享内存环回传；它钉住自己，安装器的载荷里也带它。回调缓存是 v2，
+（当前是 explorer），在那里以 observer-only 的 `WH_CALLWNDPROC` 读取应用发给 shell 的托盘注册，经 ABI 6
+的命名 mutex 有界队列回传；它不修改 Explorer 的导入表，也不在注册回调里写磁盘。模块钉住自己，
+安装器的载荷里也带它。回调缓存是 v2，
 记录精确 HWND/PID/线程与 Shell PID。见第 7 节。
 
 ## 2. 目录与职责
@@ -30,7 +31,7 @@ src/
   platform/         平台能力：显示器、窗口列表、缩略图、原生任务栏（三种模式：隐藏（默认）/ 裁到托盘
                     （`--native-tray`）/ 完全不动（`--keep-taskbar`））、托盘注册的共享内存环、Win32 薄封装
   services/         Toast 通知读取与通知管道
-  selftest/         诊断与 900+ 条断言（--self-test）
+  selftest/         诊断与 1273 条断言（--self-test）
   tools/              独立探针可执行文件（tray_probe / geo_probe / thumb_probe / jsonprobe / island_smoke）
 setup/              安装器（payload 以 RCDATA 内嵌）
 scripts/            build.ps1 / capture-*.ps1 / snapshot.ps1
@@ -66,7 +67,7 @@ scripts/            build.ps1 / capture-*.ps1 / snapshot.ps1
 每一层是 `src/CMakeLists.txt` 里**一个静态库目标**，只向下链接。另外两个不在链上的：
 `trayhook/`（要进别的进程的模块，只许用 domain/core/platform）、`selftest/`（属于 exe，可以包含全部）。
 
-- **`src/domain/` 不许包含 `<windows.h>`**。它只做几何、布局、动画、状态策略这些能脱离桌面运行的东西——`--self-test` 能在不开窗口的情况下跑完 900+ 条断言，靠的就是这条规则真的成立。
+- **`src/domain/` 不许包含 `<windows.h>`**。它只做几何、布局、动画、状态策略这些能脱离桌面运行的东西——`--self-test` 能在不开窗口的情况下跑完 1273 条断言，靠的就是这条规则真的成立。
 - 纯度检查在 **`src/core/PurityCheck.cpp`**（2026-10-16 从 `domain/` 挪过来的：它要包含 core 的头去证明那个头也是纯的，而"只能包含下面的层"不允许 domain 反向包含 core；检查本身一个字没改）。
 - 这条规则**不靠自觉**，现在有三层：① `core/PurityCheck.cpp` 是一个只做一件事的翻译单元——包含 `domain/` 下所有头文件，然后 `#ifdef _WINDOWS_ #error`；`island_domain` 仍然**不链接任何库**，所以纯逻辑里出现 Win32 调用会先在编译期被拦住。② **链接图**：某一层调用了它没有链接的层，链接器会报未定义符号。③ **include 那一半由构建系统每一步检查**：`scripts/check-layers.ps1` 在每次构建时跑，按一张"每层允许包含哪些层"的表扫 `src/`，指向上面就构建失败。**为什么需要 ③**（实测 2026-10-16）：include 根是 `src/`，所以 `shell/` 里写一句 `#include "render/Renderer.h"` 照样编得过、链得过——把检查器从默认构建里临时摘掉验证过，编译器和链接器都不会说话。
 - 需要 Win32 类型的地方（例如 `LONG`/`UINT` 的像素换算）放在 `platform/` 或各模块自己的头里，不放 `domain/`。
@@ -79,7 +80,7 @@ scripts/            build.ps1 / capture-*.ps1 / snapshot.ps1
 | pill 的形状、边距、命中区域 | `core/Geometry.h`（唯一一份圆角矩形判定）、`core/CardLayout.h` | 渲染与命中测试用同一个函数，改一处两边一起变 |
 | 展开/收起的动画手感 | `core/Motion.h`（spring，可中断、继承速度） | `core/StatePolicy.h` 决定状态迁移 |
 | 卡片里某个控件的位置 | `core/CardLayout.h` | `selftest/Diagnostics.cpp` 里通常已有对它的断言 |
-| **托盘页**（岛里那一页：画什么、怎么按、我们自己的菜单） | 画什么：`shell/TrayIcons.*` —— 注册表给 PNG/稳定标签，`domain/TrayLedger.*` 给「现在真的注册着」，两边都有才画一格；怎么知道：`shell/TrayLearn.*`（模块 + ABI 5 ring + 原子 callback cache v2）；怎么按：`shell/TrayPress.*`（精确 HWND/PID/线程/Shell 代际校验；编码在 `domain/TrayEncoding.h`）；我们自己的菜单：`shell/TrayMenu.*` | 模块在 `src/trayhook/TrayHook.cpp`，注册线格式在 `domain/TrayRegistration.h`，观察通道在 `platform/TrayRing.h`，独立复现工具在 `tools/tray_probe/` |
+| **托盘页**（岛里那一页：画什么、怎么按、我们自己的菜单） | 画什么：`shell/TrayIcons.*` —— 注册表给 PNG/稳定标签，`domain/TrayLedger.*` 给「现在真的注册着」，两边都有才画一格；怎么知道：`shell/TrayLearn.*`（observer-only 模块 + ABI 6 ring + 原子 callback cache v2）；怎么按：`shell/TrayPress.*`（精确 HWND/PID/线程/Shell 代际校验；编码在 `domain/TrayEncoding.h`）；我们自己的菜单：`shell/TrayMenu.*` | 模块在 `src/trayhook/TrayHook.cpp`，注册线格式在 `domain/TrayRegistration.h`，观察通道在 `platform/TrayRing.h`，独立复现工具在 `tools/tray_probe/` |
 | 媒体卡片 | `media/MusicSession.cpp`、`media/Lyrics.cpp`、`render/` | 延迟初始化：没音乐时不该起线程 |
 | 通知纸条 | `services/`（Toast 读取）加 `app/IslandWindow` 的 NoticeStrip 状态 | |
 | 与 Win32 对话的细节 | `platform/` | 不要在 `core/` 里加 `<windows.h>` |
@@ -93,7 +94,7 @@ scripts/            build.ps1 / capture-*.ps1 / snapshot.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File ".\IslandBar\scripts\build.ps1" -Config Release
 powershell -NoProfile -ExecutionPolicy Bypass -File ".\IslandBar\scripts\build.ps1" -Config Debug
 
-# 自检（当前 1233 项；退出码 0 == 全过）
+# 自检（当前 1273 项；退出码 0 == 全过）
 .\IslandBar\build\Release\src\Release\island_bar.exe --self-test
 
 # 冒烟（编译、链接、运行时）
@@ -128,9 +129,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ".\IslandBar\scripts\regress
 - **线程状态不用 `volatile bool`**。后台线程与所有者之间共享的 `running_` 必须是 `std::atomic<bool>`：读用 acquire，写用 release；同一判断需要多次使用状态时先取一次快照。`Start/Stop/析构` 仍由对象所有者串行调用，不做并发启动协议。
 - **停止不能假定成功，owner 必须被共享持有**。`WorkerThread::Stop()` 返回 `Stopped / Timeout / Failed`；超时后线程与停止事件保留，`Prepare()` 拒绝新旧 worker 重叠。所有会访问宿主成员的 worker 必须用 `shared_ptr` 宿主启动；后台入口返回前，最后一份 UI 引用可以释放，但对象不会析构。只有静态生命周期或完全无 context 的线程使用 `StartUnmanaged()`。
 - **命名管道的响应不能被断开丢掉**。通知服务器保留 MESSAGE 管道兼容性，同时使用 `FILE_FLAG_OVERLAPPED`；每次 Connect/Read/Write 都有独立 operation context。取消失败时线程继续持有 operation、buffer、event 和 pipe，直到内核完成，再允许析构。客户端响应读取最多 5 秒。写完响应后要等客户端读取并关闭（1 秒上限），再 `DisconnectNamedPipe`。
+- **任务栏只有 Guardian 健康时才允许改**。`platform/TaskbarRecovery.*` 在改 Explorer 前登记 owner PID + creation time；已 pinned 的托盘 Hook 在 Explorer 内等待该进程。强杀后由 Hook 根据原子发布的恢复快照恢复任务栏和工作区，干净退出则先确认恢复、再清标记。`NativeTaskbar::Hide()` 在 Guardian 未就绪时必须失败关闭；恢复失败时不得删除标记。
+- **Explorer 替换先恢复 Guardian，再重新隐藏**。任务栏检查发现当前 claim 仍在、但 Guardian 已随旧 Shell 消失时，会先对新 `Shell_TrayWnd` 进程重装 observer 并等待其确认；这一步不受托盘学习 15 秒节流影响。实测新 Shell 到任务栏重新隐藏 `323-369 ms`。
 - **窗口图标失败有界重试，并校验 HWND+PID**。同一 HWND 最多提取 4 次，等待为 500 / 2000 / 5000 ms；PID 改变视为新窗口并重建。离场仍由 `PruneWindowIconsForFrame` 释放。不要改成每帧重试。
 - **图标提取暂不后台化**。`ID2D1DeviceContext2::CreateBitmap` 必须在渲染设备上下文执行；真正后台化还需要像素结果队列、HWND+PID 代次校验、设备丢失后重传和退出排空。现有有界 `WM_GETICON`（100 ms）+ 有限退避先控制最坏路径；若以后实测 P95/P99 仍超预算，再按完整后台流水线单独立项。
-- **`island_tray_hook.dll` 的 `DllMain` 只做 `DisableThreadLibraryCalls`**。日志锁使用静态初始化的 `SRWLOCK`；“attached”身份日志与全部文件 I/O 延迟到第一次 `IslandTrayHookProc` 内的 `EnsureHooked()`，不在加载器锁下打开文件。
+- **`island_tray_hook.dll` 的 `DllMain` 只做 `DisableThreadLibraryCalls`**。加载器和注册快路径都不做文件 I/O；运行信息只通过 ABI 6 Ring 控制记录传给 bar。
 
 ## 7. 已知的架构债（写在明处，不是等人发现）
 

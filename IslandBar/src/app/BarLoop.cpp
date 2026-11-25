@@ -16,6 +16,7 @@
 
 #include <cstdio>
 #include <cmath>        // fabs: comparing the last pushed slider fraction
+#include <cstdint>
 #include <algorithm>    // stable_sort: exact/prefix/contains search ranking
 #include <cstring>
 #include <cwchar>       // wcstoul / wcstol / wcstof: the diagnostic environment settings
@@ -54,6 +55,8 @@
 #include "core/ProcessMetrics.h"   // the memory line: what this process holds, and whether it grows
 #include "media/MusicSession.h"
 #include "platform/NativeTaskbar.h"
+#include "platform/TaskbarRecovery.h"
+#include "platform/WorkerThread.h"
 #include "media/Lyrics.h"
 #include "services/Notification.h"
 #include "services/NotificationIcon.h"
@@ -81,6 +84,12 @@
 #include "render/Renderer.h"
 
 namespace {
+
+static bool ReportWorkerStop(const wchar_t* name, island::WorkerThread::StopResult result) {
+    if (result == island::WorkerThread::StopResult::Stopped) return true;
+    island::LogAndPrint(L"  lifecycle: %ls worker did not stop; resources retained\n", name);
+    return false;
+}
 
 bool NiriLayoutActive() {
     return std::wcscmp(island::CurrentTheme().name, L"Niri") == 0;
@@ -856,11 +865,9 @@ static void StartStartCard(island::BarState& bar, island::BarSystems& systems) {
     // The pins are read on a worker, and it is handed the object BY REFERENCE under its own name: a capture
     // list takes names, not member accesses (see the same trap in the tray learning pass), and naming it
     // `apps` also says what the thread is for.
-    std::thread([&apps = systems.startApps]() {
-        const HRESULT comHr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-        apps.RefreshList();
-        if (SUCCEEDED(comHr)) CoUninitialize();
-    }).detach();
+    if (!systems.startApps.StartListRefresh()) {
+        island::LogAndPrint("  start: application-list worker could not start\n");
+    }
     {
         // The account picture: the registry entry the shell itself uses, largest first so a scaled-down
         // draw has something to work with, with the generic picture as the fallback every account has.
@@ -1069,39 +1076,58 @@ static void StartWeatherAndPreview(bool& previewReady, island::BarSystems& syste
 //
 // Moved out of RunBar verbatim, both blocks together: the first count is the one the second reports against,
 // and nothing outside asks about it, so it stays local.
+namespace {
+
+struct TrayLearningJob {
+    std::shared_ptr<std::atomic<bool>> inFlight;
+};
+
+island::WorkerThread g_trayLearningWorker;
+
+unsigned long __stdcall TrayLearningThreadEntry(void* context) {
+    std::unique_ptr<TrayLearningJob> job(static_cast<TrayLearningJob*>(context));
+    struct ClearInFlight {
+        std::shared_ptr<std::atomic<bool>> flag;
+        ~ClearInFlight() { flag->store(false, std::memory_order_release); }
+    } clear{job->inFlight};
+    (void)clear;
+    try {
+        island::TrayIcons icons;
+        icons.Refresh();
+        const island::TrayLearnResult learned = island::LearnTrayCallbacks(icons, true);
+        const std::wstring observer = island::ObserverClause(learned);
+        island::LogAndPrint(
+            "  tray learn: the shell (%d process(es) offered) was %s, %d registration(s) "
+            "captured, %d new entr(ies) -- %d of %d icon(s) have a callback entry "
+            "(in %lld ms) -- %ls",
+            learned.appsTried,
+            learned.appsAlreadyWatched > 0 ? "already carrying the module" : "given the module",
+            learned.captured, learned.newEntries, learned.covered, learned.icons, learned.ms,
+            observer.c_str());
+    } catch (...) {
+        island::LogAndPrint("  tray learn: worker failed unexpectedly; in-flight flag released");
+    }
+    return 0;
+}
+
+} // namespace
+
+static island::WorkerThread::StopResult StopTrayLearningWorker() {
+    return g_trayLearningWorker.Stop();
+}
+
 static bool LaunchTrayLearning(const std::shared_ptr<std::atomic<bool>>& inFlight) {
     if (!inFlight) return false;
     bool expected = false;
     if (!inFlight->compare_exchange_strong(expected, true, std::memory_order_acq_rel)) return false;
 
-    try {
-        std::thread([inFlight]() {
-            struct ClearInFlight {
-                std::shared_ptr<std::atomic<bool>> flag;
-                ~ClearInFlight() { flag->store(false, std::memory_order_release); }
-            } clear{inFlight};
-            try {
-                island::TrayIcons icons;
-                icons.Refresh();
-                const island::TrayLearnResult learned = island::LearnTrayCallbacks(icons, true);
-                const std::wstring observer = island::ObserverClause(learned);
-                island::LogAndPrint(
-                    "  tray learn: the shell (%d process(es) offered) was %s, %d registration(s) "
-                    "captured, %d new entr(ies) -- %d of %d icon(s) have a callback entry "
-                    "(in %lld ms) -- %ls",
-                    learned.appsTried,
-                    learned.appsAlreadyWatched > 0 ? "already carrying the module" : "given the module",
-                    learned.captured, learned.newEntries, learned.covered, learned.icons, learned.ms,
-                    observer.c_str());
-            } catch (...) {
-                island::LogAndPrint("  tray learn: worker failed unexpectedly; in-flight flag released");
-            }
-        }).detach();
+    auto* job = new (std::nothrow) TrayLearningJob{inFlight};
+    if (job && g_trayLearningWorker.StartUnmanaged(&TrayLearningThreadEntry, job)) {
         return true;
-    } catch (...) {
-        inFlight->store(false, std::memory_order_release);
-        return false;
     }
+    delete job;
+    inFlight->store(false, std::memory_order_release);
+    return false;
 }
 
 static void ReadTrayAndStartLearning(island::BarState& bar, island::BarSystems& systems) {
@@ -1139,7 +1165,12 @@ static void ReadTrayAndStartLearning(island::BarState& bar, island::BarSystems& 
         // process that receives tray registrations (see shell/TrayLearn.h), and from then on the card can
         // press an application the moment it registers -- no per-application pass, and no pass at all when a
         // new application starts.
-        island::InstallTrayHook();
+        const bool observerReady =
+            island::TaskbarGuardianHealthy() || island::EnsureTrayObserver(island::kObserverWaitMs);
+        if (!observerReady) {
+            island::LogAndPrint("  tray hook: observer did not land before startup completed; "
+                                "the taskbar remains visible until it does\n");
+        }
         const int coveredNow = island::CountCoveredIcons(systems.trayIcons);
         bar.lastShellPid = island::TrayShellProcessId();
         bar.lastLearnAttempt = GetTickCount64();
@@ -1427,6 +1458,18 @@ static bool ReportIntervalAndThrottle(BarRuntime& runtime, island::BarSystems& s
             island::LogAndPrint("  window region: %llu applied in total (%llu in the last 2 s)",
                                 applied, applied - runtime.lastRegionApplications);
             runtime.lastRegionApplications = applied;
+        }
+        {
+            const island::TextRenderer::ResourceCounters textResources =
+                systems.text.TakeResourceCounters();
+            const island::Renderer::ResourceCounters renderResources =
+                systems.renderer.TakeResourceCounters();
+            island::LogAndPrint(
+                "  render resources: brush_hits=%llu brush_misses=%llu brush_clears=%llu "
+                "clip_hits=%llu clip_builds=%llu",
+                textResources.brushHits, textResources.brushMisses,
+                textResources.brushCacheClears, renderResources.clipHits,
+                renderResources.clipBuilds);
         }
         {
             const unsigned long long presents = systems.renderer.PresentSucceededCount();
@@ -2428,17 +2471,46 @@ static void EnsureTaskbarStillHidden(bool hideNativeTaskbar, bool keepStrip, int
         if (systems.taskbar.KeepTrayVisible()) {
             systems.taskbar.SetSuppressed(bar.fullscreenAppInFront);
         }
+        // A replaced Explorer owns a new process, so the guardian that made the
+        // previous hide safe is gone with it. Re-arm that guardian before asking
+        // NativeTaskbar to hide again; waiting for the learning throttle would
+        // leave the new taskbar on screen for that entire pass.
+        if (systems.taskbar.HiddenByUs() && !island::TaskbarGuardianHealthy()) {
+            static DWORD guardianAttemptedShell = 0;
+            static ULONGLONG guardianRetryAt = 0;
+            const DWORD shellNow = island::TrayShellProcessId();
+            const ULONGLONG now = GetTickCount64();
+            if (shellNow != 0 &&
+                (shellNow != guardianAttemptedShell || now >= guardianRetryAt)) {
+                guardianAttemptedShell = shellNow;
+                guardianRetryAt = now + 5000;
+                island::LogAndPrint(
+                    "  taskbar guardian: shell pid %lu -- re-arming recovery watcher\n",
+                    static_cast<unsigned long>(shellNow));
+                if (!island::EnsureTrayObserver(island::kObserverWaitMs)) {
+                    island::LogAndPrint(
+                        "  taskbar guardian: re-arm failed; the taskbar remains visible\n");
+                }
+            }
+        }
         // ... and none of the above needs to know whether a tray press is in flight. Since
         // 2026-10-16 a press is ONE MESSAGE to the application's own window (route A: the module
         // publishes the registration, the bar sends the click itself), so the shell's taskbar is
         // never touched, never shown, never layered -- the borrowing described in the retired
         // TrayPress notes is gone with the route that needed it.
+        const bool hadClaim = systems.taskbar.HiddenByUs();
         if (systems.taskbar.EnsureHidden()) {
             if (systems.taskbar.KeepTrayVisible()) {
-                island::LogAndPrint("  native taskbar: tray re-clipped (the shell had put the"
-                                    " taskbar back)\n");
+                island::LogAndPrint(hadClaim
+                                        ? "  native taskbar: tray re-clipped (the shell had put the"
+                                          " taskbar back)\n"
+                                        : "  native taskbar: tray clipped after the recovery guardian"
+                                          " became ready\n");
             } else {
-                island::LogAndPrint("  native taskbar: re-hidden (the shell put it back)\n");
+                island::LogAndPrint(hadClaim
+                                        ? "  native taskbar: re-hidden (the shell put it back)\n"
+                                        : "  native taskbar: hidden after the recovery guardian"
+                                          " became ready\n");
             }
             std::fflush(stdout);
         }
@@ -2446,12 +2518,18 @@ static void EnsureTaskbarStillHidden(bool hideNativeTaskbar, bool keepStrip, int
         // re-derives it from its own taskbar whenever the reservation is announced -- by any
         // application, on a display change, or when it re-shows its taskbar -- and every one of
         // those puts the strip back. Silent when nothing happened, which is the usual case.
-        if (!keepStrip) {
+        if (!keepStrip && systems.taskbar.HiddenByUs()) {
             const island::NativeTaskbar::WorkAreaRelease again =
-                systems.taskbar.EnsureWorkAreaReleased();
+                hadClaim ? systems.taskbar.EnsureWorkAreaReleased()
+                         : systems.taskbar.ReleaseWorkArea();
             if (again.changed) {
-                island::LogAndPrint("  work area: strip released again (it was back) -- "
-                                    "%ld,%ld - %ld,%ld  ->  %ld,%ld - %ld,%ld\n",
+                const wchar_t* message =
+                    hadClaim
+                        ? L"  work area: strip released again (it was back) -- "
+                          L"%ld,%ld - %ld,%ld  ->  %ld,%ld - %ld,%ld\n"
+                        : L"  work area: strip released after the recovery guardian became ready -- "
+                          L"%ld,%ld - %ld,%ld  ->  %ld,%ld - %ld,%ld\n";
+                island::LogAndPrint(message,
                                     again.before.left, again.before.top, again.before.right,
                                     again.before.bottom, again.after.left, again.after.top,
                                     again.after.right, again.after.bottom);
@@ -5083,7 +5161,7 @@ static void BuildLocalSearchResults(island::BarState& bar, island::BarSystems& s
 
 static bool RefreshStartSearch(island::BarState& bar, island::BarSystems& systems) {
     if (!bar.startPageOpen && !bar.inlineSearchOpen) {
-        systems.fileSearch.Stop();
+        (void)ReportWorkerStop(L"file search", systems.fileSearch.Stop());
         return false;
     }
 
@@ -5119,7 +5197,7 @@ static bool RefreshStartSearch(island::BarState& bar, island::BarSystems& system
     const bool hasQuery = bar.startSearchQuery[0] != L'\0';
     if (!hasQuery) {
         if (queryChanged) {
-            systems.fileSearch.Stop();
+            (void)ReportWorkerStop(L"file search", systems.fileSearch.Stop());
             bar.startSearchActive = false;
             bar.startPageState = 0;
             bar.startAllApps = false;
@@ -5230,7 +5308,7 @@ static void ApplyStartSearchCommand(island::BarState& bar, island::BarSystems& s
         bar.startSearchPending = false;
         bar.startSearchSelected = -1;
         bar.startSearchKinds.clear();
-        systems.fileSearch.Stop();
+        (void)ReportWorkerStop(L"file search", systems.fileSearch.Stop());
         bar.startPageState = 0;
         bar.startAllApps = false;
         bar.startPickerScroll = 0;
@@ -7082,6 +7160,27 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
     island::LogAndPrint("  move the pointer onto the pill to spread it; click to open the card\n");
     island::LogAndPrint("  close the window to exit\n");
 
+    // Recover a taskbar hidden by a previous hard-killed run before deciding
+    // whether this run may change it again. The owner PID + creation time make
+    // this safe across PID reuse, and a clean previous exit has no marker.
+    if (island::RecoverStaleTaskbarIfAny()) {
+        island::LogAndPrint("  taskbar guardian: recovered a stale taskbar snapshot from the previous run\n");
+    }
+    if (hideNativeTaskbar) {
+        std::uint64_t guardianGeneration = 0;
+        if (island::ArmTaskbarGuardian(&guardianGeneration)) {
+            island::LogAndPrint("  taskbar guardian: armed owner pid %lu generation %llu\n",
+                                static_cast<unsigned long>(GetCurrentProcessId()),
+                                static_cast<unsigned long long>(guardianGeneration));
+            if (!island::EnsureTrayObserver(island::kObserverWaitMs)) {
+                island::LogAndPrint("  taskbar guardian: observer did not acknowledge before startup; "
+                                    "the native taskbar will remain visible\n");
+            }
+        } else {
+            island::LogAndPrint("  taskbar guardian: ARM FAILED -- the native taskbar will not be hidden\n");
+        }
+    }
+
     // What happens to the shell's taskbar, and the report of it. The phase lives above RunBar; the order it
     // runs in is unchanged (see the note on the phase functions).
     ApplyNativeTaskbarMode(hideNativeTaskbar, keepNativeTray, systems);
@@ -8045,7 +8144,7 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
                 bar.startIconLoading = true;
                 bar.startIconSourceRevision = iconSourceRevision;
             } else if (!startShownForIcons && bar.startIconLoading) {
-                systems.startApps.StopIconLoading();
+                (void)ReportWorkerStop(L"start icons", systems.startApps.StopIconLoading());
                 bar.startIconLoading = false;
             }
 
@@ -8916,21 +9015,26 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
     systems.scrollTiling.Exit("shutdown");
 
     systems.windowEvents.Stop();
+    (void)ReportWorkerStop(L"tray learning", StopTrayLearningWorker());
     systems.renderer.SetTextRenderer(nullptr);
     systems.text.Shutdown();
     // Stop the listener before tearing the window down: a client mid-send should be
     // finished with, not left holding a pipe that is about to disappear.
-    systems.notificationServer.Stop();
-    systems.wechat.Stop();
-    systems.toasts.Stop();
-    island::StopTrayWake();
-    systems.statusReader.Stop();
-    systems.lyrics.Stop();
-    systems.weather.Stop();
-    systems.volume.Stop();
-    systems.playerWindow.Stop();
-    systems.music.Stop();
-    systems.fileSearch.Stop();
+    (void)ReportWorkerStop(L"notification server", systems.notificationServer.Stop());
+    (void)ReportWorkerStop(L"wechat", systems.wechat.Stop());
+    (void)ReportWorkerStop(L"toasts", systems.toasts.Stop());
+    (void)ReportWorkerStop(L"tray wake", island::StopTrayWake());
+    (void)ReportWorkerStop(L"status", systems.statusReader.Stop());
+    (void)ReportWorkerStop(L"lyrics", systems.lyrics.Stop());
+    (void)ReportWorkerStop(L"weather", systems.weather.Stop());
+    (void)ReportWorkerStop(L"volume", systems.volume.Stop());
+    (void)ReportWorkerStop(L"player window", systems.playerWindow.Stop());
+    (void)ReportWorkerStop(L"music", systems.music.Stop());
+    (void)ReportWorkerStop(L"sound output", systems.soundOutput->Stop());
+    (void)ReportWorkerStop(L"file search", systems.fileSearch.Stop());
+    (void)ReportWorkerStop(L"start apps", systems.startApps.StopListRefresh());
+    (void)ReportWorkerStop(L"tray press", island::StopTrayPressWorker());
+    (void)ReportWorkerStop(L"system toggles", island::StopSystemToggleWorker());
 
     // Give the reserved strip back while the window still exists.
     //

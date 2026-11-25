@@ -298,7 +298,7 @@ public:
 
     // Starts the worker. Returns false only when the thread cannot be created.
     bool Start();
-    void Stop();
+    WorkerThread::StopResult Stop();
 
     // Queues a fetch for this track unless it is the one already held or in flight.
     // Safe to call every frame.

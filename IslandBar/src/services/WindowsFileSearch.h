@@ -29,7 +29,7 @@ public:
 
     bool Request(const wchar_t* query, std::uint64_t sequence);
     bool Take(std::uint64_t* sequence, std::vector<StartSearchResult>* results, bool* completed);
-    void Stop();
+    WorkerThread::StopResult Stop();
 
 private:
     bool Start();

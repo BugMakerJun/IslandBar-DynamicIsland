@@ -18,7 +18,6 @@
 #include <dwrite_3.h>
 
 #include <cstddef>
-#include <unordered_map>
 
 #include "domain/Geometry.h"      // RoundedBox: the text is laid out inside the pill's box
 #include "domain/FullscreenHud.h"
@@ -104,6 +103,17 @@ public:
     static float MusicMeterFraction(float peak);
     TextRenderer() = default;
     ~TextRenderer();
+
+    struct ResourceCounters {
+        unsigned long long brushHits = 0;
+        unsigned long long brushMisses = 0;
+        unsigned long long brushCacheClears = 0;
+    };
+    // Called once before drawing a frame. Brush eviction happens here, never
+    // between two lookups in one frame: a draw routine may hold several cached
+    // pointers while it builds its shapes.
+    void BeginFrame();
+    ResourceCounters TakeResourceCounters();
 
     TextRenderer(const TextRenderer&) = delete;
     TextRenderer& operator=(const TextRenderer&) = delete;
@@ -956,7 +966,6 @@ private:
     // what this returns: the cache owns it, and the brush is shared with every other caller that asked
     // for the same colour.
     ID2D1SolidColorBrush* BrushFor(ID2D1DeviceContext2* context, const D2D1_COLOR_F& colour);
-    std::unordered_map<unsigned, ID2D1SolidColorBrush*> brushCache_;
     // TEXTS ARE SHAPED ONCE, not sixty times a second.
     //
     // DWrite's shaping is the frame's most repeated CPU cost: the music card builds its lyric lines, the

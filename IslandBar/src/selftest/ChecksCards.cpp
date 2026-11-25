@@ -4517,7 +4517,7 @@ void TestMusicCardLayout() {
                     publisher.Publish(pushed);
 
                     island::TrayRingReader reader;
-                    unsigned cursor = 0;
+                    std::uint64_t cursor = 0;
                     island::TrayRingRecord taken[island::kTrayRingCapacity] = {};
                     reader.Open(L"Local\\IslandBar.TrayRing.selftest",
                                 L"Local\\IslandBar.TrayRing.selftest.Event");
@@ -4567,6 +4567,11 @@ void TestMusicCardLayout() {
                     for (unsigned i = 0; i < island::kTrayRingCapacity; ++i) {
                         publisher.PublishHookState(state);
                     }
+                    // ABI 6 never overwrites an unconsumed slot. Consume the
+                    // control burst so the following registration can use the
+                    // ring after a complete lap, which is the property this
+                    // check is about.
+                    (void)reader.Drain(cursor, taken, island::kTrayRingCapacity);
                     island::TrayRegistration after = pushed;
                     after.uid = 11;
                     publisher.Publish(after);

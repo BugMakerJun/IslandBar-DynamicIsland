@@ -24,6 +24,7 @@
 #include <cstddef>
 
 #include "domain/CardLayout.h"   // TrayMenuFacts, TrayMenuAction
+#include "platform/WorkerThread.h"
 #include "platform/WindowList.h"
 #include "shell/TrayIcons.h"
 #include "shell/TrayPress.h"
@@ -89,5 +90,6 @@ bool RunTrayMenuAction(const TrayIcons& icons, WindowList& windows, int cell, Tr
 // Starts a press on a worker thread (it sends a message and then watches the application for an answer, which
 // the bar's own frame loop has no time for).
 void StartTrayPress(const TrayIcons& icons, int cell, bool rightClick);
+WorkerThread::StopResult StopTrayPressWorker();
 
 } // namespace island

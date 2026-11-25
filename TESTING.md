@@ -1,6 +1,6 @@
 # IslandBar 手工自测清单
 
-> 用途：**只有你能做的验证**。自检（`island_bar.exe --self-test`，现在 908 项全过）覆盖几何、解析、像素，
+> 用途：**只有你能做的验证**。自检（`island_bar.exe --self-test`，现在 1273 项全过）覆盖几何、解析、像素、
 > 但"鼠标点下去到底发生什么"必须在真人手里过一遍。
 > **已脱敏**：命令里的 `$env:USERPROFILE` 就是你的用户目录（本文档按 PowerShell 写，所以用这个变量而不是 `%USERPROFILE%`）。
 >
@@ -354,7 +354,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\IslandBar\scripts\restore-
 # 最近 20 行日志
 Get-Content $env:USERPROFILE\IslandBar\island_bar.log -Tail 20
 
-# 全部自检（当前 1233 项；退出码 0 == 全过）
+# 全部自检（当前 1273 项；退出码 0 == 全过）
 & "$env:USERPROFILE\IslandBar\island_bar.exe" --self-test
 
 # Windows 侧最新的真通知（这条通道的调试口）
@@ -520,7 +520,7 @@ private bytes 不再随运行时间单调增长。
 [ OK ] the notification client times out when no acknowledgement arrives
 ```
 
-当前本机完整自检是 **1233 项：1233 OK / 0 FAIL**。
+当前本机完整自检是 **1273 项：1273 OK / 0 FAIL**。
 
 通知管道如果停止超时，日志必须出现：
 
@@ -558,14 +558,14 @@ window icon: hwnd 0000000000000001 no icon after 4 attempts; retries exhausted
 
 ---
 
-## 13. TrayHook `DllMain` 与 Explorer 重启
+## 13. TrayHook observer-only 与 Explorer 重启
 
-`island_tray_hook.dll` 的 `DllMain` 只调用 `DisableThreadLibraryCalls`。模块被加载但 Hook 回调尚未执行时，
-不应创建或追加 `%USERPROFILE%\IslandBar\tray_learned.txt`。第一次 Hook 初始化后才应出现：
+`island_tray_hook.dll` 的 `DllMain` 只调用 `DisableThreadLibraryCalls`。生产模块只安装
+`WH_CALLWNDPROC`，从 `WM_COPYDATA` 解码注册并发布到 ABI 6 Ring；它不重写 Explorer 的导入表，
+也不在注册回调里写磁盘。每次真实重启后的验收行应是：
 
 ```text
-attached pid ... exe Explorer.EXE
-hooked pid ... exe Explorer.EXE: ...
+tray hook: the observer is up in the shell (tray thread ..., 1 hook(s), attempt 1, ...)
 ```
 
 Explorer 重启验收（会短暂隐藏任务栏，已打开的 File Explorer 窗口会关闭）：
@@ -581,14 +581,16 @@ Select-String "$env:USERPROFILE\IslandBar\island_bar.log" -Pattern 'new process|
     Select-Object -Last 20
 ```
 
-新 shell 必须出现且仅出现一次：
+新 Shell 必须出现类似以下两行：
 
 ```text
 tray learn: the shell is a new process (pid ...) -- offering the module to it again (background)
 tray hook: the observer is up in the shell ...
 ```
 
-并最终完成一次 `tray learn: ... registration(s) captured ...`。原生 `Shell_TrayWnd` 随后应重新不可见。
+并最终完成一次 `tray learn: ... registration(s) captured ...`。原生 `Shell_TrayWnd` 随后应重新不可见；
+当前还要求日志出现 `native taskbar: re-hidden`。2026-11-26 实测从强杀旧 Explorer 到新任务栏重新隐藏为
+`323 ms`。
 
 ---
 
@@ -626,3 +628,87 @@ Get-ItemProperty 'HKCU:\Control Panel\Desktop\WindowMetrics' -Name AppliedDPI
 2026-11-23 尝试：设置页选择 125% 后，`AppliedDPI` 与 effective DPI 仍为 96，Windows 提示需要
 关闭重开或重新登录，因此该次不计通过；设置已恢复为 100%。真正的 `WM_DPICHANGED` 验收应在新登录
 会话中完成。
+
+## 15. 任务栏异常退出自救
+
+`NativeTaskbar::Hide()` 只有在 Explorer 内的 recovery guardian 已确认当前 bar PID 和进程创建时间后
+才允许改任务栏。启动前先运行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+    -File .\scripts\taskbar-recovery-test.ps1 -Config Release -Iterations 20 -Deploy
+```
+
+每次迭代会等待 guardian 就绪且任务栏隐藏，强杀 bar 后要求 `Shell_TrayWnd` 在 2 秒内恢复。
+验收结果必须包含：
+
+```text
+RESULT: PASS iterations=20 max_recovery_ms=<2000
+```
+
+每次恢复的日志行：
+
+```text
+taskbar guardian: restored reason=owner-terminated pid <pid> shell <pid> mode <n>
+```
+
+正常关闭则必须同时满足：任务栏可见、`taskbar_recovery.dat` 不存在。脚本失败时会自动恢复桌面状态。
+
+## 16. Tray Ring ABI 6 并发与长期计数
+
+协议压力测试不接触真实托盘，使用独立 Ring 名称，可在项目外直接运行：
+
+```powershell
+Copy-Item .\IslandBar\build\Release\tools\tray_probe\Release\tray_protocol_test.exe `
+    "$env:USERPROFILE\IslandBar\tray_protocol_test.exe" -Force
+& "$env:USERPROFILE\IslandBar\tray_protocol_test.exe"
+```
+
+必须看到：
+
+```text
+[ OK ] thread and process writers never produced a torn or mistyped record
+[ OK ] a full ring drops the new record instead of overwriting unread data
+[ OK ] 100000 sustained registrations cross the 64-slot ring without loss or reordering
+[ OK ] a 64-bit reader cursor crosses the 32-bit boundary without wrapping
+RESULT: PASS
+```
+
+ABI 6 的公开约束是：所有共享字节访问都在命名 Mutex 内；Publisher 最多等 `1 ms`，Reader 最多等 `20 ms`；
+队列满时丢新记录而不覆盖未消费记录；单消费者由 PID + creation time 识别；`WAIT_ABANDONED` 会清除半写槽。
+
+## 17. 动画 165 Hz、CPU 与 GPU 验收
+
+用计时器反复开关面板，不移动真实指针：
+
+```powershell
+$env:ISLANDBAR_NO_MEDIA='1'
+$env:ISLANDBAR_NO_FULLSCREEN='1'
+$env:ISLANDBAR_PANEL_MS='1000'
+$env:ISLANDBAR_PANEL_CLOSE_MS='3000'
+$env:ISLANDBAR_PANEL_CYCLE_MS='5000'
+& "$env:USERPROFILE\IslandBar\island_bar.exe"
+```
+
+日志必须给出 `frame timing: animation samples ... p95 ... p99 ... max ...`，不能只看平均 FPS。
+2026-11-26 本机 165 Hz 面板、Release 实测：`286` 个动画样本，单段最差
+`p95 15.4 ms / p99 19.6 ms / max 19.6 ms`，`hitches 0`。
+
+静止状态使用 `ISLANDBAR_NO_MEDIA=1`；40 秒采样为 CPU `0.13-0.47%`、private bytes
+`80.61-83.13 MB`（35 秒后平），handles `1006-1016`，GDI `44` 不变，USER `19-20`。
+正常音乐运行 5 秒采样为 CPU `0.62%`、GPU engine sum `0.5%`。GPU 计数器：
+
+```powershell
+(Get-Counter '\GPU Engine(*)\Utilization Percentage' -SampleInterval 1 -MaxSamples 3).CounterSamples |
+    Where-Object { $_.InstanceName -match "pid_$((Get-Process island_bar).Id)_" } |
+    Measure-Object CookedValue -Sum
+```
+
+## 18. 本轮未覆盖的真实环境项
+
+以下项目必须标为“未验证”，不能由单显示器 96 DPI 的自动测试冒充通过：
+
+* 多显示器热插拔、不同刷新率和跨屏 DPI；
+* 真实睡眠/唤醒、锁屏/解锁、用户注销；
+* 真实独占全屏游戏切换（自测覆盖了比例、全屏判据和退场逻辑）；
+* 数小时 private-bytes 趋势（本轮做了 40 秒分段趋势，未冒充数小时结果）。

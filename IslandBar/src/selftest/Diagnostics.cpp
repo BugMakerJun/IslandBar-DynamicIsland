@@ -121,6 +121,15 @@ int RunSelfTest() {
         taskbar.SetSuppressed(false);
         Check(!taskbar.Suppressed(), L"... and lets the suppression go again");
     }
+    {
+        // This process never armed the recovery channel, so hiding must fail
+        // closed. The test deliberately tolerates a missing shell taskbar: the
+        // answer is the same and, importantly, no window state is touched.
+        island::NativeTaskbar unguarded;
+        (void)unguarded.Locate();
+        Check(!unguarded.Hide(),
+              L"the native taskbar refuses to hide without a recovery guardian");
+    }
 
     // THE ONE PLACE THAT ENCODES A TRAY CLICK (2026-10-16). The version-4 numbers are the bytes the shell
     // ITSELF was caught sending to a version-4 application on a real right click (HANDOFF 8.142: pointer

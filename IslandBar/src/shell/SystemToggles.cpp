@@ -4,6 +4,7 @@
 #include "shell/SystemToggles.h"
 
 #include "core/Log.h"
+#include "platform/WorkerThread.h"
 #include "shell/StartMenu.h"   // SendWindowsCtrlKeyChord
 
 #include <shellapi.h>
@@ -19,9 +20,10 @@
 
 #include <algorithm>
 #include <atomic>
+#include <memory>
 #include <mutex>
+#include <new>
 #include <string>
-#include <thread>
 #include <vector>
 
 #pragma comment(lib, "windowsapp.lib")
@@ -41,6 +43,28 @@ namespace {
 // owns", the user cannot meaningfully start the second while the first is in flight, and one flag is
 // easier to keep honest than two.
 enum class JobKind { None, Radios, NightLight };
+
+void RunRadioJob(bool wifi, bool bluetooth, bool on);
+void RunNightLightJob(bool on);
+
+struct ToggleJob {
+    JobKind kind = JobKind::None;
+    bool wifi = false;
+    bool bluetooth = false;
+    bool on = false;
+};
+
+WorkerThread g_toggleWorker;
+
+unsigned long __stdcall ToggleThreadEntry(void* context) {
+    std::unique_ptr<ToggleJob> job(static_cast<ToggleJob*>(context));
+    if (job->kind == JobKind::Radios) {
+        RunRadioJob(job->wifi, job->bluetooth, job->on);
+    } else if (job->kind == JobKind::NightLight) {
+        RunNightLightJob(job->on);
+    }
+    return 0;
+}
 
 std::atomic<bool> g_busy{false};
 std::mutex g_resultMutex;
@@ -386,8 +410,11 @@ void RunNightLightJob(bool on) {
 bool RequestRadios(bool wifi, bool bluetooth, bool on) {
     if (!wifi && !bluetooth) return false;
     if (!ClaimJob(JobKind::Radios)) return false;
-    std::thread(RunRadioJob, wifi, bluetooth, on).detach();
-    return true;
+    auto* job = new (std::nothrow) ToggleJob{JobKind::Radios, wifi, bluetooth, on};
+    if (job && g_toggleWorker.StartUnmanaged(&ToggleThreadEntry, job)) return true;
+    delete job;
+    g_busy.store(false);
+    return false;
 }
 
 bool TakeRadioOutcome(bool* wifiNow, bool* bluetoothNow, bool* wifiAsked, bool* bluetoothAsked,
@@ -469,8 +496,15 @@ bool NightLightOnForDisplay() {
 
 bool RequestNightLight(bool on) {
     if (!ClaimJob(JobKind::NightLight)) return false;
-    std::thread(RunNightLightJob, on).detach();
-    return true;
+    auto* job = new (std::nothrow) ToggleJob{JobKind::NightLight, false, false, on};
+    if (job && g_toggleWorker.StartUnmanaged(&ToggleThreadEntry, job)) return true;
+    delete job;
+    g_busy.store(false);
+    return false;
+}
+
+WorkerThread::StopResult StopSystemToggleWorker() {
+    return g_toggleWorker.Stop();
 }
 
 bool TakeNightLightOutcome(bool* wanted, bool* stateAfter, bool* succeeded) {

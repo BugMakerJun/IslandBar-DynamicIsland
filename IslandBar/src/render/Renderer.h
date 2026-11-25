@@ -696,7 +696,20 @@ public:
         bool commitAttempted = false;
         bool commitSucceeded = false;
     };
+
+    struct ResourceCounters {
+        unsigned long long clipHits = 0;
+        unsigned long long clipBuilds = 0;
+    };
     const FrameTiming& LastFrameTiming() const { return lastFrameTiming_; }
+    ResourceCounters TakeResourceCounters() {
+        ResourceCounters counters;
+        counters.clipHits = cardClipHits_;
+        counters.clipBuilds = cardClipBuilds_;
+        cardClipHits_ = 0;
+        cardClipBuilds_ = 0;
+        return counters;
+    }
 
     void ResetFrameStats() {
         lastFrameMicroseconds_ = 0.0;
@@ -911,6 +924,15 @@ private:
     ID2D1Device2*            d2dDevice_   = nullptr;
     ID2D1DeviceContext2*     d2dContext_  = nullptr;
     ID2D1Bitmap1*            d2dTarget_   = nullptr;
+    // The card reveal uses one axis-aligned rectangle per transition frame.
+    // Rebuild only when its edges move; D2D geometry is device-independent and
+    // safe to retain across target recreation.
+    ID2D1RectangleGeometry*  cardClip_    = nullptr;
+    D2D1_RECT_F              cardClipRect_ = {};
+    bool                     cardClipValid_ = false;
+    unsigned long long       cardClipHits_ = 0;
+    unsigned long long       cardClipBuilds_ = 0;
+    ID2D1SolidColorBrush*    morphBrush_  = nullptr;
 
     // --- composition ---
     IDCompositionDevice*     compDevice_  = nullptr;

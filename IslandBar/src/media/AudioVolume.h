@@ -53,7 +53,7 @@ public:
     // Starts the worker and reads the current volume. Returns false when the audio endpoint
     // is unavailable, in which case the control is simply not drawn.
     bool Start();
-    void Stop();
+    WorkerThread::StopResult Stop();
 
     // True once a volume has been read. Until then there is nothing to show.
     bool Available() const;

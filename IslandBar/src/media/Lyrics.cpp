@@ -1046,17 +1046,18 @@ bool LyricsProvider::Start() {
     return true;
 }
 
-void LyricsProvider::Stop() {
+WorkerThread::StopResult LyricsProvider::Stop() {
     // The worker may be inside a network call. It checks the stop event between requests, and its HTTP
     // timeouts bound how long a single one can take, so this wait is finite rather than a hang -- which is
     // why the timeout here is 5000 ms and not the 3000 ms the local readers use.
     const WorkerThread::StopResult stopped = worker_.Stop(5000);
     running_.store(false, std::memory_order_release);
-    if (stopped != WorkerThread::StopResult::Stopped) return;
+    if (stopped != WorkerThread::StopResult::Stopped) return stopped;
     if (requestEvent_) {
         CloseHandle(requestEvent_);
         requestEvent_ = nullptr;
     }
+    return stopped;
 }
 
 void LyricsProvider::Request(const char* title, const char* artist) {

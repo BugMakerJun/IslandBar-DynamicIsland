@@ -119,11 +119,11 @@ bool AudioVolume::Start() {
     return true;
 }
 
-void AudioVolume::Stop() {
+WorkerThread::StopResult AudioVolume::Stop() {
     const WorkerThread::StopResult stopped = worker_.Stop();
     running_.store(false, std::memory_order_release);
     peakMeterActive_.store(false, std::memory_order_relaxed);
-    if (stopped != WorkerThread::StopResult::Stopped) return;
+    if (stopped != WorkerThread::StopResult::Stopped) return stopped;
     if (writeEvent_) {
         CloseHandle(writeEvent_);
         writeEvent_ = nullptr;
@@ -136,6 +136,7 @@ void AudioVolume::Stop() {
         CloseHandle(volumeEvent_);
         volumeEvent_ = nullptr;
     }
+    return stopped;
 }
 
 bool AudioVolume::Available() const {

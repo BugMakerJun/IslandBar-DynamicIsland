@@ -685,12 +685,13 @@ bool WeatherReader::Start() {
     return true;
 }
 
-void WeatherReader::Stop() {
+WorkerThread::StopResult WeatherReader::Stop() {
     // The worker may be inside a network call, so the timeout is the 5000 ms the reader chose for itself.
     const WorkerThread::StopResult stopped = worker_.Stop(5000);
     if (stopped == WorkerThread::StopResult::Stopped) {
         running_.store(false, std::memory_order_release);
     }
+    return stopped;
 }
 
 bool WeatherReader::Get(double* temperatureC, int* code, int* sunriseMinutes,

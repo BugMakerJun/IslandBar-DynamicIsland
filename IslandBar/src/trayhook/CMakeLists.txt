@@ -10,6 +10,7 @@
 
 add_library(island_tray_hook SHARED
     TrayHook.cpp
+    ../platform/TaskbarRecovery.cpp
 )
 
 target_link_libraries(island_tray_hook PRIVATE user32 shell32)

@@ -88,7 +88,7 @@ public:
     // carries on without this source.
     bool Start();
 
-    void Stop();
+    WorkerThread::StopResult Stop();
 
     // Copies the latest reading. Cheap and non-blocking; call it from the frame loop.
     void Snapshot(PlayerWindowInfo* out) const;

@@ -186,7 +186,7 @@ public:
     // Opens the machine handles on its own worker and takes the first reading.
     // The worker then samples every pollMs and wakes the UI after publishing.
     bool Start(HWND wakeWindow, unsigned long pollMs = 2000);
-    void Stop();
+    WorkerThread::StopResult Stop();
 
     // Asks the worker to take a reading now, used after a user changes a radio.
     void RequestSample();

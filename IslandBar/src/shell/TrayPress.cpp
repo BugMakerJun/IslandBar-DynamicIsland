@@ -500,18 +500,16 @@ std::wstring RightNoteIdentity(const TrayPressRequest& request) {
 TrayRightNote ReadRightNote(const TrayPressRequest& request) {
     const std::wstring file = RightNotePath();
     if (file.empty()) return TrayRightNote::Untried;
-    FILE* stream = nullptr;
-    if (_wfopen_s(&stream, file.c_str(), L"r, ccs=UTF-8") != 0 || !stream) return TrayRightNote::Untried;
+    std::vector<std::wstring> lines;
+    if (!TrayCallbackCache::Read(&lines, file)) return TrayRightNote::Untried;
     const std::wstring exe = BaseNameLower(request.exePath);
     // THE KEY IS THE ICON'S WHOLE IDENTITY, GUID INCLUDED. Keying on the uid alone puts every GUID-registered
     // icon of one executable on the same line -- and Explorer alone has four of them here, each with a uid of 0
     // in the registry record and a guid that is the identity the shell uses. Measured the moment this file was
     // first written: `chatgpt.exe|0|both-failed` for an icon whose cache line says uid 3.
     const std::wstring wanted = RightNoteIdentity(request);
-    wchar_t buffer[512] = {};
     TrayRightNote note = TrayRightNote::Untried;
-    while (std::fgetws(buffer, 512, stream)) {
-        std::wstring text = buffer;
+    for (const std::wstring& text : lines) {
         std::vector<std::wstring> fields;
         size_t start = 0;
         for (;;) {
@@ -539,7 +537,6 @@ TrayRightNote ReadRightNote(const TrayPressRequest& request) {
             if (_wcsicmp(fields[word].c_str(), TrayRightNoteName(candidate)) == 0) note = candidate;
         }
     }
-    std::fclose(stream);
     return note;
 }
 
@@ -548,40 +545,36 @@ void WriteRightNote(const TrayPressRequest& request, TrayRightNote note) {
     if (file.empty()) return;
     const std::wstring exe = BaseNameLower(request.exePath);
     const std::wstring wanted = RightNoteIdentity(request);
-    std::vector<std::wstring> lines;
-    {
-        FILE* stream = nullptr;
-        if (_wfopen_s(&stream, file.c_str(), L"r, ccs=UTF-8") == 0 && stream) {
-            wchar_t buffer[512] = {};
-            while (std::fgetws(buffer, 512, stream)) lines.push_back(buffer);
-            std::fclose(stream);
-        }
-    }
     wchar_t fresh[320] = {};
-    std::swprintf(fresh, 320, L"%ls|%ls|%ls\n", exe.c_str(), wanted.c_str(), TrayRightNoteName(note));
-    bool replaced = false;
-    for (std::wstring& line : lines) {
-        const size_t bar = line.find(L'|');
-        // THE LAST SEPARATOR ON THE LINE IS THE ONE BEFORE THE WORD, and the identity is everything between it
-        // and the first one -- `uid`, or `uid|guid`. Using the SECOND separator instead (which is what this did
-        // first) reads `0|{guid}|pair-failed` as the identity, never matches, and appends a second line for the
-        // same icon: measured, `chatgpt.exe|0|{E5768D8B-...}|pair-failed` and the same key again with
-        // `both-failed` beneath it.
-        const size_t lastBar = line.find_last_of(L'|');
-        if (bar == std::wstring::npos || lastBar == std::wstring::npos || lastBar <= bar) continue;
-        std::wstring name = line.substr(0, bar);
-        std::transform(name.begin(), name.end(), name.begin(), ::towlower);
-        const std::wstring identity = line.substr(bar + 1, lastBar - bar - 1);
-        if (name != exe || identity != wanted) continue;
-        line = fresh;
-        replaced = true;
-        break;
+    std::swprintf(fresh, 320, L"%ls|%ls|%ls", exe.c_str(), wanted.c_str(),
+                  TrayRightNoteName(note));
+    const bool updated = TrayCallbackCache::Update(
+        [&](std::vector<std::wstring>& lines) {
+            bool replaced = false;
+            for (std::wstring& line : lines) {
+                const size_t bar = line.find(L'|');
+                const size_t lastBar = line.find_last_of(L'|');
+                if (bar == std::wstring::npos || lastBar == std::wstring::npos ||
+                    lastBar <= bar) {
+                    continue;
+                }
+                std::wstring name = line.substr(0, bar);
+                std::transform(name.begin(), name.end(), name.begin(), ::towlower);
+                const std::wstring identity = line.substr(bar + 1, lastBar - bar - 1);
+                if (name != exe || identity != wanted) continue;
+                line = fresh;
+                replaced = true;
+                break;
+            }
+            if (!replaced) lines.emplace_back(fresh);
+            return true;
+        },
+        file);
+    if (!updated) {
+        LogAndPrint(L"  tray press: '%ls' right-button state could not be saved\n", request.name);
+        std::fflush(stdout);
+        return;
     }
-    if (!replaced) lines.push_back(fresh);
-    FILE* stream = nullptr;
-    if (_wfopen_s(&stream, file.c_str(), L"w, ccs=UTF-8") != 0 || !stream) return;
-    for (const std::wstring& line : lines) std::fputws(line.c_str(), stream);
-    std::fclose(stream);
     LogAndPrint(L"  tray press: '%ls' right button is now recorded as %ls\n", request.name,
                 TrayRightNoteName(note));
     std::fflush(stdout);

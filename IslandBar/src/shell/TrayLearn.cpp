@@ -22,6 +22,7 @@
 // The channel the module publishes on, and the wire format of one record (see platform/TrayRing.h).
 #include "domain/TrayRegistration.h"
 #include "domain/TrayLedger.h"
+#include "platform/TaskbarRecovery.h"
 #include "platform/TrayRing.h"
 #include "platform/UiWake.h"
 #include "platform/WorkerThread.h"
@@ -35,6 +36,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstring>
+#include <deque>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -116,10 +118,13 @@ bool StartTrayWake(HWND wakeWindow) {
     return true;
 }
 
-void StopTrayWake() {
+WorkerThread::StopResult StopTrayWake() {
     g_trayWakePump.running.store(false, std::memory_order_release);
-    if (g_trayWakePump.worker.Stop() != WorkerThread::StopResult::Stopped) return;
-    g_trayWakePump.window.store(nullptr, std::memory_order_release);
+    const WorkerThread::StopResult stopped = g_trayWakePump.worker.Stop();
+    if (stopped == WorkerThread::StopResult::Stopped) {
+        g_trayWakePump.window.store(nullptr, std::memory_order_release);
+    }
+    return stopped;
 }
 
 // Drains the shared-memory ring the module publishes on, writes the records it finds as report lines, and
@@ -341,9 +346,27 @@ bool FieldNumber(const wchar_t* line, const wchar_t* key, unsigned* out, bool he
 // name is filled in from here when the line could not state it. Lower case, like every other exe name in the
 // cache file: the registry and the window both spell it however they like.
 std::wstring ExeLeafForPid(unsigned pid) {
-    static std::vector<std::pair<unsigned, std::wstring>> known;
-    for (const std::pair<unsigned, std::wstring>& entry : known) {
-        if (entry.first == pid) return entry.second;
+    struct Entry {
+        unsigned pid = 0;
+        std::uint64_t created = 0;
+        std::wstring name;
+        std::uint64_t used = 0;
+    };
+    static std::vector<Entry> known;
+    static std::uint64_t useTick = 0;
+    static std::mutex knownLock;
+
+    std::uint64_t created = 0;
+    if (!ProcessCreationTimeFor(pid, &created)) return std::wstring();
+    {
+        std::lock_guard<std::mutex> lock(knownLock);
+        ++useTick;
+        for (Entry& entry : known) {
+            if (entry.pid == pid && entry.created == created) {
+                entry.used = useTick;
+                return entry.name;
+            }
+        }
     }
     std::wstring found;
     const HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -360,7 +383,16 @@ std::wstring ExeLeafForPid(unsigned pid) {
         }
         CloseHandle(snapshot);
     }
-    known.push_back(std::make_pair(pid, found));
+    if (!found.empty()) {
+        std::lock_guard<std::mutex> lock(knownLock);
+        if (known.size() >= 256) {
+            const auto victim = std::min_element(
+                known.begin(), known.end(),
+                [](const Entry& a, const Entry& b) { return a.used < b.used; });
+            if (victim != known.end()) known.erase(victim);
+        }
+        known.push_back(Entry{pid, created, found, useTick});
+    }
     return found;
 }
 
@@ -491,7 +523,7 @@ public:
                                           FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
                                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
         if (handle == INVALID_HANDLE_VALUE) return false;
-        std::vector<char> bytes(1 << 20, 0);
+        std::vector<char> bytes(2 << 20, 0);
         DWORD read = 0;
         const BOOL ok = ReadFile(handle, bytes.data(), static_cast<DWORD>(bytes.size() - 1), &read, nullptr);
         CloseHandle(handle);
@@ -798,6 +830,93 @@ bool InstallTrayHook() {
     return true;
 }
 
+namespace {
+
+struct ObserverInstallation {
+    DWORD shellPid = 0;
+    bool resident = false;
+    std::vector<HHOOK> hooks;
+    std::vector<DWORD> hookThreads;
+    int poked = 0;
+    DWORD lastError = 0;
+};
+
+bool InstallObserverHooks(ObserverInstallation* installation) {
+    if (!installation) return false;
+    *installation = {};
+    if (!InstallTrayHook()) return false;
+
+    installation->shellPid = TrayShellProcessId();
+    if (installation->shellPid == 0) {
+        LogAndPrint("  tray hook: no Shell_TrayWnd on this desktop -- observer unavailable\n");
+        return false;
+    }
+    installation->resident = AlreadyHasThisModule(installation->shellPid, StagedLeaf());
+    if (installation->resident) return true;
+
+    const FARPROC procedure = GetProcAddress(g_hookModule, "IslandTrayHookProc");
+    if (!procedure) return false;
+    const HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) return false;
+    THREADENTRY32 entry = {};
+    entry.dwSize = sizeof(entry);
+    int seen = 0;
+    if (Thread32First(snapshot, &entry)) {
+        do {
+            if (entry.th32OwnerProcessID != installation->shellPid) continue;
+            ++seen;
+            const HHOOK installed = SetWindowsHookExW(WH_GETMESSAGE,
+                                                      reinterpret_cast<HOOKPROC>(procedure),
+                                                      g_hookModule, entry.th32ThreadID);
+            if (installed) {
+                installation->hooks.push_back(installed);
+                installation->hookThreads.push_back(entry.th32ThreadID);
+            } else {
+                installation->lastError = GetLastError();
+            }
+        } while (Thread32Next(snapshot, &entry));
+    }
+    CloseHandle(snapshot);
+    for (DWORD threadId : installation->hookThreads) {
+        if (PostThreadMessageW(threadId, WM_NULL, 0, 0)) ++installation->poked;
+    }
+    LogAndPrint(L"  tray hook: observer installation accepted %d of %d thread hook(s) for pid %lu\n",
+                static_cast<int>(installation->hooks.size()), seen,
+                static_cast<unsigned long>(installation->shellPid));
+    return !installation->hooks.empty();
+}
+
+void ReleaseObserverHooks(ObserverInstallation* installation) {
+    if (!installation) return;
+    for (HHOOK installed : installation->hooks) {
+        if (installed) UnhookWindowsHookEx(installed);
+    }
+    installation->hooks.clear();
+    installation->hookThreads.clear();
+}
+
+} // namespace
+
+bool EnsureTrayObserver(DWORD timeoutMs) {
+    ObserverInstallation installation;
+    if (!InstallObserverHooks(&installation)) {
+        ReleaseObserverHooks(&installation);
+        return false;
+    }
+    // The observer has either landed now or was already pinned in this shell.
+    // Announce the current owner again: the previous Explorer may have consumed
+    // the earlier event before it was replaced.
+    (void)AnnounceTaskbarGuardian();
+    const bool ready = WaitForCurrentTaskbarGuardian(timeoutMs);
+    ReleaseObserverHooks(&installation);
+    if (!ready) {
+        LogAndPrint(L"  taskbar guardian: observer pid %lu did not acknowledge within %lu ms\n",
+                    static_cast<unsigned long>(installation.shellPid),
+                    static_cast<unsigned long>(timeoutMs));
+    }
+    return ready;
+}
+
 // Defined beside the ring reader, below; this pass waits on what it fills in.
 bool FillObserverResult(TrayLearnResult* result, DWORD pid);
 
@@ -811,7 +930,14 @@ TrayLearnResult LearnTrayCallbacks(const TrayIcons& icons, bool broadcast) {
 
     // --- the report starts empty, so everything in it belongs to this run -----------------
     const std::wstring report = HomePath(kReportFile);
-    if (!report.empty()) DeleteFileW(report.c_str());
+    if (!report.empty() && !DeleteFileW(report.c_str())) {
+        const DWORD error = GetLastError();
+        if (error != ERROR_FILE_NOT_FOUND && error != ERROR_PATH_NOT_FOUND) {
+            LogAndPrint(L"  tray learn: report '%ls' could not be reset (error %lu); "
+                        L"new lines will be merged with the old file\n",
+                        report.c_str(), static_cast<unsigned long>(error));
+        }
+    }
 
     // --- ONE PROCESS: THE SHELL'S OWN ------------------------------------------------------------
     //
@@ -903,6 +1029,10 @@ TrayLearnResult LearnTrayCallbacks(const TrayIcons& icons, bool broadcast) {
         if (PostThreadMessageW(threadId, WM_NULL, 0, 0)) ++poked;
     }
     result.poked = poked;
+    // A replacement Explorer starts from an empty process: the module is new,
+    // and the owner event may already have been consumed by the old watcher.
+    // Announce this still-running bar again so the new watcher can acknowledge.
+    (void)island::AnnounceTaskbarGuardian();
 
     // --- WAIT FOR THE MODULE TO SAY IT IS LISTENING, THEN ASK ONCE ---------------------------------
     //
@@ -1035,10 +1165,12 @@ struct KnownObserver {
     bool valid = false;
 };
 KnownObserver g_observers[kKnownObservers];
+std::mutex g_observersLock;
 } // namespace
 
 void RememberObserver(const TrayHookState& state) {
     if (state.pid == 0) return;
+    std::lock_guard<std::mutex> lock(g_observersLock);
     for (KnownObserver& slot : g_observers) {
         if (slot.valid && slot.pid == state.pid) {
             slot.state = state;   // the newest verdict about a process replaces the one before it
@@ -1065,25 +1197,30 @@ void RememberObserver(const TrayHookState& state) {
     g_observers[0].state = state;
 }
 
-const TrayHookState* KnownObserverFor(DWORD pid) {
-    if (pid == 0) return nullptr;
+bool KnownObserverFor(DWORD pid, TrayHookState* state) {
+    if (pid == 0 || !state) return false;
+    std::lock_guard<std::mutex> lock(g_observersLock);
     for (const KnownObserver& slot : g_observers) {
-        if (slot.valid && slot.pid == pid) return &slot.state;
+        if (slot.valid && slot.pid == pid) {
+            *state = slot.state;
+            return true;
+        }
     }
-    return nullptr;
+    return false;
 }
 
 // The observer's numbers into the result its caller prints. `pid` is the shell this pass is about. Returns
 // true when the module is up, which is what the wait below stops on.
 bool FillObserverResult(TrayLearnResult* result, DWORD pid) {
-    const TrayHookState* state = KnownObserverFor(pid);
-    if (!state || !result) return false;
-    result->observerReady = state->ready;
-    result->observerTid = state->trayThread;
-    result->observerHooks = state->hooks;
-    result->observerAttempts = state->attempts;
-    result->observerError = state->lastError;
-    return state->ready;
+    if (!result) return false;
+    TrayHookState state;
+    if (!KnownObserverFor(pid, &state)) return false;
+    result->observerReady = state.ready;
+    result->observerTid = state.trayThread;
+    result->observerHooks = state.hooks;
+    result->observerAttempts = state.attempts;
+    result->observerError = state.lastError;
+    return state.ready;
 }
 
 // =====================================================================
@@ -1125,9 +1262,31 @@ struct ReportAppender {
         const int bytes = WideCharToMultiByte(CP_UTF8, 0, line, -1, utf8, sizeof(utf8) - 1, nullptr, nullptr);
         if (bytes <= 1) return false;
         DWORD written = 0;
-        return WriteFile(handle, utf8, static_cast<DWORD>(bytes - 1), &written, nullptr) != 0;
+        const DWORD wanted = static_cast<DWORD>(bytes - 1);
+        return WriteFile(handle, utf8, wanted, &written, nullptr) != 0 && written == wanted;
     }
 };
+
+constexpr unsigned long long kMaxTrayReportBytes = 2ull * 1024ull * 1024ull;
+constexpr size_t kMaxPendingReportLines = 2048;
+
+bool TrimReportFileAtLimit(const std::wstring& path) {
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE,
+                              FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                              OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return GetLastError() == ERROR_FILE_NOT_FOUND;
+    LARGE_INTEGER size = {};
+    const bool measured = GetFileSizeEx(file, &size) != FALSE;
+    if (measured && size.QuadPart >= static_cast<LONGLONG>(kMaxTrayReportBytes)) {
+        LARGE_INTEGER start = {};
+        const bool moved = SetFilePointerEx(file, start, nullptr, FILE_BEGIN) != FALSE;
+        const bool trimmed = moved && SetEndOfFile(file) != FALSE;
+        CloseHandle(file);
+        return trimmed;
+    }
+    CloseHandle(file);
+    return measured;
+}
 
 // --- THE LEDGER OF WHAT THE SHELL IS HOLDING RIGHT NOW -------------------------------------------------
 //
@@ -1228,66 +1387,21 @@ void ForgetDeadTrayWindows() {
 int DrainTrayRing(TrayLearnResult* result) {
     std::lock_guard<std::mutex> drainLock(g_trayRingDrainLock);
     static TrayRingReader reader;
-    static unsigned cursor = 0;
-    // THE TWO NUMBERS THAT SAY WHERE A RECORD WAS LOST, reported the first few times they are asked for. This
-    // function is the only place where "the module published it" and "the bar learned it" can disagree, and it
-    // disagreed silently once (2026-10-16): the ring held 170 records, one of them the probe registrar's own
-    // icon, and the bar reported 0 captures with nothing anywhere saying which of the two sides was wrong.
+    static std::uint64_t cursor = 0;
     static volatile LONG explained = 0;
     static volatile LONG openFailures = 0;
+    static std::deque<std::wstring> pendingReportLines;
+    static unsigned long long pendingDropped = 0;
 
     TrayRingRecord records[kTrayRingCapacity] = {};
     const unsigned taken = reader.Drain(cursor, records, kTrayRingCapacity);
-    if (taken == 0) {
-        // Nothing new. If a ring exists with a different ABI, say so once: two builds that disagree about the
-        // layout must not sit there quietly learning nothing.
-        //
-        // ... and when the ring IS the one this build expects, the cursor and the writer's count are the whole
-        // story: equal numbers mean every record has been read, and a cursor ahead of the writer means this
-        // process read records another thread of this same bar consumed.
-        if (reader.header && InterlockedIncrement(&explained) <= 3) {
-            LogAndPrint(L"  tray ring: nothing new (written %ld, cursor %u)\n",
-                        static_cast<long>(reader.header->written), cursor);
-            std::fflush(stdout);
-        }
-        if (!reader.header && reader.abiSeen != 0 && reader.abiSeen != kTrayRingAbi && !result->ringAbiMismatch) {
-            result->ringAbiMismatch = true;
-            LogAndPrint(L"  tray learn: the module is publishing on ABI %u and this bar reads %u -- no "
-                        L"registrations will arrive until the two match (see platform/TrayRing.h)\n",
-                        reader.abiSeen, kTrayRingAbi);
-            std::fflush(stdout);
-        }
-        return 0;
-    }
-
-    // CONTROL RECORDS FIRST, and never as a registration: the module's state is what the caller WAITS on, and
-    // it is remembered per process rather than per pass (see RememberObserver).
-    bool anyRegistration = false;
     for (unsigned i = 0; i < taken; ++i) {
         if (records[i].kind == TrayRingKind::HookState) {
             RememberObserver(records[i].hook);
-            continue;
         }
-        anyRegistration = true;
     }
-    if (!anyRegistration) return static_cast<int>(taken);
 
     const std::wstring report = HomePath(kReportFile);
-    int written = 0;
-    ReportAppender appender;
-    if (report.empty() || !appender.Open(report)) {
-        // The line cannot be written, so nobody can learn from these records -- and that is said out loud
-        // rather than counted as a capture. `captured` means "a registration that reached the cache's door",
-        // and it is counted in ONE place (the reader that parses these lines, see HarvestReport): counting the
-        // same record here as well made the number twice what it was.
-        if (InterlockedIncrement(&openFailures) <= 3) {
-            LogAndPrint(L"  tray ring: %u record(s) taken but '%ls' cannot be opened for append -- the "
-                        L"registrations in them are LOST\n",
-                        taken, report.c_str());
-            std::fflush(stdout);
-        }
-        return static_cast<int>(taken);
-    }
     for (unsigned i = 0; i < taken; ++i) {
         if (records[i].kind != TrayRingKind::Registration) continue;
         const TrayRegistration& registration = records[i].registration;
@@ -1317,25 +1431,55 @@ int DrainTrayRing(TrayLearnResult* result) {
                      CommandName(registration.command), ownerPid, exe.empty() ? L"-" : exe.c_str(), trayWindow,
                      registration.uid, registration.callback, registration.version, registration.flags,
                      guidText.empty() ? L"-" : guidText.c_str(), registration.tip);
-        if (appender.Write(line)) ++written;
-    }
-    // ONLY A DISCREPANCY IS WORTH A LINE, AND A DISCREPANCY IS WHAT COST A WHOLE ROUND HERE.
-    //
-    // The failure this reports on was invisible by construction: 35 records taken, no line written, no error
-    // raised, and the pass reporting `0 registration(s) captured`. So the quiet case -- every record became a
-    // line -- says nothing at all, and anything else says what was taken, what was written, where it went and
-    // what the records claimed to be.
-    if (written != static_cast<int>(taken)) {
-        wchar_t kinds[200] = {};
-        int used = 0;
-        for (unsigned i = 0; i < taken && i < 6; ++i) {
-            const int added = _snwprintf_s(kinds + used, 200 - used, _TRUNCATE, L" %u/%s",
-                                           static_cast<unsigned>(records[i].kind),
-                                           records[i].registration.valid ? L"valid" : L"invalid");
-            if (added > 0) used += added;
+        pendingReportLines.emplace_back(line);
+        if (pendingReportLines.size() > kMaxPendingReportLines) {
+            pendingReportLines.pop_front();
+            ++pendingDropped;
         }
-        LogAndPrint(L"  tray ring: %u record(s) taken, %d written to '%ls' (kind/valid:%ls)\n", taken, written,
-                    report.c_str(), kinds);
+    }
+
+    if (taken == 0 && pendingReportLines.empty()) {
+        if (reader.header && InterlockedIncrement(&explained) <= 3) {
+            LogAndPrint(L"  tray ring: nothing new (written %llu, cursor %llu)\n",
+                        static_cast<unsigned long long>(reader.Published()),
+                        static_cast<unsigned long long>(cursor));
+            std::fflush(stdout);
+        }
+        if (!reader.header && reader.abiSeen != 0 && reader.abiSeen != kTrayRingAbi &&
+            !result->ringAbiMismatch) {
+            result->ringAbiMismatch = true;
+            LogAndPrint(L"  tray learn: the module is publishing on ABI %u and this bar reads %u -- no "
+                        L"registrations will arrive until the two match (see platform/TrayRing.h)\n",
+                        reader.abiSeen, kTrayRingAbi);
+            std::fflush(stdout);
+        }
+        return 0;
+    }
+    if (report.empty()) return static_cast<int>(taken);
+
+    if (!TrimReportFileAtLimit(report)) {
+        LogAndPrint(L"  tray ring: report bound check failed for '%ls'\n", report.c_str());
+    }
+    ReportAppender appender;
+    if (!appender.Open(report)) {
+        if (InterlockedIncrement(&openFailures) <= 3) {
+            LogAndPrint(L"  tray ring: '%ls' cannot be opened; %llu line(s) retained in memory\n",
+                        report.c_str(), static_cast<unsigned long long>(pendingReportLines.size()));
+            std::fflush(stdout);
+        }
+        return static_cast<int>(taken);
+    }
+    while (!pendingReportLines.empty()) {
+        if (!appender.Write(pendingReportLines.front().c_str())) break;
+        pendingReportLines.pop_front();
+    }
+    if (!pendingReportLines.empty()) {
+        LogAndPrint(L"  tray ring: %llu line(s) retained after a short report write\n",
+                    static_cast<unsigned long long>(pendingReportLines.size()));
+        std::fflush(stdout);
+    }
+    if (pendingDropped != 0 && InterlockedIncrement(&openFailures) <= 3) {
+        LogAndPrint(L"  tray ring: %llu line(s) dropped at the in-memory bound\n", pendingDropped);
         std::fflush(stdout);
     }
     return static_cast<int>(taken);

@@ -34,6 +34,7 @@
 #pragma once
 
 #include "domain/TrayLedger.h"
+#include "platform/WorkerThread.h"
 #include "shell/TrayIcons.h"
 
 namespace island {
@@ -123,12 +124,17 @@ std::wstring ObserverClause(const TrayLearnResult& learned);
 // A failure is reported in the log and is not fatal: without the module a press uses whatever the cache holds.
 bool InstallTrayHook();
 
+// Makes the shell-side module land without starting a learning pass, then
+// waits for its taskbar recovery watcher to acknowledge the current bar
+// process. This is the gate NativeTaskbar uses before changing Explorer state.
+bool EnsureTrayObserver(DWORD timeoutMs);
+
 // Waits on the tray ring's existing named event and on changes to the
 // NotifyIconSettings registry subtree. Every signal only posts a coalesced UI
 // wake; the normal tray tick still performs the refresh. The five-second tick
 // remains the fallback when either notification source is unavailable.
 bool StartTrayWake(HWND wakeWindow);
-void StopTrayWake();
+WorkerThread::StopResult StopTrayWake();
 
 // Learns what every running tray application's callback is, and writes the cache.
 //

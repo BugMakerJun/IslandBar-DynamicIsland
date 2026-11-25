@@ -62,7 +62,7 @@ public:
     // collide with a running bar.
     bool Start(const wchar_t* pipeName = kPipeName);
 
-    void Stop();
+    WorkerThread::StopResult Stop();
 
     bool IsRunning() const { return running_.load(std::memory_order_acquire); }
     bool PipeDaclValidated() const {

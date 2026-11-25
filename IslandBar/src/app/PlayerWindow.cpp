@@ -175,11 +175,11 @@ bool PlayerWindowWatch::Start() {
     return true;
 }
 
-void PlayerWindowWatch::Stop() {
+WorkerThread::StopResult PlayerWindowWatch::Stop() {
     // NO early return when running_ is false, which is what this used to do: the handles belong to the
     // attempt, not to the flag, and a Start() that failed after preparing the event left it open forever.
     running_.store(false, std::memory_order_release);
-    (void)worker_.Stop();
+    return worker_.Stop();
 }
 
 unsigned long __stdcall PlayerWindowWatch::ThreadEntry(void* self) {

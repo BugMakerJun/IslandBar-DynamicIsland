@@ -151,6 +151,20 @@ void OpenLog() {
         }
     }
     if (!g_file) {
+        // The shared temp name can itself be held by another session or a
+        // scanner. A PID-qualified final fallback guarantees this run still
+        // leaves diagnostics instead of becoming invisible.
+        wchar_t base[MAX_PATH] = {};
+        const DWORD length = GetTempPathW(MAX_PATH, base);
+        if (length > 0 && length < MAX_PATH) {
+            wchar_t fallback[MAX_PATH] = {};
+            std::swprintf(fallback, MAX_PATH, L"%sisland_bar-%lu.log", base,
+                          static_cast<unsigned long>(GetCurrentProcessId()));
+            g_file = _wfsopen(fallback, L"w, ccs=UTF-8", _SH_DENYNO);
+            if (g_file) std::swprintf(g_path, MAX_PATH, L"%s", fallback);
+        }
+    }
+    if (!g_file) {
         return;
     }
 

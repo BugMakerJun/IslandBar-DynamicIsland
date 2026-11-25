@@ -206,7 +206,7 @@ public:
     // or unreadable settings file is not a failure, it is a city nobody named
     // yet, and it is logged as such.
     bool Start();
-    void Stop();
+    WorkerThread::StopResult Stop();
 
     // The last published reading, or false when there is none. A copy, taken
     // under the worker's lock, because the reading is two numbers and a string.

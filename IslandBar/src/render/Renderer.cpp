@@ -681,6 +681,8 @@ void Renderer::PrepareTaskButtons(const FrameState& frame) {
 }
 
 void Renderer::RenderFrame(const FrameState& frame) {
+    if (text_) text_->BeginFrame();
+
     if (!d2dContext_ || !swapChain_ || deviceLost_) return;
     lastFrameTiming_ = {};
     const long long renderStartedTicks = PerformanceTicks();
@@ -1546,15 +1548,17 @@ void Renderer::RenderFrame(const FrameState& frame) {
                                         from.b + (to.b - from.b) * surfaceT,
                                         from.a + (to.a - from.a) * surfaceT);
                 };
-                ID2D1SolidColorBrush* morphBrush = nullptr;
-                if (SUCCEEDED(d2dContext_->CreateSolidColorBrush(
-                        mix(theme.pillTop, theme.cardFill), &morphBrush)) &&
-                    morphBrush) {
+                if (!morphBrush_ &&
+                    FAILED(d2dContext_->CreateSolidColorBrush(
+                        mix(theme.pillTop, theme.cardFill), &morphBrush_))) {
+                    morphBrush_ = nullptr;
+                }
+                if (morphBrush_) {
+                    morphBrush_->SetColor(mix(theme.pillTop, theme.cardFill));
                     const D2D1_ROUNDED_RECT morph = {
                         D2D1::RectF(card.rect.left, card.rect.top, card.rect.right, card.rect.bottom),
                         card.radiusX, card.radiusY};
-                    d2dContext_->FillRoundedRectangle(&morph, morphBrush);
-                    morphBrush->Release();
+                    d2dContext_->FillRoundedRectangle(&morph, morphBrush_);
                 }
             }
 
@@ -1652,7 +1656,26 @@ void Renderer::RenderFrame(const FrameState& frame) {
                     const D2D1_RECT_F clipRect = D2D1::RectF(card.rect.left, card.rect.top,
                                                              clipRight,
                                                              card.rect.top + outerCardReveal);
-                    d2dFactory_->CreateRectangleGeometry(clipRect, &clipGeometry);
+                    const bool sameClip =
+                        cardClip_ && cardClipValid_ &&
+                        cardClipRect_.left == clipRect.left && cardClipRect_.top == clipRect.top &&
+                        cardClipRect_.right == clipRect.right && cardClipRect_.bottom == clipRect.bottom;
+                    if (sameClip) {
+                        ++cardClipHits_;
+                    } else {
+                        ++cardClipBuilds_;
+                    }
+                    if (!sameClip) {
+                        SafeRelease(&cardClip_);
+                        if (FAILED(d2dFactory_->CreateRectangleGeometry(clipRect, &cardClip_))) {
+                            cardClip_ = nullptr;
+                            cardClipValid_ = false;
+                        } else {
+                            cardClipRect_ = clipRect;
+                            cardClipValid_ = true;
+                        }
+                    }
+                    clipGeometry = cardClip_;
                 }
                 if (clipGeometry) {
                     d2dContext_->PushLayer(
@@ -1806,7 +1829,7 @@ void Renderer::RenderFrame(const FrameState& frame) {
 
                 if (clipGeometry) {
                     d2dContext_->PopLayer();
-                    clipGeometry->Release();
+                    // cardClip_ is owned by the renderer.
                 }
             }
 
@@ -2707,6 +2730,10 @@ void Renderer::DescribeRegionAlpha(float leftDip, float topDip, float rightDip,
 
 void Renderer::Shutdown() {
     ReleaseTarget();
+    SafeRelease(&cardClip_);
+    SafeRelease(&morphBrush_);
+    cardClipValid_ = false;
+    cardClipRect_ = {};
 
     // The cached bitmaps belong to the device context, so they go before it does.
     ReleaseBitmapCache();

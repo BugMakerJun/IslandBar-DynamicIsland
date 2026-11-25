@@ -24,6 +24,19 @@
 #  THE RULE IS ENFORCED, NOT DOCUMENTED. domain/PurityCheck.cpp includes every header in this target and then
 #  fails with #error if <windows.h> has arrived. And this target may never gain a link library: a file that
 #  needs a Win32 call does not belong in it.
+file(GLOB ISLAND_DOMAIN_HEADERS CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/domain/*.h"
+)
+set(ISLAND_DOMAIN_PURITY_INCLUDES "// generated from domain/*.h\n")
+foreach(header IN LISTS ISLAND_DOMAIN_HEADERS)
+    file(RELATIVE_PATH relative_header "${CMAKE_CURRENT_SOURCE_DIR}" "${header}")
+    string(APPEND ISLAND_DOMAIN_PURITY_INCLUDES "#include \"${relative_header}\"\n")
+endforeach()
+file(GENERATE
+    OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/DomainPurityIncludes.h"
+    CONTENT "${ISLAND_DOMAIN_PURITY_INCLUDES}"
+)
+
 add_library(island_domain STATIC
     domain/MiniJson.cpp
     domain/Motion.cpp
@@ -53,6 +66,7 @@ add_library(island_core STATIC
     core/PurityCheck.cpp
 )
 target_link_libraries(island_core PUBLIC island_domain)
+target_include_directories(island_core PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
 add_library(island_platform STATIC
     platform/AutoStart.cpp
@@ -66,6 +80,7 @@ add_library(island_platform STATIC
     platform/ScrollTilingGrabLayer.cpp
     platform/ScrollTilingWindows.cpp
     platform/SystemLoad.cpp
+    platform/TaskbarRecovery.cpp
     platform/ThumbnailPreview.cpp
     platform/WindowEventMonitor.cpp
     platform/WindowList.cpp

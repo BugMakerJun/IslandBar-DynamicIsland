@@ -5,6 +5,9 @@
 
 #include "core/Log.h"
 #include "platform/Monitor.h"
+#include "platform/TaskbarRecovery.h"
+
+#include <cstdint>
 
 namespace island {
 namespace {
@@ -62,6 +65,19 @@ bool NativeTaskbar::Locate() {
 }
 
 bool NativeTaskbar::Hide() {
+    // Hiding without a live in-Explorer watcher would recreate the exact failure
+    // this recovery path exists to prevent. Fail closed: a visible taskbar is a
+    // deliberate degradation, a hidden taskbar with nobody able to restore it is
+    // not.
+    if (!TaskbarGuardianHealthy()) {
+        if (!recoveryBlockedReported_) {
+            recoveryBlockedReported_ = true;
+            LogAndPrint("  native taskbar: NOT hidden -- recovery guardian is not ready\n");
+        }
+        return false;
+    }
+    recoveryBlockedReported_ = false;
+
     // Re-locate when we have nothing, or when the shell has replaced the window
     // under us. IsWindow is the cheap test; a restarted Explorer leaves a handle
     // that is no longer a window at all.
@@ -76,6 +92,7 @@ bool NativeTaskbar::Hide() {
     if (!weHidIt_) {
         wasVisible_ = IsWindowVisible(trayWnd_) != FALSE;
     }
+    if (!ArmRecoverySnapshot()) return false;
 
     // --- the real tray instead of a hidden taskbar (see the header) -------------------------------
     //
@@ -125,14 +142,16 @@ void NativeTaskbar::Restore() {
     RestoreWorkArea();
 
     if (keepTrayVisible_) {
+        bool restored = true;
         if (trayWnd_ && IsWindow(trayWnd_)) {
             ClearTrayRegion();
             if (weHidIt_ && wasVisible_) {
                 ShowWindow(trayWnd_, SW_SHOW);
                 if (trayNotify_) ShowWindow(trayNotify_, SW_SHOW);
+                restored = IsWindowVisible(trayWnd_) != FALSE;
             }
         }
-        weHidIt_ = false;
+        FinishRecovery(restored);
         return;
     }
 
@@ -140,7 +159,7 @@ void NativeTaskbar::Restore() {
     // started -- auto-hide, or the user's own choice -- putting it back would be
     // overriding them.
     if (!weHidIt_ || !wasVisible_) {
-        weHidIt_ = false;
+        FinishRecovery(true);
         return;
     }
 
@@ -160,7 +179,9 @@ void NativeTaskbar::Restore() {
         ShowWindow(h, SW_SHOW);
     }
 
-    weHidIt_ = false;
+    const bool restored =
+        !trayWnd_ || !IsWindow(trayWnd_) || IsWindowVisible(trayWnd_) != FALSE;
+    FinishRecovery(restored);
 }
 
 bool NativeTaskbar::EnsureHidden() {
@@ -260,6 +281,49 @@ bool NativeTaskbar::TaskbarMonitorBounds(RECT* out) const {
 
     *out = info.rcMonitor;
     return true;
+}
+
+bool NativeTaskbar::ArmRecoverySnapshot() {
+    if (recoveryArmed_) return true;
+    if (!trayWnd_ || !IsWindow(trayWnd_)) return false;
+
+    TaskbarRecoverySnapshot snapshot;
+    snapshot.mode = keepTrayVisible_ ? TaskbarRecoveryMode::ClipToTray : TaskbarRecoveryMode::Hide;
+    snapshot.primaryWasVisible = wasVisible_;
+    snapshot.workAreaValid = ReadWorkArea(&snapshot.workArea);
+    if (!TaskbarMonitorBounds(&snapshot.monitor)) snapshot.monitor = {};
+    DWORD shellPid = 0;
+    GetWindowThreadProcessId(trayWnd_, &shellPid);
+    snapshot.shellPid = shellPid;
+    wcsncpy_s(snapshot.logPath, kTaskbarRecoveryLogCapacity, LogPath(), _TRUNCATE);
+
+    for (HWND window = FindWindowW(kSecondaryTrayClass, nullptr); window != nullptr;
+         window = FindWindowExW(nullptr, window, kSecondaryTrayClass, nullptr)) {
+        if (snapshot.secondaryCount >= kTaskbarRecoverySecondaryCapacity) break;
+        TaskbarRecoverySecondary& secondary = snapshot.secondary[snapshot.secondaryCount++];
+        secondary.window = reinterpret_cast<std::uintptr_t>(window);
+        secondary.wasVisible = IsWindowVisible(window) != FALSE;
+    }
+
+    if (!WriteTaskbarRecoverySnapshot(snapshot)) {
+        LogAndPrint("  native taskbar: recovery snapshot could not be written; taskbar not changed\n");
+        return false;
+    }
+    recoveryArmed_ = true;
+    return true;
+}
+
+void NativeTaskbar::FinishRecovery(bool restored) {
+    if (!restored) {
+        LogAndPrint("  native taskbar: restore NOT CONFIRMED; recovery marker retained\n");
+        return;
+    }
+    weHidIt_ = false;
+    MarkTaskbarGuardianClean();
+    if (recoveryArmed_) {
+        (void)DeleteTaskbarRecoverySnapshot();
+        recoveryArmed_ = false;
+    }
 }
 
 NativeTaskbar::WorkAreaRelease NativeTaskbar::ReleaseWorkArea() {
@@ -409,6 +473,10 @@ void NativeTaskbar::HandleExplorerRestart() {
     haveRegion_ = false;
     appliedTrayRect_ = {};
     weHidIt_ = true;
+    if (recoveryArmed_) {
+        (void)DeleteTaskbarRecoverySnapshot();
+        recoveryArmed_ = false;
+    }
 }
 
 // --- keeping the real tray on screen -------------------------------------------------------------

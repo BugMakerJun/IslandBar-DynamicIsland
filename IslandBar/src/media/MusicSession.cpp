@@ -643,14 +643,15 @@ bool MusicSession::Start() {
     return true;
 }
 
-void MusicSession::Stop() {
+WorkerThread::StopResult MusicSession::Stop() {
     const WorkerThread::StopResult stopped = worker_.Stop();
     running_.store(false, std::memory_order_release);
-    if (stopped != WorkerThread::StopResult::Stopped) return;
+    if (stopped != WorkerThread::StopResult::Stopped) return stopped;
     if (toggleEvent_) {
         CloseHandle(toggleEvent_);
         toggleEvent_ = nullptr;
     }
+    return stopped;
 }
 
 void MusicSession::Snapshot(MusicInfo* out) const {

@@ -94,7 +94,7 @@ public:
     // Keeps the process-name index fresh on a worker. The worker owns a shared reference for its
     // whole lifetime, so Stop() timing out cannot leave a pointer into a destroyed watcher.
     bool Start(const std::shared_ptr<WeChatWatcher>& owner);
-    void Stop();
+    WorkerThread::StopResult Stop();
 
     // Main-thread queries. They copy a shared immutable index and do no process or window I/O.
     bool AnyProcessRunning() const;

@@ -26,20 +26,10 @@
 //  this file was written.
 // =====================================================================
 
-#include "domain/CardLayout.h"       // brings Geometry.h, TaskStripLayout.h, Motion.h with it
-#include "domain/FullscreenHud.h"
-#include "domain/Geometry.h"
-#include "domain/MiniJson.h"
-#include "domain/Motion.h"
+// Generated from every domain/*.h at configure time. A newly added pure
+// header cannot escape the <windows.h> check by being forgotten here.
+#include "DomainPurityIncludes.h"
 #include "core/ProcessMetrics.h"
-#include "domain/StartSearch.h"
-#include "domain/SettingsLayout.h"
-#include "domain/ScrollTiling.h"
-#include "domain/StatePolicy.h"
-#include "domain/TaskStripLayout.h"
-#include "domain/TrayEncoding.h"
-#include "domain/TrayLedger.h"
-#include "domain/TrayRegistration.h"
 
 #if defined(_WINDOWS_) || defined(_INC_WINDOWS)
 #error "The pure-logic headers in core/ must not include <windows.h>. Move whatever needs a Win32 type into a platform/ header (see core/Geometry.h for the one that was moved out)."

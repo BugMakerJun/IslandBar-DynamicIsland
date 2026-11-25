@@ -267,11 +267,11 @@ bool WindowsFileSearch::Take(std::uint64_t* sequence, std::vector<StartSearchRes
     return true;
 }
 
-void WindowsFileSearch::Stop() {
+WorkerThread::StopResult WindowsFileSearch::Stop() {
     const bool wasRunning = running_.load(std::memory_order_acquire);
     const WorkerThread::StopResult stopped = worker_.Stop();
     running_.store(false, std::memory_order_release);
-    if (stopped != WorkerThread::StopResult::Stopped) return;
+    if (stopped != WorkerThread::StopResult::Stopped) return stopped;
     if (wakeEvent_) {
         CloseHandle(wakeEvent_);
         wakeEvent_ = nullptr;
@@ -284,6 +284,7 @@ void WindowsFileSearch::Stop() {
     if (wasRunning) {
         LogLine(L"  start.search.closed workers=0 pending_search=0 pending_icons=0");
     }
+    return stopped;
 }
 
 unsigned long __stdcall WindowsFileSearch::ThreadEntry(void* self) {

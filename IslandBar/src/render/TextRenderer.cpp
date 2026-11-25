@@ -21,11 +21,68 @@
 #include <cmath>
 #include <cstdio>
 #include <cwchar>
+#include <unordered_map>
+#include <vector>
 
 #pragma comment(lib, "dwrite.lib")
 
 namespace island {
 namespace {
+
+std::unordered_map<unsigned, ID2D1SolidColorBrush*> g_solidBrushCache;
+std::vector<ID2D1SolidColorBrush*> g_solidBrushOverflow;
+unsigned long long g_brushHits = 0;
+unsigned long long g_brushMisses = 0;
+unsigned long long g_brushCacheClears = 0;
+constexpr size_t kSolidBrushCacheLimit = 512;
+constexpr size_t kSolidBrushCacheTrimAt = 384;
+
+unsigned BrushColourKey(const D2D1_COLOR_F& colour) {
+    const auto quantise = [](float value) -> unsigned {
+        if (value <= 0.0f) return 0u;
+        if (value >= 1.0f) return 255u;
+        return static_cast<unsigned>(value * 255.0f + 0.5f);
+    };
+    return (quantise(colour.a) << 24) | (quantise(colour.r) << 16) |
+           (quantise(colour.g) << 8) | quantise(colour.b);
+}
+
+ID2D1SolidColorBrush* CachedSolidBrush(ID2D1DeviceContext2* context,
+                                       const D2D1_COLOR_F& colour) {
+    if (!context) return nullptr;
+    const unsigned key = BrushColourKey(colour);
+    const auto found = g_solidBrushCache.find(key);
+    if (found != g_solidBrushCache.end()) {
+        ++g_brushHits;
+        return found->second;
+    }
+    ++g_brushMisses;
+    const D2D1_COLOR_F wanted =
+        D2D1::ColorF(static_cast<float>((key >> 16) & 0xFF) / 255.0f,
+                     static_cast<float>((key >> 8) & 0xFF) / 255.0f,
+                     static_cast<float>(key & 0xFF) / 255.0f,
+                     static_cast<float>((key >> 24) & 0xFF) / 255.0f);
+    ID2D1SolidColorBrush* brush = nullptr;
+    if (FAILED(context->CreateSolidColorBrush(wanted, &brush)) || !brush) return nullptr;
+    if (g_solidBrushCache.size() < kSolidBrushCacheLimit) {
+        g_solidBrushCache.emplace(key, brush);
+    } else {
+        // A single frame that exceeds the cache budget keeps its extra brushes
+        // alive until BeginFrame so no pointer returned earlier in this frame
+        // can be released underneath its caller.
+        g_solidBrushOverflow.push_back(brush);
+    }
+    return brush;
+}
+
+void ClearSolidBrushCache() {
+    ++g_brushCacheClears;
+    for (auto& entry : g_solidBrushCache) entry.second->Release();
+    g_solidBrushCache.clear();
+    for (ID2D1SolidColorBrush* brush : g_solidBrushOverflow) brush->Release();
+    g_solidBrushOverflow.clear();
+}
+
 // Formats a millisecond position as the mm:ss the media flyout shows.
 //
 // Hours are intentionally dropped: a track longer than an hour would read "75:30",
@@ -94,28 +151,26 @@ void DrawMusicWaveBadge(ID2D1DeviceContext2* context, float centreX, float centr
 
     D2D1_COLOR_F fillColour = visibleAccent;
     fillColour.a = 0.18f * opacity;
-    ID2D1SolidColorBrush* brush = nullptr;
-    if (SUCCEEDED(context->CreateSolidColorBrush(fillColour, &brush)) && brush) {
+    ID2D1SolidColorBrush* brush = CachedSolidBrush(context, fillColour);
+    if (brush) {
         context->FillEllipse(
             D2D1::Ellipse(D2D1::Point2F(centreX, centreY), kNiriMusicWaveVisualRadiusDip,
                           kNiriMusicWaveVisualRadiusDip),
             brush);
-        brush->Release();
-        brush = nullptr;
     }
     D2D1_COLOR_F ringColour = visibleAccent;
     ringColour.a = 0.62f * opacity;
-    if (SUCCEEDED(context->CreateSolidColorBrush(ringColour, &brush)) && brush) {
+    brush = CachedSolidBrush(context, ringColour);
+    if (brush) {
         context->DrawEllipse(
             D2D1::Ellipse(D2D1::Point2F(centreX, centreY), kNiriMusicWaveVisualRadiusDip,
                           kNiriMusicWaveVisualRadiusDip),
             brush, 1.25f);
-        brush->Release();
-        brush = nullptr;
     }
     D2D1_COLOR_F waveColour = visibleAccent;
     waveColour.a = 0.96f * opacity;
-    if (SUCCEEDED(context->CreateSolidColorBrush(waveColour, &brush)) && brush) {
+    brush = CachedSolidBrush(context, waveColour);
+    if (brush) {
         for (int i = 0; i < 5; ++i) {
             const float phase = phaseSeconds * 5.0f + static_cast<float>(i) * 0.9f;
             const float envelope = 0.22f + 0.78f * (0.5f + 0.5f * std::sin(phase));
@@ -125,17 +180,15 @@ void DrawMusicWaveBadge(ID2D1DeviceContext2* context, float centreX, float centr
             context->DrawLine(D2D1::Point2F(x, centreY - half),
                               D2D1::Point2F(x, centreY + half), brush, 2.2f);
         }
-        brush->Release();
     }
 }
 
 void DrawCallWave(ID2D1DeviceContext2* context, float centreX, float centreY, float phaseSeconds,
                   float level, float opacity) {
     if (!context || opacity <= 0.01f) return;
-    ID2D1SolidColorBrush* brush = nullptr;
-    if (FAILED(context->CreateSolidColorBrush(
-            D2D1::ColorF(0.18f, 0.82f, 0.48f, 0.95f * opacity), &brush)) ||
-        !brush) {
+    ID2D1SolidColorBrush* brush =
+        CachedSolidBrush(context, D2D1::ColorF(0.18f, 0.82f, 0.48f, 0.95f * opacity));
+    if (!brush) {
         return;
     }
     for (int i = 0; i < 7; ++i) {
@@ -147,7 +200,6 @@ void DrawCallWave(ID2D1DeviceContext2* context, float centreX, float centreY, fl
         context->DrawLine(D2D1::Point2F(x, centreY - half),
                           D2D1::Point2F(x, centreY + half), brush, 2.0f);
     }
-    brush->Release();
 }
 
 // Chinese weekday and month names for the card's date line.
@@ -676,37 +728,28 @@ void TextRenderer::Shutdown() {
 // See the declaration in the header for why this exists at all.
 ID2D1SolidColorBrush* TextRenderer::BrushFor(ID2D1DeviceContext2* context,
                                             const D2D1_COLOR_F& colour) {
-    if (!context) return nullptr;
+    return CachedSolidBrush(context, colour);
+}
 
-    // 8 bits per channel, which is the precision D2D keeps anyway: a key finer than the brush would miss
-    // for changes nobody can see, and `opacity` is multiplied into most of these colours, so it would miss
-    // on every frame of every animation.
-    const auto quantise = [](float value) -> unsigned {
-        if (value <= 0.0f) return 0u;
-        if (value >= 1.0f) return 255u;
-        return static_cast<unsigned>(value * 255.0f + 0.5f);
-    };
-    const unsigned key = (quantise(colour.a) << 24) | (quantise(colour.r) << 16) |
-                         (quantise(colour.g) << 8) | quantise(colour.b);
+void TextRenderer::BeginFrame() {
+    if (g_solidBrushCache.size() >= kSolidBrushCacheTrimAt || !g_solidBrushOverflow.empty()) {
+        ClearSolidBrushCache();
+    }
+}
 
-    const auto found = brushCache_.find(key);
-    if (found != brushCache_.end()) return found->second;
-
-    // Built from the QUANTISED value, so what is drawn is exactly what the key describes.
-    const D2D1_COLOR_F wanted =
-        D2D1::ColorF(static_cast<float>((key >> 16) & 0xFF) / 255.0f,
-                     static_cast<float>((key >> 8) & 0xFF) / 255.0f,
-                     static_cast<float>(key & 0xFF) / 255.0f,
-                     static_cast<float>((key >> 24) & 0xFF) / 255.0f);
-    ID2D1SolidColorBrush* brush = nullptr;
-    if (FAILED(context->CreateSolidColorBrush(wanted, &brush)) || !brush) return nullptr;
-    brushCache_.emplace(key, brush);
-    return brush;
+TextRenderer::ResourceCounters TextRenderer::TakeResourceCounters() {
+    ResourceCounters counters;
+    counters.brushHits = g_brushHits;
+    counters.brushMisses = g_brushMisses;
+    counters.brushCacheClears = g_brushCacheClears;
+    g_brushHits = 0;
+    g_brushMisses = 0;
+    g_brushCacheClears = 0;
+    return counters;
 }
 
 void TextRenderer::ClearBrushCache() {
-    for (auto& entry : brushCache_) SafeRelease(&entry.second);
-    brushCache_.clear();
+    ClearSolidBrushCache();
     // The layouts are shaped against the formats, not the theme, but a theme switch is exactly the
     // moment this cache is cold anyway; dropping it here means there is one place that frees them.
     for (auto& entry : layoutCache_) {
@@ -813,8 +856,8 @@ void TextRenderer::DrawClock(ID2D1DeviceContext2* context, const RoundedBox& box
 
     Refresh();
 
-    ID2D1SolidColorBrush* brush = nullptr;
-    if (FAILED(context->CreateSolidColorBrush(TextColour(opacity), &brush)) || !brush) {
+    ID2D1SolidColorBrush* brush = CachedSolidBrush(context, TextColour(opacity));
+    if (!brush) {
         return;
     }
 
@@ -845,8 +888,6 @@ void TextRenderer::DrawClock(ID2D1DeviceContext2* context, const RoundedBox& box
              D2D1::RectF(box.rect.left, box.rect.top + half * 0.50f,
                          box.rect.right, box.rect.top + half * 0.88f));
     }
-
-    SafeRelease(&brush);
 }
 
 // =====================================================================
@@ -1031,10 +1072,9 @@ void DrawSkyMark(ID2D1DeviceContext2* context, const D2D1_RECT_F& box, island::S
     // three circles, which is why they are drawn in one pass and never outlined. Offset and scaled so a
     // rain or snow cloud can leave room under it for the drops.
     const auto cloud = [&](float offsetX, float offsetY, float scale) {
-        ID2D1SolidColorBrush* brush = nullptr;
-        if (SUCCEEDED(context->CreateSolidColorBrush(D2D1::ColorF(0.46f, 0.71f, 1.00f, 0.96f * opacity),
-                                                     &brush)) &&
-            brush) {
+        ID2D1SolidColorBrush* brush =
+            CachedSolidBrush(context, D2D1::ColorF(0.46f, 0.71f, 1.00f, 0.96f * opacity));
+        if (brush) {
             const float x = cx + offsetX;
             const float y = cy + offsetY;
             context->FillEllipse(
@@ -1053,15 +1093,13 @@ void DrawSkyMark(ID2D1DeviceContext2* context, const D2D1_RECT_F& box, island::S
                 D2D1::RectF(x - 4.6f * scale, y - 0.6f * scale, x + 5.6f * scale, y + 2.2f * scale),
                 1.4f, 1.4f};
             context->FillRoundedRectangle(&base, brush);
-            brush->Release();
         }
     };
 
     const auto sun = [&](float offsetX, float offsetY, float radius) {
-        ID2D1SolidColorBrush* brush = nullptr;
-        if (SUCCEEDED(context->CreateSolidColorBrush(D2D1::ColorF(0.99f, 0.78f, 0.35f, 0.98f * opacity),
-                                                     &brush)) &&
-            brush) {
+        ID2D1SolidColorBrush* brush =
+            CachedSolidBrush(context, D2D1::ColorF(0.99f, 0.78f, 0.35f, 0.98f * opacity));
+        if (brush) {
             context->FillEllipse(
                 D2D1::Ellipse(D2D1::Point2F(cx + offsetX, cy + offsetY), radius, radius), brush);
             for (int i = 0; i < 8; ++i) {
@@ -1075,19 +1113,12 @@ void DrawSkyMark(ID2D1DeviceContext2* context, const D2D1_RECT_F& box, island::S
                                   cy + offsetY + std::sin(angle) * outer),
                     brush, 1.2f);
             }
-            brush->Release();
         }
     };
 
     // Returns null when the brush cannot be created, so each caller has one `if` rather than a nested one.
     const auto lightInk = [&](float alpha) -> ID2D1SolidColorBrush* {
-        ID2D1SolidColorBrush* brush = nullptr;
-        if (SUCCEEDED(context->CreateSolidColorBrush(
-                D2D1::ColorF(0.66f, 0.86f, 1.00f, alpha * opacity), &brush)) &&
-            brush) {
-            return brush;
-        }
-        return nullptr;
+        return CachedSolidBrush(context, D2D1::ColorF(0.66f, 0.86f, 1.00f, alpha * opacity));
     };
 
     switch (mark) {
@@ -1110,7 +1141,6 @@ void DrawSkyMark(ID2D1DeviceContext2* context, const D2D1_RECT_F& box, island::S
                     context->DrawLine(D2D1::Point2F(x, cy + 2.0f), D2D1::Point2F(x - 1.4f, cy + 5.6f),
                                       brush, 1.5f);
                 }
-                brush->Release();
             }
             break;
         case island::SkyMark::Snow:
@@ -1121,7 +1151,6 @@ void DrawSkyMark(ID2D1DeviceContext2* context, const D2D1_RECT_F& box, island::S
                     context->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x - 0.7f, cy + 3.8f), 1.1f, 1.1f),
                                          brush);
                 }
-                brush->Release();
             }
             break;
         case island::SkyMark::Thunder:
@@ -1133,7 +1162,6 @@ void DrawSkyMark(ID2D1DeviceContext2* context, const D2D1_RECT_F& box, island::S
                                   D2D1::Point2F(cx - 0.6f, cy + 3.8f), brush, 1.6f);
                 context->DrawLine(D2D1::Point2F(cx - 0.6f, cy + 3.8f),
                                   D2D1::Point2F(cx + 0.6f, cy + 6.0f), brush, 1.6f);
-                brush->Release();
             }
             break;
         case island::SkyMark::Fog:
@@ -1146,7 +1174,6 @@ void DrawSkyMark(ID2D1DeviceContext2* context, const D2D1_RECT_F& box, island::S
                     {D2D1::RectF(cx - 4.0f, cy + 1.6f, cx + 5.0f, cy + 3.4f), 0.9f, 0.9f},
                 };
                 for (const D2D1_ROUNDED_RECT& bar : bars) context->FillRoundedRectangle(&bar, brush);
-                brush->Release();
             }
             break;
         case island::SkyMark::None:
@@ -1239,23 +1266,20 @@ void TextRenderer::DrawTrayButton(ID2D1DeviceContext2* context, const RectF& box
     const D2D1_ROUNDED_RECT rounded = {
         D2D1::RectF(box.left, box.top, box.right, box.bottom), radius, radius};
     if (fill.a > 0.001f) {
-        ID2D1SolidColorBrush* background = nullptr;
-        if (SUCCEEDED(context->CreateSolidColorBrush(fill, &background)) && background) {
+        ID2D1SolidColorBrush* background = CachedSolidBrush(context, fill);
+        if (background) {
             context->FillRoundedRectangle(&rounded, background);
             context->DrawRoundedRectangle(&rounded, background, 1.0f);
-            background->Release();
         }
     }
     // The amount comes up over a tenth of a second (FrameState::trayButtonWash); `open` is a state and so
     // is worth a full wash at once, at a slightly stronger strength.
     const float strength = open ? 0.22f : 0.16f * wash;
     if (strength > 0.01f && opacity > 0.01f) {
-        ID2D1SolidColorBrush* washBrush = nullptr;
-        if (SUCCEEDED(context->CreateSolidColorBrush(
-                PillInk(strength * opacity), &washBrush)) &&
-            washBrush) {
+        ID2D1SolidColorBrush* washBrush =
+            CachedSolidBrush(context, PillInk(strength * opacity));
+        if (washBrush) {
             context->FillRoundedRectangle(&rounded, washBrush);
-            washBrush->Release();
         }
     }
 
@@ -1263,11 +1287,10 @@ void TextRenderer::DrawTrayButton(ID2D1DeviceContext2* context, const RectF& box
     // would read as the same control, and this one means "there is more than fits", which is what the dots
     // say. Drawn as geometry, for the reason the Start button's mark is: no glyph to get wrong and nothing
     // to fail to load.
-    ID2D1SolidColorBrush* ink = nullptr;
     const float brightness = open ? 1.0f : 0.90f;
-    if (FAILED(context->CreateSolidColorBrush(
-            PillInk(brightness * 0.94f * opacity), &ink)) ||
-        !ink) {
+    ID2D1SolidColorBrush* ink =
+        CachedSolidBrush(context, PillInk(brightness * 0.94f * opacity));
+    if (!ink) {
         return;
     }
     const float cx = (box.left + box.right) * 0.5f;
@@ -1279,7 +1302,6 @@ void TextRenderer::DrawTrayButton(ID2D1DeviceContext2* context, const RectF& box
         const float x = cx + static_cast<float>(i) * 7.5f;
         context->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x, cy), 2.6f, 2.6f), ink);
     }
-    ink->Release();
 }
 
 namespace {
@@ -1299,12 +1321,11 @@ void DrawTextIn(ID2D1DeviceContext2* context, IDWriteTextFormat* format, const w
 void FillRounded(ID2D1DeviceContext2* context, const RectF& box, float radius,
                  const D2D1_COLOR_F& colour) {
     if (!context || colour.a <= 0.001f || box.right <= box.left || box.bottom <= box.top) return;
-    ID2D1SolidColorBrush* brush = nullptr;
-    if (SUCCEEDED(context->CreateSolidColorBrush(colour, &brush)) && brush) {
+    ID2D1SolidColorBrush* brush = CachedSolidBrush(context, colour);
+    if (brush) {
         const D2D1_ROUNDED_RECT rounded = {
             D2D1::RectF(box.left, box.top, box.right, box.bottom), radius, radius};
         context->FillRoundedRectangle(&rounded, brush);
-        brush->Release();
     }
 }
 
@@ -1332,12 +1353,12 @@ void DrawWeatherMarkLarge(ID2D1DeviceContext2* context, const RectF& box, int co
     const float side = std::min(box.right - box.left, box.bottom - box.top);
     const float scale = side / 72.0f;
     const SkyMark mark = SkyMarkForCode(code);
-    ID2D1SolidColorBrush* cloud = nullptr;
-    ID2D1SolidColorBrush* sun = nullptr;
-    ID2D1SolidColorBrush* accent = nullptr;
-    context->CreateSolidColorBrush(D2D1::ColorF(0.35f, 0.43f, 0.76f, opacity), &cloud);
-    context->CreateSolidColorBrush(D2D1::ColorF(0.96f, 0.78f, 0.24f, opacity), &sun);
-    context->CreateSolidColorBrush(D2D1::ColorF(0.45f, 0.36f, 0.78f, opacity), &accent);
+    ID2D1SolidColorBrush* cloud =
+        CachedSolidBrush(context, D2D1::ColorF(0.35f, 0.43f, 0.76f, opacity));
+    ID2D1SolidColorBrush* sun =
+        CachedSolidBrush(context, D2D1::ColorF(0.96f, 0.78f, 0.24f, opacity));
+    ID2D1SolidColorBrush* accent =
+        CachedSolidBrush(context, D2D1::ColorF(0.45f, 0.36f, 0.78f, opacity));
     const auto circles = [&](float dx, float dy, float factor) {
         if (!cloud) return;
         context->FillEllipse(
@@ -1414,9 +1435,6 @@ void DrawWeatherMarkLarge(ID2D1DeviceContext2* context, const RectF& box, int co
             }
         }
     }
-    if (cloud) cloud->Release();
-    if (sun) sun->Release();
-    if (accent) accent->Release();
 }
 
 } // namespace
@@ -1902,13 +1920,12 @@ void TextRenderer::DrawStatusLine(ID2D1DeviceContext2* context, const RoundedBox
             box.radiusY};
         D2D1_COLOR_F background = fill;
         background.a = fill.a * opacity;
-        ID2D1SolidColorBrush* brush = nullptr;
-        if (SUCCEEDED(context->CreateSolidColorBrush(background, &brush)) && brush) {
+        ID2D1SolidColorBrush* brush = CachedSolidBrush(context, background);
+        if (brush) {
             context->FillRoundedRectangle(&rounded, brush);
             // The hairline stroke in the same colour covers the antialiased fringe, exactly as the
             // island's own fill does -- without it a pale seam shows along the capsule's curve.
             context->DrawRoundedRectangle(&rounded, brush, 1.0f);
-            brush->Release();
         }
     }
 
@@ -1945,13 +1962,12 @@ void TextRenderer::DrawStatusLine(ID2D1DeviceContext2* context, const RoundedBox
             return;
         }
         if (!piece.text || piece.text[0] == L'\0' || !piece.format) return;
-        ID2D1SolidColorBrush* brush = nullptr;
         const D2D1_COLOR_F colour = island::PillInk(opacity * piece.luminance);
-        if (SUCCEEDED(context->CreateSolidColorBrush(colour, &brush)) && brush) {
+        ID2D1SolidColorBrush* brush = CachedSolidBrush(context, colour);
+        if (brush) {
             context->DrawTextW(piece.text, static_cast<UINT32>(std::wcslen(piece.text)),
                                piece.format,
                                D2D1::RectF(x, top, x + piece.widthDip, top + height), brush);
-            brush->Release();
         }
     };
 
@@ -1989,19 +2005,16 @@ void TextRenderer::DrawNiriTopBar(ID2D1DeviceContext2* context, const RoundedBox
     Refresh();
 
     const float centreY = (box.rect.top + box.rect.bottom) * 0.5f;
-    ID2D1SolidColorBrush* ink = nullptr;
-    if (FAILED(context->CreateSolidColorBrush(PillInk(0.92f * opacity), &ink)) || !ink) return;
-    ID2D1SolidColorBrush* muted = nullptr;
-    context->CreateSolidColorBrush(PillInk(0.55f * opacity), &muted);
-    ID2D1SolidColorBrush* accent = nullptr;
+    ID2D1SolidColorBrush* ink = CachedSolidBrush(context, PillInk(0.92f * opacity));
+    if (!ink) return;
+    ID2D1SolidColorBrush* muted = CachedSolidBrush(context, PillInk(0.55f * opacity));
     D2D1_COLOR_F accentColour = island::CurrentTheme().accent;
     accentColour.a *= opacity;
-    context->CreateSolidColorBrush(accentColour, &accent);
+    ID2D1SolidColorBrush* accent = CachedSolidBrush(context, accentColour);
     ID2D1SolidColorBrush* searchInk = nullptr;
     if (searchMarkOpacity > 0.01f) {
-        context->CreateSolidColorBrush(
-            PillInk(0.92f * opacity * std::clamp(searchMarkOpacity, 0.0f, 1.0f)),
-            &searchInk);
+        searchInk = CachedSolidBrush(
+            context, PillInk(0.92f * opacity * std::clamp(searchMarkOpacity, 0.0f, 1.0f)));
     }
 
     // The search mark has one fixed home in both the normal and animated
@@ -2103,10 +2116,6 @@ void TextRenderer::DrawNiriTopBar(ID2D1DeviceContext2* context, const RoundedBox
         }
     }
 
-    if (searchInk) searchInk->Release();
-    if (accent) accent->Release();
-    if (muted) muted->Release();
-    ink->Release();
 }
 
 void TextRenderer::DrawNiriLyricLine(ID2D1DeviceContext2* context, const RectF& box,

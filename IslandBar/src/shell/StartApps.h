@@ -76,6 +76,11 @@ public:
     // Returns how many applications were found (0 also means "could not be read").
     int RefreshList();
 
+    // Same read on a tracked worker. The frame loop never owns this thread
+    // through a detached lambda: StopListRefresh() can report and retain it.
+    bool StartListRefresh();
+    WorkerThread::StopResult StopListRefresh();
+
     // Reloads the pins from the folder of shortcuts, and creates the folder if it is not there. Cheap -- a
     // directory listing -- and it no longer depends on the shell's application list at all, which is what
     // used to make it lose everything when it ran before that list was ready.
@@ -109,7 +114,7 @@ public:
     // before the 121-entry all-applications grid finishes loading.
     void PrioritizeListIcon(int index);
     // Cancels and joins icon work when the Start card closes.
-    void StopIconLoading();
+    WorkerThread::StopResult StopIconLoading();
 
     // Bumped whenever the list or the pins change, so the renderer can re-decode what it has cached.
     unsigned long long Revision() const { return revision_; }
@@ -133,9 +138,11 @@ private:
 
     void ResolveIconAsync(const wchar_t* target, bool pin);
     bool StartIconWorker();
-    void StopIconWorker();
+    WorkerThread::StopResult StopIconWorker();
     static unsigned long __stdcall IconThreadEntry(void* self);
     void RunIconWorker();
+    static unsigned long __stdcall ListThreadEntry(void* self);
+    void RunListRefresh();
     // Reads the folder into the pins, without touching the shell's application list.
     void ReadPinsFolder(const wchar_t* folder);
 
@@ -152,11 +159,13 @@ private:
     unsigned long long revision_ = 1;
     unsigned long long iconRevision_ = 1;
     WorkerThread iconWorker_;
+    WorkerThread listWorker_;
     HANDLE iconWakeEvent_ = nullptr;
     std::mutex iconMutex_;
     std::deque<IconRequest> iconQueue_;
     std::deque<IconResult> iconCompleted_;
     std::atomic<bool> iconWorkerRunning_{false};
+    std::atomic<bool> listRefreshRunning_{false};
     std::atomic<int> iconRequested_{0};
     std::atomic<int> iconResolved_{0};
     std::atomic<int> iconFailed_{0};

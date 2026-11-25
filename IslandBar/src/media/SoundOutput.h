@@ -94,7 +94,7 @@ public:
     // Starts the worker and waits for the first reading. Returns false when the audio stack cannot be
     // reached at all, in which case the page draws what it can and says so rather than guessing.
     bool Start();
-    void Stop();
+    WorkerThread::StopResult Stop();
 
     // Copies the last finished reading. Cheap enough for a frame: a handful of strings and the icons.
     void Snapshot(SoundOutputSnapshot* out) const;

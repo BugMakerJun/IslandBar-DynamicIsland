@@ -203,15 +203,17 @@ bool SystemStatusReader::Start(HWND wakeWindow, unsigned long pollMs) {
     return haveSample_.load(std::memory_order_acquire);
 }
 
-void SystemStatusReader::Stop() {
+WorkerThread::StopResult SystemStatusReader::Stop() {
     running_.store(false, std::memory_order_release);
-    if (worker_.Stop() != WorkerThread::StopResult::Stopped) return;
+    const WorkerThread::StopResult stopped = worker_.Stop();
+    if (stopped != WorkerThread::StopResult::Stopped) return stopped;
     if (requestEvent_) {
         CloseHandle(requestEvent_);
         requestEvent_ = nullptr;
     }
     wakeWindow_ = nullptr;
     haveSample_.store(false, std::memory_order_release);
+    return stopped;
 }
 
 void SystemStatusReader::RequestSample() {

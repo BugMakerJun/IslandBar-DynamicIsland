@@ -57,6 +57,23 @@ if ($vsPath) {
 if (-not $cmake) { throw 'cmake not found (neither inside the VS instance nor on PATH)' }
 Write-Host "[build] cmake: $cmake"
 
+# The Visual Studio generator knows where the SDK lives, but cmake/WinRt.cmake
+# reads WindowsSdkDir from the environment to add the C++/WinRT projection
+# include path. A bare PowerShell does not set that variable, which produced
+# six configure warnings even though all targets still built through their ABI
+# fallbacks. Fill in the installed SDK here so configure is genuinely clean.
+if (-not $env:WindowsSdkDir) {
+    $sdkInclude = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\Include'
+    if (Test-Path $sdkInclude) {
+        $sdkVersion = Get-ChildItem -LiteralPath $sdkInclude -Directory |
+            Sort-Object Name -Descending | Select-Object -First 1
+        if ($sdkVersion) {
+            $env:WindowsSdkDir = (Split-Path -Parent $sdkInclude) + '\'
+            Write-Host "[build] Windows SDK: $($sdkVersion.Name)"
+        }
+    }
+}
+
 # Ninja is only usable when the MSVC environment is already set up, because Ninja does not
 # discover the toolchain the way the Visual Studio generator does. Detected rather than
 # assumed: without cl.exe on PATH, Ninja configure always fails.

@@ -217,7 +217,7 @@ public:
     // build, in which case the rest of the bar still works.
     bool Start();
 
-    void Stop();
+    WorkerThread::StopResult Stop();
 
     // Copies the latest snapshot. Cheap and non-blocking; call it from the frame
     // loop.

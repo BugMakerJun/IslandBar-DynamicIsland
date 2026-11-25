@@ -70,7 +70,7 @@ public:
     //
     // `databasePath` is for the self-test; null asks Windows where the file is.
     bool Start(const wchar_t* databasePath = nullptr);
-    void Stop();
+    WorkerThread::StopResult Stop();
     bool Available() const { return database_ != nullptr; }
 
     // Starts the background poller used by the bar. The first client read is

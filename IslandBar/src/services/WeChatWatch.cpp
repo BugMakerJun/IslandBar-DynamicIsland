@@ -140,8 +140,8 @@ bool WeChatWatcher::Start(const std::shared_ptr<WeChatWatcher>& owner) {
     return processWorker_.Start(&WeChatWatcher::ProcessThreadEntry, owner);
 }
 
-void WeChatWatcher::Stop() {
-    (void)processWorker_.Stop();
+WorkerThread::StopResult WeChatWatcher::Stop() {
+    return processWorker_.Stop();
 }
 
 unsigned long __stdcall WeChatWatcher::ProcessThreadEntry(void* self) {

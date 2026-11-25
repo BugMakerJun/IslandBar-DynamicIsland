@@ -76,7 +76,7 @@ struct ProbeState {
     island::TrayLedger ledger;
     std::vector<ProbeContact> contacts;
     island::TrayRingReader reader;
-    unsigned cursor = 0;
+    std::uint64_t cursor = 0;
     unsigned generation = 0;
     DWORD shellPid = 0;
     ULONGLONG startedTick = 0;
@@ -552,9 +552,9 @@ bool InstallObserver(ProbeState* state) {
     // Discard records from an earlier probe session. The observer publishes new records after the hook lands.
     if (state->reader.Open()) {
         island::TrayRingRecord discard[island::kTrayRingCapacity] = {};
-        unsigned discardCursor = 0;
+        std::uint64_t discardCursor = 0;
         (void)state->reader.Drain(discardCursor, discard, island::kTrayRingCapacity);
-        state->cursor = state->reader.header ? static_cast<unsigned>(state->reader.header->written) : 0;
+        state->cursor = state->reader.header ? state->reader.Published() : 0;
     }
 
     HMODULE module = LoadProbeHook();
@@ -681,7 +681,7 @@ int main(int argc, char** argv) {
             state.ledger.Reset();
             state.contacts.clear();
             state.observerReady = false;
-            state.cursor = state.reader.header ? static_cast<unsigned>(state.reader.header->written) : 0;
+            state.cursor = state.reader.header ? state.reader.Published() : 0;
             std::printf("tray-probe: explorer_pid_changed pid=%lu generation=%u\n",
                         static_cast<unsigned long>(state.shellPid), state.generation);
         }

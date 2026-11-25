@@ -19,8 +19,9 @@
 #include <cstdio>
 #include <cwchar>
 #include <cwctype>     // towlower: comparing an executable's name with a window's process image
+#include <memory>
+#include <new>
 #include <objbase.h>   // CoInitializeEx: a press talks to COM, and WIN32_LEAN_AND_MEAN leaves it out of windows.h
-#include <thread>
 
 #include "core/Log.h"
 #include "domain/CardLayout.h"   // TrayMenuFacts / TrayMenuAction: the rows and their labels
@@ -34,6 +35,41 @@ namespace island {
 // The cell a press could not deal with, for the frame loop to open the bar's own menu over (see TrayMenu.h).
 std::atomic<int> trayMenuRequestCell{-1};
 std::atomic<int> trayPressDismissCell{-1};
+
+namespace {
+
+struct TrayPressJob {
+    island::TrayPressRequest request;
+    bool rightClick = false;
+    int cell = -1;
+};
+
+WorkerThread g_trayPressWorker;
+
+unsigned long __stdcall TrayPressThreadEntry(void* context) {
+    std::unique_ptr<TrayPressJob> job(static_cast<TrayPressJob*>(context));
+    const HRESULT comHr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    const TrayPressOutcome outcome = PressTrayIcon(job->request, job->rightClick);
+    LogAndPrint(L"  tray press: '%ls' -> %ls via %ls, menu_evidence=%ls, press %lld ms\n",
+                job->request.name, TrayPressResultName(outcome.result), outcome.route,
+                outcome.menuEvidence, outcome.ms);
+    if (outcome.result == TrayPressResult::Pressed) {
+        LogAndPrint(L"  tray press: delivered to %ls -- %ls\n", outcome.target, outcome.answer);
+    }
+    if (outcome.result == TrayPressResult::NoEntry ||
+        outcome.result == TrayPressResult::NoWindow ||
+        outcome.result == TrayPressResult::Refused) {
+        trayMenuRequestCell.store(job->cell);
+    } else if (outcome.result == TrayPressResult::Pressed && !job->rightClick) {
+        trayPressDismissCell.store(job->cell);
+    }
+    std::fflush(stdout);
+    if (SUCCEEDED(comHr)) CoUninitialize();
+    return 0;
+}
+
+} // namespace
+
 // One icon's press request, copied out of the list: a press runs on a worker thread and the list refreshes
 // under it (see TrayPressRequest).
 island::TrayPressRequest MakeTrayPressRequest(const island::TrayIcon& icon, const wchar_t* exePath) {
@@ -259,35 +295,17 @@ void StartTrayPress(const island::TrayIcons& icons, int cell, bool rightClick) {
                         FlatName(icons.At(cell).name, flat, 128),
                         rightClick ? L" (right click)" : L"");
     std::fflush(stdout);
-    std::thread([request, rightClick, cell]() {
-        const HRESULT comHr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-        const island::TrayPressOutcome outcome = island::PressTrayIcon(request, rightClick);
-        // THE WIDE OVERLOAD, and it is not a style choice: with the narrow one this line came out EMPTY
-        // whenever the shell's name for the icon held a non-ASCII character (" 微信"), because the narrow
-        // CRT cannot convert that to bytes and MSVC empties the whole line instead of failing loudly. Three
-        // presses were diagnosed as "the Invoke hung" on the strength of those blank lines. See Log.h.
-        island::LogAndPrint(L"  tray press: '%ls' -> %ls via %ls, menu_evidence=%ls, press %lld ms\n",
-                            request.name, island::TrayPressResultName(outcome.result), outcome.route,
-                            outcome.menuEvidence, outcome.ms);
-        // "THE POINTER NEVER MOVED" IS NOT A CLAIM ANY MORE, it is a property of the code: there is no
-        // SetCursorPos and no SendInput left in this program (see TrayPress.h). What is worth a line is what
-        // the application was seen to do, which is the only thing that says whether the press worked.
-        if (outcome.result == island::TrayPressResult::Pressed) {
-            island::LogAndPrint(L"  tray press: delivered to %ls -- %ls\n", outcome.target, outcome.answer);
-        }
-        // A right press can lose its callback window between the synchronous check and delivery. That cell
-        // then opens the bar's fallback menu; the request is handed to the frame loop because this runs on a
-        // worker thread (see the tray menu's state).
-        if (outcome.result == island::TrayPressResult::NoEntry ||
-            outcome.result == island::TrayPressResult::NoWindow ||
-            outcome.result == island::TrayPressResult::Refused) {
-            trayMenuRequestCell.store(cell);
-        } else if (outcome.result == island::TrayPressResult::Pressed && !rightClick) {
-            trayPressDismissCell.store(cell);
-        }
-        std::fflush(stdout);
-        if (SUCCEEDED(comHr)) CoUninitialize();
-    }).detach();
+    auto* job = new (std::nothrow) TrayPressJob{request, rightClick, cell};
+    if (!job) return;
+    if (!g_trayPressWorker.StartUnmanaged(&TrayPressThreadEntry, job)) {
+        delete job;
+        island::LogAndPrint(L"  tray press: another press is still in flight; '%ls' was not sent\n",
+                            request.name);
+    }
+}
+
+WorkerThread::StopResult StopTrayPressWorker() {
+    return g_trayPressWorker.Stop();
 }
 
 } // namespace island
