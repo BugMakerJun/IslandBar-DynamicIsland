@@ -1,0 +1,392 @@
+<!DOCTYPE html><html lang="zh-CN"><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>桌面系统控制中心面板</title>
+<!-- Tailwind CSS CDN with plugins -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Font Awesome Icons -->
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" rel="stylesheet">
+<!-- Google Fonts: Plus Jakarta Sans & Noto Sans SC -->
+<link href="https://fonts.googleapis.com" rel="preconnect">
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&amp;family=Plus+Jakarta+Sans:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet">
+<script data-purpose="tailwind-configuration">
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            theme: {
+              desktop: '#181622',
+              surface: '#faf8fd',
+              card: '#ffffff',
+              primary: '#6b52ae',
+              'primary-dark': '#533994',
+              'primary-light': '#8469cb',
+              'primary-soft': '#e9ddff',
+              text: '#2d264b',
+              muted: '#6f6982',
+              subtle: '#9f98b2',
+              tint: '#f5f3fa',
+              border: '#ebe6f5'
+            }
+          },
+          fontFamily: {
+            sans: ['"Plus Jakarta Sans"', '"Noto Sans SC"', 'sans-serif'],
+          },
+          boxShadow: {
+            'window': '0 32px 80px -16px rgba(13, 11, 23, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.75) inset',
+            'card-subtle': '0 4px 18px -2px rgba(107, 82, 174, 0.05), 0 1px 3px rgba(0, 0, 0, 0.02)',
+            'pill-primary': '0 4px 12px rgba(107, 82, 174, 0.35)'
+          }
+        }
+      }
+    }
+  </script>
+<style>
+    body {
+      background-color: #181622;
+      background-image: radial-gradient(circle at 50% 25%, #252038 0%, #181622 75%, #100e18 100%);
+      font-feature-settings: "cv02", "cv03", "cv04", "cv11", "tnum";
+      -webkit-font-smoothing: antialiased;
+    }
+  </style>
+</head>
+<body class="min-h-screen flex items-center justify-center p-4 sm:p-6 lg:p-8 font-sans selection:bg-theme-primary selection:text-white">
+<!-- BEGIN: DesktopWidgetWindow (约 840px 宽度) -->
+<main class="relative w-full max-w-[920px] bg-[#faf8fd] rounded-[32px] shadow-window border border-white/85 p-6 backdrop-blur-2xl transition-all duration-300 overflow-hidden" data-purpose="desktop-widget-container">
+<div class="absolute top-2.5 left-1/2 -translate-x-1/2 w-14 h-1.5 bg-[#d8d0e8]/80 rounded-full hover:bg-theme-primary/40 transition-colors cursor-grab active:cursor-grabbing shadow-[inset_0_1px_1px_rgba(0,0,0,0.06)]"></div>
+<div class="flex items-stretch gap-5 pt-1">
+<section aria-label="Overview Widgets" class="w-[410px] shrink-0 flex flex-col gap-4">
+<div class="flex items-stretch gap-3.5">
+<article class="flex-1 bg-gradient-to-br from-[#f1ecfc] via-[#f7f4fe] to-[#ece5f9] border border-white/95 rounded-[24px] p-4 flex flex-col justify-between shadow-card-subtle relative overflow-hidden" data-purpose="clock-card">
+<div class="absolute -right-6 -bottom-6 w-28 h-28 bg-[#6b52ae]/10 rounded-full pointer-events-none blur-xl"></div>
+<div class="relative z-10">
+<span class="text-[44px] leading-none font-extrabold tracking-tight text-theme-text font-sans block drop-shadow-xs">06:43</span>
+<p class="text-xs font-semibold text-theme-muted mt-2 flex items-center gap-1.5">
+<span class="">周二</span>
+<span class="inline-block w-1 h-1 rounded-full bg-theme-subtle/70"></span>
+<span class="">2026年11月10日</span>
+</p>
+</div>
+<div class="mt-3 flex items-center relative z-10">
+<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-white/90 text-theme-primary border border-white shadow-xs backdrop-blur-xs">
+<i class="fa-regular fa-clock text-[10px]"></i>
+<span class="">北京时间</span>
+</span>
+</div>
+</article>
+<article class="w-[136px] shrink-0 bg-white border border-theme-border/70 rounded-[24px] p-3.5 flex flex-col justify-between items-center text-center shadow-card-subtle relative" data-purpose="weather-card">
+<div class="w-full flex justify-end">
+<span class="text-[10px] font-bold text-emerald-600 bg-emerald-50 border border-emerald-200/60 px-2 py-0.5 rounded-full shadow-xs">良 38</span>
+</div>
+<div class="my-0.5 flex items-center justify-center">
+<div class="w-10 h-10 rounded-2xl bg-gradient-to-br from-amber-100 to-amber-200/50 flex items-center justify-center text-amber-500 text-lg shadow-[0_3px_10px_rgba(245,158,11,0.2)]">
+<i class="fa-solid fa-sun animate-[spin_24s_linear_infinite]"></i>
+</div>
+</div>
+<div>
+<span class="text-2xl font-black text-theme-text tracking-tight block leading-tight">-1°</span>
+<span class="text-xs font-semibold text-theme-muted block mt-0.5">晴</span>
+</div>
+</article>
+</div>
+<article class="bg-white border border-theme-border/70 rounded-2xl p-4 shadow-card-subtle" data-purpose="calendar-widget">
+<div class="flex items-center justify-between mb-3 px-1">
+<h2 class="text-xs font-bold text-theme-text flex items-center gap-2">
+<span class="w-5 h-5 rounded-lg bg-theme-tint flex items-center justify-center text-theme-primary text-[11px]">
+<i class="fa-regular fa-calendar"></i>
+</span>
+<span class="">2026年11月</span>
+</h2>
+<div class="flex items-center gap-1 bg-[#f5f2fa] p-0.5 rounded-lg border border-theme-border/60">
+<button aria-label="Previous month" class="w-5 h-5 flex items-center justify-center rounded text-theme-muted hover:text-theme-text hover:bg-white text-[10px] transition">
+<i class="fa-solid fa-chevron-left"></i>
+</button>
+<button aria-label="Next month" class="w-5 h-5 flex items-center justify-center rounded text-theme-muted hover:text-theme-text hover:bg-white text-[10px] transition">
+<i class="fa-solid fa-chevron-right"></i>
+</button>
+</div>
+</div>
+<div class="grid grid-cols-7 gap-y-1 text-center text-xs">
+<span class="font-semibold text-theme-subtle py-1 text-[11px]">一</span>
+<span class="font-semibold text-theme-subtle py-1 text-[11px]">二</span>
+<span class="font-semibold text-theme-subtle py-1 text-[11px]">三</span>
+<span class="font-semibold text-theme-subtle py-1 text-[11px]">四</span>
+<span class="font-semibold text-theme-subtle py-1 text-[11px]">五</span>
+<span class="font-semibold text-theme-subtle py-1 text-[11px]">六</span>
+<span class="font-semibold text-theme-subtle py-1 text-[11px]">日</span>
+<span class="text-transparent py-1 select-none text-[11px]">0</span>
+<span class="text-transparent py-1 select-none text-[11px]">0</span>
+<span class="text-transparent py-1 select-none text-[11px]">0</span>
+<span class="text-transparent py-1 select-none text-[11px]">0</span>
+<span class="text-transparent py-1 select-none text-[11px]">0</span>
+<span class="text-transparent py-1 select-none text-[11px]">0</span>
+<span class="text-theme-muted hover:bg-theme-tint rounded-lg py-1 font-medium transition cursor-pointer text-[11px]">1</span>
+<span class="text-theme-muted hover:bg-theme-tint rounded-lg py-1 font-medium transition cursor-pointer text-[11px]">2</span>
+<span class="text-theme-muted hover:bg-theme-tint rounded-lg py-1 font-medium transition cursor-pointer text-[11px]">3</span>
+<span class="text-theme-muted hover:bg-theme-tint rounded-lg py-1 font-medium transition cursor-pointer text-[11px]">4</span>
+<span class="text-theme-muted hover:bg-theme-tint rounded-lg py-1 font-medium transition cursor-pointer text-[11px]">5</span>
+<span class="text-theme-muted hover:bg-theme-tint rounded-lg py-1 font-medium transition cursor-pointer text-[11px]">6</span>
+<span class="text-theme-muted hover:bg-theme-tint rounded-lg py-1 font-medium transition cursor-pointer text-[11px]">7</span>
+<span class="text-theme-muted hover:bg-theme-tint rounded-lg py-1 font-medium transition cursor-pointer text-[11px]">8</span>
+<span class="text-theme-muted hover:bg-theme-tint rounded-lg py-1 font-medium transition cursor-pointer text-[11px]">9</span>
+<span class="relative py-0.5 flex items-center justify-center">
+<span class="w-6 h-6 rounded-full bg-theme-primary text-white font-bold flex items-center justify-center shadow-pill-primary text-[11px]">10</span>
+</span>
+<span class="text-theme-muted hover:bg-theme-tint rounded-lg py-1 font-medium transition cursor-pointer text-[11px]">11</span>
+<span class="text-theme-muted hover:bg-theme-tint rounded-lg py-1 font-medium transition cursor-pointer text-[11px]">12</span>
+<span class="text-theme-muted hover:bg-theme-tint rounded-lg py-1 font-medium transition cursor-pointer text-[11px]">13</span>
+<span class="text-theme-muted hover:bg-theme-tint rounded-lg py-1 font-medium transition cursor-pointer text-[11px]">14</span>
+<span class="text-theme-muted hover:bg-theme-tint rounded-lg py-1 font-medium transition cursor-pointer text-[11px]">15</span>
+<span class="text-theme-muted hover:bg-theme-tint rounded-lg py-1 font-medium transition cursor-pointer text-[11px]">16</span>
+<span class="text-theme-muted hover:bg-theme-tint rounded-lg py-1 font-medium transition cursor-pointer text-[11px]">17</span>
+<span class="text-theme-muted hover:bg-theme-tint rounded-lg py-1 font-medium transition cursor-pointer text-[11px]">18</span>
+<span class="text-theme-muted hover:bg-theme-tint rounded-lg py-1 font-medium transition cursor-pointer text-[11px]">19</span>
+<span class="text-theme-muted hover:bg-theme-tint rounded-lg py-1 font-medium transition cursor-pointer text-[11px]">20</span>
+<span class="text-theme-muted hover:bg-theme-tint rounded-lg py-1 font-medium transition cursor-pointer text-[11px]">21</span>
+<span class="text-theme-muted hover:bg-theme-tint rounded-lg py-1 font-medium transition cursor-pointer text-[11px]">22</span>
+<span class="text-theme-muted hover:bg-theme-tint rounded-lg py-1 font-medium transition cursor-pointer text-[11px]">23</span>
+<span class="text-theme-muted hover:bg-theme-tint rounded-lg py-1 font-medium transition cursor-pointer text-[11px]">24</span>
+<span class="text-theme-muted hover:bg-theme-tint rounded-lg py-1 font-medium transition cursor-pointer text-[11px]">25</span>
+<span class="text-theme-muted hover:bg-theme-tint rounded-lg py-1 font-medium transition cursor-pointer text-[11px]">26</span>
+<span class="text-theme-muted hover:bg-theme-tint rounded-lg py-1 font-medium transition cursor-pointer text-[11px]">27</span>
+<span class="text-theme-muted hover:bg-theme-tint rounded-lg py-1 font-medium transition cursor-pointer text-[11px]">28</span>
+<span class="text-theme-muted hover:bg-theme-tint rounded-lg py-1 font-medium transition cursor-pointer text-[11px]">29</span>
+</div>
+</article>
+<article class="bg-white/95 border border-purple-200/60 rounded-[24px] p-4 shadow-card-subtle flex flex-col relative overflow-hidden group hover:border-theme-primary/40 transition-all duration-300" data-purpose="music-player-widget">
+  <!-- Ambient soft glow in background -->
+  <div class="absolute -right-8 -top-8 w-32 h-32 bg-[#6b52ae]/10 rounded-full pointer-events-none blur-2xl"></div>
+  <div class="absolute -left-6 -bottom-6 w-24 h-24 bg-[#8469cb]/10 rounded-full pointer-events-none blur-xl"></div>
+
+  <!-- Horizontal Split: Left Cover with Glossy Downward Reflection & Right Track Details & Controls -->
+  <div class="flex items-center gap-4 relative z-10">
+    
+    <!-- LEFT: Album Cover with 3D Gloss & Realistic Mirror Reflection underneath -->
+    <div class="shrink-0 flex flex-col items-center justify-start pt-1 pb-4 select-none relative group/cover">
+      <!-- Main Album Art Disc/Sleeve -->
+      <div class="relative w-[78px] h-[78px] rounded-2xl p-0.5 bg-gradient-to-tr from-[#533994] via-[#6b52ae] to-[#d5c7ee] shadow-[0_8px_20px_-4px_rgba(107,82,174,0.35)] transition-transform duration-300 group-hover/cover:scale-105">
+        <div class="w-full h-full rounded-[14px] bg-gradient-to-br from-[#221c38] via-[#35255e] to-[#533994] p-2 flex flex-col justify-between items-center relative overflow-hidden border border-white/20">
+          <!-- Vinyl groove rings illusion -->
+          <div class="absolute -right-5 -bottom-5 w-20 h-20 rounded-full border border-white/10"></div>
+          <div class="absolute -right-2 -bottom-2 w-14 h-14 rounded-full border border-white/10"></div>
+          <div class="w-full flex items-center justify-between text-purple-200/70 text-[9px]">
+            <i class="fa-solid fa-shapes text-[9px]"></i>
+            <span class="font-mono text-[8px] font-bold tracking-widest">LIVE</span>
+          </div>
+          <div class="w-7 h-7 rounded-full bg-gradient-to-br from-[#8469cb] to-[#533994] flex items-center justify-center text-white shadow-xs border border-white/30 my-auto">
+            <i class="fa-solid fa-music text-xs"></i>
+          </div>
+          <span class="text-[8px] font-semibold tracking-wider text-purple-200/80 uppercase truncate max-w-full">MISERABLE FAITH</span>
+        </div>
+        <!-- Gloss overlay highlight -->
+        <div class="absolute inset-0 rounded-2xl bg-gradient-to-b from-white/35 via-transparent to-transparent pointer-events-none"></div>
+      </div>
+
+      <!-- Downward Mirror Reflection Effect -->
+      <div class="w-[78px] h-7 overflow-hidden pointer-events-none -mt-0.5 relative opacity-35 blur-[0.6px] select-none scale-y-[-1] transition-opacity duration-300 group-hover/cover:opacity-50">
+        <div class="w-full h-[78px] rounded-2xl p-0.5 bg-gradient-to-tr from-[#533994] via-[#6b52ae] to-[#d5c7ee]">
+          <div class="w-full h-full rounded-[14px] bg-gradient-to-br from-[#221c38] via-[#35255e] to-[#533994] p-2 flex flex-col justify-between items-center">
+            <div class="w-7 h-7 rounded-full bg-[#8469cb] my-auto"></div>
+          </div>
+        </div>
+        <!-- Gradient Mask to fade reflection to transparent -->
+        <div class="absolute inset-0 bg-gradient-to-t from-transparent via-[#faf8fd]/80 to-[#faf8fd]"></div>
+      </div>
+    </div>
+
+    <!-- RIGHT: Info, Badges, Equalizer, Timeline, and Controls -->
+    <div class="flex-1 min-w-0 flex flex-col justify-between gap-1.5">
+      
+      <!-- Title, Badges and Equalizer -->
+      <div class="flex items-start justify-between gap-2">
+        <div class="min-w-0 flex-1">
+          <div class="flex items-center gap-1.5 flex-wrap">
+            <h3 class="text-xs font-bold text-theme-text leading-tight truncate">车间 <span class="text-[10px] text-theme-subtle font-normal">(Live)</span></h3>
+            <span class="inline-flex items-center gap-1 text-[8px] font-bold text-[#6b52ae] bg-[#ede6f9] border border-purple-200/60 px-1.5 py-0.2 rounded-full leading-none shadow-xs">
+              <span class="w-1 h-1 rounded-full bg-emerald-500 animate-pulse"></span>Hi-Res
+            </span>
+            <span class="text-[8px] font-bold text-[#533994] bg-[#ede8f7] px-1 py-0.2 rounded leading-none">FLAC</span>
+          </div>
+          <div class="flex items-center gap-1.5 text-[11px] text-theme-muted mt-0.5">
+            <span class="truncate font-medium text-theme-muted">痛仰乐队</span>
+            <span class="text-theme-subtle text-[8px]">·</span>
+            <span class="text-[10px] text-theme-subtle truncate">今日推荐</span>
+          </div>
+        </div>
+
+        <!-- Micro Dynamic Equalizer Wave -->
+        <div class="flex items-end gap-0.5 h-3.5 px-1 py-0.5 bg-[#ede6f9]/50 rounded-md border border-purple-200/40 shrink-0" title="正在播放">
+          <span class="w-0.5 h-2 bg-[#6b52ae] rounded-full animate-pulse"></span>
+          <span class="w-0.5 h-3 bg-[#8469cb] rounded-full animate-bounce"></span>
+          <span class="w-0.5 h-2.5 bg-[#6b52ae] rounded-full animate-pulse"></span>
+          <span class="w-0.5 h-3.5 bg-[#533994] rounded-full animate-bounce"></span>
+        </div>
+      </div>
+
+      <!-- Sleek Progress Track -->
+      <div class="flex items-center gap-2 pt-0.5">
+        <span class="text-[9px] font-semibold text-theme-subtle font-mono">02:14</span>
+        <div class="flex-1 h-1.5 bg-[#ede6f9] rounded-full relative cursor-pointer group/bar flex items-center shadow-[inset_0_1px_1px_rgba(0,0,0,0.04)]">
+          <div class="h-full bg-gradient-to-r from-[#8469cb] to-[#6b52ae] rounded-full w-[48%] relative shadow-[0_0_8px_rgba(107,82,174,0.45)]">
+            <span class="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 w-2.5 h-2.5 rounded-full bg-white shadow-xs border-2 border-[#6b52ae] group-hover/bar:scale-110 transition-transform"></span>
+          </div>
+        </div>
+        <span class="text-[9px] font-semibold text-theme-subtle font-mono">04:36</span>
+      </div>
+
+      <!-- Playback Controls Dock -->
+      <div class="flex items-center justify-between pt-0.5">
+        <!-- Secondary Micro Action: Repeat/Heart -->
+        <button aria-label="收藏歌曲" class="w-6 h-6 rounded-lg text-theme-subtle hover:text-theme-primary hover:bg-[#ede7f9]/60 flex items-center justify-center transition active:scale-95 text-[10px]">
+          <i class="fa-regular fa-clock"></i>
+        </button>
+
+        <!-- Main Transport Buttons -->
+        <div class="flex items-center gap-1.5">
+          <button aria-label="上一首" class="w-7 h-7 rounded-lg text-theme-muted hover:text-theme-primary hover:bg-[#ede7f9]/70 flex items-center justify-center transition active:scale-90 text-[11px]">
+            <i class="fa-solid fa-backward-step"></i>
+          </button>
+          
+          <button aria-label="暂停/播放" class="w-8 h-8 rounded-full bg-gradient-to-br from-[#6b52ae] to-[#533994] text-white hover:brightness-110 active:scale-90 flex items-center justify-center shadow-pill-primary hover:scale-105 transition duration-150 ring-2 ring-purple-200/50">
+            <i class="fa-solid fa-play text-xs ml-0.5"></i>
+          </button>
+          
+          <button aria-label="下一首" class="w-7 h-7 rounded-lg text-theme-muted hover:text-theme-primary hover:bg-[#ede7f9]/70 flex items-center justify-center transition active:scale-90 text-[11px]">
+            <i class="fa-solid fa-forward-step"></i>
+          </button>
+        </div>
+
+        <!-- Secondary Micro Action: Sound / Playlist mode -->
+        <button aria-label="播放列表与均衡" class="w-6 h-6 rounded-lg text-theme-subtle hover:text-theme-primary hover:bg-[#ede7f9]/60 flex items-center justify-center transition active:scale-95 text-[10px]">
+          <i class="fa-solid fa-sliders"></i>
+        </button>
+      </div>
+
+    </div>
+  </div>
+</article>
+</section>
+<section aria-label="Notifications Panel" class="w-[300px] shrink-0 flex flex-col justify-between">
+<div class="flex items-center justify-between px-1 mb-2.5">
+<div class="flex items-center gap-2">
+<h2 class="text-sm font-bold text-theme-text tracking-tight">通知</h2>
+<span class="inline-flex items-center justify-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-[#ede6f9] text-theme-primary shadow-xs">18</span>
+</div>
+<button class="text-[11px] text-theme-muted hover:text-theme-primary transition flex items-center gap-1 font-medium px-1.5 py-0.5 rounded hover:bg-white/60" type="button">
+<i class="fa-solid fa-sliders text-[10px]"></i>
+<span class="">偏好设置</span>
+</button>
+</div>
+<div class="flex flex-col gap-2.5 flex-1" data-purpose="notification-feed">
+<article class="bg-white border border-theme-border/70 rounded-2xl p-3.5 shadow-card-subtle flex flex-col gap-2 group hover:border-theme-primary/30 transition-all">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-2">
+<span class="w-6 h-6 rounded-full bg-[#ede7f9] text-theme-primary flex items-center justify-center font-bold text-xs">C</span>
+<span class="text-xs font-bold text-theme-muted">Codex</span>
+</div>
+<span class="text-[11px] text-theme-subtle">刚刚</span>
+</div>
+<div>
+<h4 class="text-xs font-bold text-theme-text leading-snug truncate">统一灵动岛搜索框四周边距</h4>
+<p class="text-[11px] text-theme-muted leading-relaxed mt-1 line-clamp-2">
+                发生相关的逻辑调整，整合桌面式给你确认后续动作...
+              </p>
+</div>
+<div class="flex items-center gap-3 pt-0.5">
+<button class="text-xs font-bold text-theme-primary hover:text-theme-primary-dark transition" type="button">打开</button>
+<button class="text-xs font-medium text-theme-muted hover:text-theme-text transition" type="button">关闭</button>
+</div>
+</article>
+<article class="bg-white border border-theme-border/70 rounded-2xl p-3.5 shadow-card-subtle flex flex-col gap-2 group hover:border-theme-primary/30 transition-all">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-2">
+<span class="w-6 h-6 rounded-full bg-[#ede7f9] text-theme-primary flex items-center justify-center font-bold text-xs">C</span>
+<span class="text-xs font-bold text-theme-muted">Codex</span>
+</div>
+<span class="text-[11px] text-theme-subtle">12分钟前</span>
+</div>
+<div>
+<h4 class="text-xs font-bold text-theme-text leading-snug truncate">统一灵动岛搜索框四周边距</h4>
+<p class="text-[11px] text-theme-muted leading-relaxed mt-1 line-clamp-2">
+                已备好并已更新版本，点击查看改动日志及相应配置。
+              </p>
+</div>
+<div class="flex items-center gap-3 pt-0.5">
+<button class="text-xs font-bold text-theme-primary hover:text-theme-primary-dark transition" type="button">打开</button>
+<button class="text-xs font-medium text-theme-muted hover:text-theme-text transition" type="button">关闭</button>
+</div>
+</article>
+<article class="bg-white border border-theme-border/70 rounded-2xl p-3.5 shadow-card-subtle flex flex-col gap-2 group hover:border-theme-primary/30 transition-all">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-2">
+<span class="w-6 h-6 rounded-full bg-[#ede7f9] text-theme-primary flex items-center justify-center font-bold text-xs">C</span>
+<span class="text-xs font-bold text-theme-muted">Codex</span>
+</div>
+<span class="text-[11px] text-theme-subtle">1小时前</span>
+</div>
+<div>
+<h4 class="text-xs font-bold text-theme-text leading-snug truncate">Install WSL2 and switch to Fedora 45</h4>
+<p class="text-[11px] text-theme-muted leading-relaxed mt-1 line-clamp-2">
+                niri 已经帮您配置好了，现在不需要流程界面，已可以直接运行。
+              </p>
+</div>
+<div class="flex items-center gap-3 pt-0.5">
+<button class="text-xs font-bold text-theme-primary hover:text-theme-primary-dark transition" type="button">打开</button>
+<button class="text-xs font-medium text-theme-muted hover:text-theme-text transition" type="button">关闭</button>
+</div>
+</article>
+</div>
+<div class="mt-2.5 flex items-center gap-2.5">
+<button class="px-5 py-2 text-xs font-semibold rounded-2xl bg-white border border-theme-border/80 text-theme-muted hover:text-theme-primary hover:bg-theme-tint transition shadow-card-subtle" type="button">全部</button>
+<button class="flex-1 py-2 px-4 text-xs font-semibold rounded-2xl bg-[#d5c7ee] hover:bg-[#cbbae9] text-theme-text transition duration-150 shadow-card-subtle text-center" type="button">清空</button>
+</div>
+</section>
+<div class="w-px bg-gradient-to-b from-transparent via-[#d8d0e8]/80 to-transparent my-1 shrink-0"></div>
+<aside aria-label="侧边快捷导航" class="w-12 shrink-0 self-stretch flex flex-col items-center justify-between p-1 bg-[#ede8f7]/60 backdrop-blur-md rounded-[24px] border border-white/95 shadow-[inset_0_1px_2px_rgba(255,255,255,0.9),0_4px_16px_rgba(65,45,120,0.05)]">
+<!-- 顶部：用户头像与精巧状态标识 -->
+<div class="flex flex-col items-center gap-1 shrink-0 pt-0.5">
+<div class="relative group cursor-pointer">
+<div class="w-9 h-9 rounded-full bg-gradient-to-tr from-[#6b52ae] via-[#8469cb] to-pink-300 p-0.5 shadow-md flex items-center justify-center transition-transform hover:scale-105 ring-2 ring-white/60">
+<img alt="User Avatar" class="w-full h-full rounded-full object-cover border border-white/80" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCGeZt_wigT_x_59rU0j_AlwJJv94n_mNzn84ufLTEGeQV5O0DnktGwFaTLzzTpfDaGF2xyE_tJXuH5EahRUCJ0H9uctme23V-YEEjxd46853PY35qbo9KLz4T2_ZckQNjTo_3cbztwDyfsYKbPZL49pv38q9MI4BYssxNO5yt8h3svgpyJn8BjqJ7x5q0wvZ5aGclWGbekrWRrNuOg62RyIYHHCbSdKR18WHBoeA03">
+</div>
+<span class="absolute bottom-0 right-0 w-2.5 h-2.5 bg-emerald-500 border-2 border-white rounded-full shadow-xs"></span>
+</div>
+<span class="text-[9px] font-bold text-theme-muted tracking-tight mt-0.5 scale-90">在线</span>
+</div>
+<!-- 中间：独立药丸卡片坞 (Sub-dock) 聚集 4 个应用快捷图标 -->
+<div class="w-full bg-white/70 border border-white/90 rounded-2xl p-0.5 shadow-card-subtle flex flex-col items-center gap-1.5 my-auto shrink-0">
+<button aria-label="默认主页应用" class="w-8 h-8 rounded-xl bg-theme-primary text-white flex items-center justify-center shadow-pill-primary transition transform hover:scale-105 active:scale-95" title="主页应用">
+<i class="fa-solid fa-shapes text-xs"></i>
+</button>
+<button aria-label="全部应用" class="w-8 h-8 rounded-xl text-theme-muted hover:text-theme-primary hover:bg-white/80 flex items-center justify-center transition" title="全部应用">
+<i class="fa-solid fa-border-all text-xs"></i>
+</button>
+<button aria-label="后台托盘抽屉" class="w-8 h-8 rounded-xl text-theme-muted hover:text-theme-primary hover:bg-white/80 flex items-center justify-center transition" title="托盘后台">
+<i class="fa-solid fa-inbox text-xs"></i>
+</button>
+<button aria-label="应用快捷" class="w-8 h-8 rounded-xl text-theme-muted hover:text-theme-primary hover:bg-white/80 flex items-center justify-center transition" title="快捷抽屉">
+<i class="fa-solid fa-sliders text-xs"></i>
+</button>
+</div>
+<!-- 底部：独立精致系统控制胶囊坞 -->
+<div class="w-full bg-white/70 border border-white/90 rounded-2xl p-0.5 shadow-card-subtle flex flex-col items-center gap-1 shrink-0 pb-1">
+<button aria-label="系统设置" class="w-8 h-8 rounded-lg text-theme-muted hover:text-theme-primary hover:bg-white flex items-center justify-center transition" title="系统设置">
+<i class="fa-solid fa-gear text-xs"></i>
+</button>
+<button aria-label="重启系统" class="w-8 h-8 rounded-lg text-theme-muted hover:text-amber-600 hover:bg-amber-50 flex items-center justify-center transition" title="重启系统">
+<i class="fa-solid fa-rotate-right text-xs"></i>
+</button>
+<button aria-label="关机电源" class="w-8 h-8 rounded-lg text-theme-muted hover:text-rose-500 hover:bg-rose-50 flex items-center justify-center transition" title="电源关机">
+<i class="fa-solid fa-power-off text-xs"></i>
+</button>
+</div>
+</aside>
+</div>
+</main>
+<!-- END: DesktopWidgetWindow -->
+
+
+
+
+</body></html>
