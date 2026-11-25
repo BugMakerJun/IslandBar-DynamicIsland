@@ -2,6 +2,8 @@
 //  TrayPress.cpp -- see the header for the route and for what it is built on.
 // =====================================================================
 #include "shell/TrayPress.h"
+#include "shell/TrayCallbackCache.h"
+#include "shell/TrayLearn.h"
 #include "shell/TrayReport.h"
 #include "domain/TrayEncoding.h"   // the only place a click's two words are placed (see its header)
 
@@ -16,6 +18,8 @@
 #include <objbase.h>
 
 #include <algorithm>
+#include <cstdlib>
+#include <cwchar>
 #include <string>
 #include <vector>
 
@@ -368,13 +372,15 @@ struct TrayCallback {
     // carries the uid in wParam and the mouse message in lParam, with the anchor left to the current cursor --
     // which is the cell the user just pressed, so the menu still lands where it should.
     unsigned version = 4;
-    // THE APPLICATION DID NOTHING OBSERVABLE when its callback was delivered, so a press of this icon from
-    // now on reports that instead of spending a second and a half finding it out again. Learned the same way
-    // as everything else here: by trying it (see the note in SendTrayCallback). The cache spells it `none`.
-    bool ignoresCallback = false;
     // THE GUID THE APPLICATION NAMED THIS ICON WITH, when it did (the cache's eighth field). Compared as
     // text: the registry's own GUID string and the one the module reported come from the same API.
     wchar_t guid[64] = {};
+    // v2 cache fields. An older line has all four as zero and uses the explicitly lower-confidence class
+    // lookup below.
+    unsigned long long window = 0;
+    unsigned ownerPid = 0;
+    unsigned ownerThread = 0;
+    unsigned shellPid = 0;
 };
 
 std::wstring BaseNameLower(const wchar_t* path) {
@@ -389,24 +395,18 @@ std::wstring BaseNameLower(const wchar_t* path) {
 // which is the state every application starts in.
 std::vector<TrayCallback> ReadTrayCallbacks() {
     std::vector<TrayCallback> entries;
-    wchar_t home[MAX_PATH] = {};
-    const DWORD length = GetEnvironmentVariableW(L"USERPROFILE", home, MAX_PATH);
-    if (length == 0 || length >= MAX_PATH) return entries;
-    std::wstring file = std::wstring(home) + L"\\IslandBar\\tray_callbacks.txt";
-
-    FILE* stream = nullptr;
-    if (_wfopen_s(&stream, file.c_str(), L"r, ccs=UTF-8") != 0 || !stream) return entries;
-    wchar_t line[512] = {};
-    while (std::fgetws(line, 512, stream)) {
-        std::wstring text = line;
+    std::vector<std::wstring> lines;
+    if (!TrayCallbackCache::Read(&lines)) return entries;
+    for (const std::wstring& text : lines) {
         const size_t comment = text.find(L'#');
-        if (comment != std::wstring::npos) text = text.substr(0, comment);
+        const std::wstring body =
+            comment == std::wstring::npos ? text : text.substr(0, comment);
         std::vector<std::wstring> fields;
         size_t start = 0;
         for (;;) {
-            const size_t bar = text.find(L'|', start);
-            std::wstring field = text.substr(start, bar == std::wstring::npos ? std::wstring::npos
-                                                                              : bar - start);
+            const size_t bar = body.find(L'|', start);
+            std::wstring field = body.substr(start, bar == std::wstring::npos ? std::wstring::npos
+                                                                               : bar - start);
             while (!field.empty() && (field.back() == L'\r' || field.back() == L'\n' ||
                                       field.back() == L' ' || field.back() == L'\t')) {
                 field.pop_back();
@@ -427,10 +427,9 @@ std::vector<TrayCallback> ReadTrayCallbacks() {
         if (fields.size() > 3) entry.uid = static_cast<unsigned>(std::wcstoul(fields[3].c_str(), nullptr, 10));
         if (fields.size() > 4) {
             entry.rightClickOnly = _wcsicmp(fields[4].c_str(), L"right") == 0;
-            entry.ignoresCallback = _wcsicmp(fields[4].c_str(), L"none") == 0 ||
-                                    _wcsicmp(fields[4].c_str(), L"click") == 0;   // `click`: written by the
-                                                                                 // build that still had a real
-                                                                                 // click to fall back to
+            // Old caches used `none`/`click` for a press whose effect could not be observed. That was not
+            // proof that the application ignores its callback, so it is deliberately not carried forward as a
+            // permanent restriction.
         }
         // The learned files carry the registered version from HANDOFF 8.107 on; a line written before that
         // says nothing, and the default is what such a line was written for.
@@ -446,6 +445,14 @@ std::vector<TrayCallback> ReadTrayCallbacks() {
             if (value.empty()) continue;
             if (value.front() == L'{') {
                 wcsncpy_s(entry.guid, value.c_str(), _TRUNCATE);
+            } else if (value.rfind(L"hwnd=", 0) == 0) {
+                entry.window = std::wcstoull(value.c_str() + 5, nullptr, 0);
+            } else if (value.rfind(L"pid=", 0) == 0) {
+                entry.ownerPid = static_cast<unsigned>(std::wcstoul(value.c_str() + 4, nullptr, 10));
+            } else if (value.rfind(L"tid=", 0) == 0) {
+                entry.ownerThread = static_cast<unsigned>(std::wcstoul(value.c_str() + 4, nullptr, 10));
+            } else if (value.rfind(L"shell_pid=", 0) == 0) {
+                entry.shellPid = static_cast<unsigned>(std::wcstoul(value.c_str() + 10, nullptr, 10));
             } else if (_wcsicmp(value.c_str(), L"select") == 0) {
                 entry.leftSpelling = TrayCallback::LeftSpelling::Select;
             } else if (_wcsicmp(value.c_str(), L"downup4") == 0) {
@@ -457,7 +464,6 @@ std::vector<TrayCallback> ReadTrayCallbacks() {
         }
         if (entry.message) entries.push_back(entry);
     }
-    std::fclose(stream);
     return entries;
 }
 
@@ -581,119 +587,71 @@ void WriteRightNote(const TrayPressRequest& request, TrayRightNote note) {
     std::fflush(stdout);
 }
 
-// The application's window of the class the entry names. False when it is not running, has no such window
-// yet (a tray icon that has not registered), or when nothing is known about it.
-bool CallbackWindowFor(const TrayPressRequest& request, const TrayCallback& entry, HWND* out) {
+enum class CallbackWindowCheck {
+    Found,
+    Missing,
+    PidMismatch,
+    ThreadMismatch,
+    ShellMismatch,
+    ClassMismatch,
+    Ambiguous,
+};
+
+const wchar_t* CallbackWindowReason(CallbackWindowCheck check) {
+    switch (check) {
+        case CallbackWindowCheck::Found: return L"callback_found";
+        case CallbackWindowCheck::Missing: return L"callback_hwnd_missing";
+        case CallbackWindowCheck::PidMismatch: return L"callback_pid_mismatch";
+        case CallbackWindowCheck::ThreadMismatch: return L"callback_thread_mismatch";
+        case CallbackWindowCheck::ShellMismatch: return L"callback_generation_stale";
+        case CallbackWindowCheck::ClassMismatch: return L"callback_class_mismatch";
+        case CallbackWindowCheck::Ambiguous: return L"callback_identity_ambiguous";
+    }
+    return L"callback_unknown";
+}
+
+// The application's exact callback window for a v2 cache entry. A legacy entry without an HWND is accepted
+// only when exactly one window of that image has the recorded class; choosing the first of several was the
+// behaviour that could deliver one icon's message to another.
+CallbackWindowCheck CallbackWindowFor(const TrayPressRequest& request, const TrayCallback& entry, HWND* out) {
+    if (!out) return CallbackWindowCheck::Missing;
+    *out = nullptr;
+    if (entry.shellPid != 0) {
+        const DWORD shellNow = TrayShellProcessId();
+        if (shellNow == 0 || shellNow != entry.shellPid) return CallbackWindowCheck::ShellMismatch;
+    }
+
+    if (entry.window != 0) {
+        const HWND window = reinterpret_cast<HWND>(static_cast<uintptr_t>(entry.window));
+        if (!IsWindow(window)) return CallbackWindowCheck::Missing;
+        DWORD ownerPid = 0;
+        const DWORD ownerThread = GetWindowThreadProcessId(window, &ownerPid);
+        if (entry.ownerPid != 0 && ownerPid != entry.ownerPid) return CallbackWindowCheck::PidMismatch;
+        if (entry.ownerThread != 0 && ownerThread != entry.ownerThread) {
+            return CallbackWindowCheck::ThreadMismatch;
+        }
+        wchar_t cls[128] = {};
+        if (GetClassNameW(window, cls, 128) == 0 || _wcsicmp(cls, entry.windowClass) != 0) {
+            return CallbackWindowCheck::ClassMismatch;
+        }
+        *out = window;
+        return CallbackWindowCheck::Found;
+    }
+
     const std::vector<DWORD> pids = PidsForImage(request.exePath);
-    if (pids.empty()) return false;
+    if (pids.empty()) return CallbackWindowCheck::Missing;
+    std::vector<HWND> matches;
     for (HWND window : WindowsOf(pids)) {
         wchar_t cls[128] = {};
         if (!GetClassNameW(window, cls, 128)) continue;
         if (_wcsicmp(cls, entry.windowClass) == 0) {
-            *out = window;
-            return true;
+            matches.push_back(window);
         }
     }
-    return false;
-}
-
-// Rewrites the entry's cache line as `none`: this application was given its own callback and did nothing
-// observable with it, so from now on a press of that icon says so instead of spending a second and a half
-// discovering the same thing again. (`click` used to be the word, back when the fallback was a real click;
-// the fallback is gone and a cache file written by that build would be read as "unknown" -- which is why the
-// word changed rather than the meaning.) The line stays in the file, so it can be edited or deleted by hand.
-void MarkCallbackAsIgnored(const TrayPressRequest& request) {
-    // Only for a uid-carrying icon: a GUID-registered one is matched by its GUID, and rewriting the uid line
-    // of that executable would be a verdict about a different icon.
-    if (!request.hasUid) return;
-    wchar_t home[MAX_PATH] = {};
-    if (GetEnvironmentVariableW(L"USERPROFILE", home, MAX_PATH) == 0) return;
-    const std::wstring file = std::wstring(home) + L"\\IslandBar\\tray_callbacks.txt";
-    FILE* stream = nullptr;
-    if (_wfopen_s(&stream, file.c_str(), L"r, ccs=UTF-8") != 0 || !stream) return;
-    std::vector<std::wstring> lines;
-    wchar_t buffer[1024] = {};
-    while (fgetws(buffer, 1024, stream)) lines.push_back(buffer);
-    fclose(stream);
-
-    const std::wstring exe = BaseNameLower(request.exePath);
-    bool changed = false;
-    for (std::wstring& line : lines) {
-        if (line.empty() || line[0] == L'#') continue;
-        const size_t first = line.find(L'|');
-        const size_t second = first == std::wstring::npos ? std::wstring::npos : line.find(L'|', first + 1);
-        const size_t third = second == std::wstring::npos ? std::wstring::npos : line.find(L'|', second + 1);
-        const size_t fourth = third == std::wstring::npos ? std::wstring::npos : line.find(L'|', third + 1);
-        if (fourth == std::wstring::npos) continue;
-        std::wstring name = line.substr(0, first);
-        std::transform(name.begin(), name.end(), name.begin(), ::towlower);
-        const unsigned uid = static_cast<unsigned>(std::wcstoul(line.substr(third + 1).c_str(), nullptr, 10));
-        if (name != exe || (request.hasUid && uid != request.uid)) continue;
-        const size_t end = line.find_first_of(L"\r\n", fourth + 1);
-        const std::wstring tail = end == std::wstring::npos ? std::wstring() : line.substr(end);
-        line = line.substr(0, fourth + 1) + L"none" + tail;
-        changed = true;
-        break;
-    }
-    if (!changed) return;
-    if (_wfopen_s(&stream, file.c_str(), L"w, ccs=UTF-8") != 0 || !stream) return;
-    for (const std::wstring& line : lines) fputws(line.c_str(), stream);
-    fclose(stream);
-    LogAndPrint(L"  tray press: the cache now says 'none' for %ls -- its callback is known to be ignored, so "
-                L"that cell will not spend a second discovering it again\n",
-                exe.c_str());
-}
-
-// Records which spelling of a LEFT press this application answered, as the seventh field of its cache line.
-//
-// The press tries the documented notification first and the shell's own measured sequence second (see the
-// note where the attempts are built), which costs up to two deliveries and one short wait. Writing down
-// which one worked makes every later press of that cell a single delivery again -- and, more importantly,
-// turns a guess into a fact about this application that the next session does not have to re-measure.
-void MarkCallbackLeftSpelling(const TrayPressRequest& request, TrayCallback::LeftSpelling spelling) {
-    if (spelling == TrayCallback::LeftSpelling::Unknown) return;
-    if (!request.hasUid) return;   // see MarkCallbackAsIgnored
-    wchar_t home[MAX_PATH] = {};
-    if (GetEnvironmentVariableW(L"USERPROFILE", home, MAX_PATH) == 0) return;
-    const std::wstring file = std::wstring(home) + L"\\IslandBar\\tray_callbacks.txt";
-    FILE* stream = nullptr;
-    if (_wfopen_s(&stream, file.c_str(), L"r, ccs=UTF-8") != 0 || !stream) return;
-    std::vector<std::wstring> lines;
-    wchar_t buffer[1024] = {};
-    while (fgetws(buffer, 1024, stream)) lines.push_back(buffer);
-    fclose(stream);
-
-    const wchar_t* word = spelling == TrayCallback::LeftSpelling::Select   ? L"select"
-                          : spelling == TrayCallback::LeftSpelling::DownThenUp4 ? L"downup4"
-                                                                              : L"downup3";
-    const std::wstring exe = BaseNameLower(request.exePath);
-    bool changed = false;
-    for (std::wstring& line : lines) {
-        if (line.empty() || line[0] == L'#') continue;
-        const size_t first = line.find(L'|');
-        const size_t second = first == std::wstring::npos ? std::wstring::npos : line.find(L'|', first + 1);
-        const size_t third = second == std::wstring::npos ? std::wstring::npos : line.find(L'|', second + 1);
-        const size_t fourth = third == std::wstring::npos ? std::wstring::npos : line.find(L'|', third + 1);
-        if (fourth == std::wstring::npos) continue;
-        std::wstring name = line.substr(0, first);
-        std::transform(name.begin(), name.end(), name.begin(), ::towlower);
-        const unsigned uid = static_cast<unsigned>(std::wcstoul(line.substr(third + 1).c_str(), nullptr, 10));
-        if (name != exe || (request.hasUid && uid != request.uid)) continue;
-        if (line.find(word) != std::wstring::npos) return;   // already written down: nothing to do
-        const size_t end = line.find_first_of(L"\r\n", fourth + 1);
-        const std::wstring tail = end == std::wstring::npos ? std::wstring() : line.substr(end);
-        const std::wstring body = line.substr(0, end == std::wstring::npos ? line.size() : end);
-        const std::wstring fields = body + L"|" + word;
-        line = fields + tail;
-        changed = true;
-        break;
-    }
-    if (!changed) return;
-    if (_wfopen_s(&stream, file.c_str(), L"w, ccs=UTF-8") != 0 || !stream) return;
-    for (const std::wstring& line : lines) fputws(line.c_str(), stream);
-    fclose(stream);
-    LogAndPrint(L"  tray press: the cache now says a left press of %ls is '%ls' -- one delivery from now on\n",
-                exe.c_str(), word);
+    if (matches.empty()) return CallbackWindowCheck::Missing;
+    if (matches.size() != 1) return CallbackWindowCheck::Ambiguous;
+    *out = matches.front();
+    return CallbackWindowCheck::Found;
 }
 
 // THE DELIVERY IS PART OF THE SPELLING, and this is measured rather than reasoned: the module that watches
@@ -779,10 +737,11 @@ bool SendTrayCallback(const TrayPressRequest& request, bool rightClick, TrayPres
     // press that reports "nothing is known about this icon" when an entry exists but its window does not is
     // the kind of line this project has been burned by (measured: a Steam right press reported "no such
     // window" about an entry whose only problem was the left-button verdict).
-    const auto fail = [outcome](TrayPressResult result, const wchar_t* route) {
+    const auto fail = [outcome, rightClick](TrayPressResult result, const wchar_t* route) {
         if (outcome) {
             outcome->result = result;
             outcome->route = route;
+            if (rightClick) outcome->menuEvidence = L"failed";
         }
         return false;
     };
@@ -790,16 +749,21 @@ bool SendTrayCallback(const TrayPressRequest& request, bool rightClick, TrayPres
     if (entry->rightClickOnly && !rightClick) {
         return fail(TrayPressResult::NoEntry, L"its entry carries a right press only");
     }
-    // ... AND THE VERDICT IS ABOUT THE LEFT BUTTON, which is the press it was measured on: an application
-    // that ignores a left click quite often opens its menu on a right one (measured on Steam and on WeChat --
-    // the two are different questions, and the older spelling of this flag blocked both).
-    if (entry->ignoresCallback && !rightClick) {
-        return fail(TrayPressResult::NoEntry, L"its callback is known to be ignored");
+    if (LiveTraySeeded()) {
+        TrayLiveRegistration live;
+        const std::wstring exeLeaf = BaseNameLower(request.exePath);
+        const unsigned char* guid = request.hasGuid
+                                        ? reinterpret_cast<const unsigned char*>(&request.guid)
+                                        : nullptr;
+        if (!LiveTrayFind(exeLeaf.c_str(), request.uid, request.hasGuid, guid, request.name, &live)) {
+            return fail(TrayPressResult::NoEntry, L"callback_identity_not_live");
+        }
     }
 
     HWND window = nullptr;
-    if (!CallbackWindowFor(request, *entry, &window)) {
-        return fail(TrayPressResult::NoWindow, L"its tray window is not there right now");
+    const CallbackWindowCheck windowCheck = CallbackWindowFor(request, *entry, &window);
+    if (windowCheck != CallbackWindowCheck::Found) {
+        return fail(TrayPressResult::NoWindow, CallbackWindowReason(windowCheck));
     }
     POINT anchor = {};
     if (!GetCursorPos(&anchor)) return fail(TrayPressResult::Refused, L"the pointer position could not be read");
@@ -859,13 +823,10 @@ bool SendTrayCallback(const TrayPressRequest& request, bool rightClick, TrayPres
     // effect would have been unmistakable. Sent, the pair brought the window back and to the front with the
     // pointer untouched. A left press is therefore a SEQUENCE, not a message, and it must be synchronous.
     //
-    // A v4 application is the same problem in a different shape: the documented notification for a single
-    // left click is NIN_SELECT, and no v4 tray icon was running on this machine while the above was
-    // measured. Rather than guess, a press tries the documented spelling first and the measured pair second,
-    // and whichever produced an answer is written into the cache (`select` / `downup`, the seventh field),
-    // after which it is a single delivery again. The first wait is short because an application that reacts
-    // at all does so in about a tenth of that (measured: 78-93 ms for a menu), and a press nobody answered
-    // has had no effect -- so trying the other spelling cannot turn a toggle into two.
+    // A v4 application uses NIN_SELECT; a v3 application uses the mouse pair. An application that never stated
+    // a version uses the measured shell pair. Each press sends ONE shape now: response observation can miss a
+    // valid action (a toggle, a reused window, a menu already open), so trying another shape after "not seen"
+    // can execute the application twice. Unconfirmed is reported honestly instead.
     struct Attempt {
         unsigned notify = 0;      // the notification word, or the raw mouse message
         bool downFirst = false;   // send the matching mouse DOWN first (the shell's own sequence)
@@ -891,6 +852,7 @@ bool SendTrayCallback(const TrayPressRequest& request, bool rightClick, TrayPres
             if (outcome) {
                 outcome->result = TrayPressResult::NoEntry;
                 outcome->route = L"its own menu has answered neither shape (the pair, then the notification)";
+                outcome->menuEvidence = L"failed";
             }
             LogAndPrint(L"  tray press: '%ls' has answered neither the shell's pair nor the context-menu "
                         L"notification -- nothing else is sent\n", request.name);
@@ -927,25 +889,16 @@ bool SendTrayCallback(const TrayPressRequest& request, bool rightClick, TrayPres
     } else if (entry->leftSpelling == TrayCallback::LeftSpelling::DownThenUp3) {
         attempts[attemptCount++] = Attempt{WM_LBUTTONUP, true, true, false};
     } else if (entry->version == 0) {
-        // "NEVER SAID" IS NOT "VERSION 3", and the press cannot tell the two apart from the version field
-        // alone: uVersion shares its storage with uTimeout in NOTIFYICONDATA (see TrayLearn.cpp, and the
-        // classic API reference it cites), so an application that IS version 4 can perfectly well have
-        // registered with a 0 in that slot. So an unknown version tries the pair the SHELL itself sends --
-        // measured working, and the recipe two of two applications on this machine answered -- and then the
-        // documented v4 spelling. Trying only one of them is what would write a false "this application
-        // ignores its callback" into the cache and cost that cell its invisible press for good.
+        // "Never said" uses the pair the Shell itself was measured sending. It remains one delivery.
         attempts[attemptCount++] = Attempt{WM_LBUTTONUP, true, true, false};
-        attempts[attemptCount++] = Attempt{NIN_SELECT, false, true, true};
     } else if (v4) {
         attempts[attemptCount++] = Attempt{NIN_SELECT, false, true, true};
-        attempts[attemptCount++] = Attempt{WM_LBUTTONUP, true, true, false};
     } else {
         attempts[attemptCount++] = Attempt{WM_LBUTTONUP, true, true, false};
     }
 
     bool posted = false;
     bool answered = false;
-    int answeredWith = -1;
     for (int i = 0; i < attemptCount; ++i) {
         const Attempt& attempt = attempts[i];
         // THE TWO WORDS COME FROM domain/TrayEncoding.h AND NOWHERE ELSE (2026-10-16). The spelling that was
@@ -982,12 +935,8 @@ bool SendTrayCallback(const TrayPressRequest& request, bool rightClick, TrayPres
         if (!posted) continue;
         answered = WatchApplicationForAnswer(watch, foregroundBefore,
                                              outcome ? outcome->answer : nullptr,
-                                             outcome ? sizeof(outcome->answer) / sizeof(wchar_t) : 0,
-                                             (i + 1 < attemptCount) ? 400 : 1500);
-        if (answered) {
-            answeredWith = i;
-            break;
-        }
+                                             outcome ? sizeof(outcome->answer) / sizeof(wchar_t) : 0, 1500);
+        if (answered) break;
     }
     if (!posted) return fail(TrayPressResult::Refused, L"the message could not be delivered");
 
@@ -997,9 +946,7 @@ bool SendTrayCallback(const TrayPressRequest& request, bool rightClick, TrayPres
     // application that was in the foreground already has nothing left to make observable, and the two
     // observers above (a window that came up, the foreground moving) are both blind to it by construction.
     // Measured on clash-verge: four presses in a row were reported as "nothing of its own appeared, and the
-    // foreground did not move to it" while its window had simply been in front the whole time -- and the
-    // verdict written for that state is `click`, which takes the invisible route away from an application
-    // whose tray icon is working exactly as it should.
+    // foreground did not move to it" while its window had simply been in front the whole time.
     if (!answered && !rightClick) {
         const HWND front = GetForegroundWindow();
         DWORD holder = 0;
@@ -1022,15 +969,6 @@ bool SendTrayCallback(const TrayPressRequest& request, bool rightClick, TrayPres
     // is posted, and a log line that names the wrong mechanism is the kind of thing this project has paid for
     // more than once.
     std::swprintf(target, 160, L"class '%ls' of pid %lu (given its own callback, not a click)", cls, pid);
-
-    // THE SPELLING THAT WORKED IS REMEMBERED, so the next press of this cell is one delivery instead of two.
-    if (answered && !rightClick && attemptCount > 1 && answeredWith >= 0) {
-        MarkCallbackLeftSpelling(request, attempts[answeredWith].v4Packing
-                                           ? (attempts[answeredWith].notify == NIN_SELECT
-                                                  ? TrayCallback::LeftSpelling::Select
-                                                  : TrayCallback::LeftSpelling::DownThenUp4)
-                                           : TrayCallback::LeftSpelling::DownThenUp3);
-    }
 
     // ---- and the left click's other half: is the application actually IN FRONT now? -------------------
     //
@@ -1056,26 +994,19 @@ bool SendTrayCallback(const TrayPressRequest& request, bool rightClick, TrayPres
         }
     }
 
-    // NOT ANSWERED MEANS THE CELL SAYS SO FROM NOW ON -- BUT ONLY FOR A LEFT PRESS.
+    // NOT ANSWERED IS NOT A PERMANENT VERDICT.
     //
-    // THE VERDICT IS ABOUT THE LEFT BUTTON, AND IT IS PERMANENT: it is what makes the press refuse to send
-    // anything at all the next time (the check above, and the one in SendTrayCallback). Reading a failed
-    // RIGHT press into it therefore takes the working half of an application away for good, and that is
-    // exactly what happened on this machine on 2026-10-15: a right press on ChatGPT.exe got no answer (the
-    // application opens no menu from our posted message), wrote 'none' into the cache for it, and from then
-    // on a LEFT press on that same icon would have been refused -- while an hour earlier the same left press
-    // measured 2094 ms and worked. The two buttons are not the same question and an answer about one is not
-    // an answer about the other.
+    // A missing observation is not proof that the application ignored the message. Toggles, reused windows and
+    // menus already on screen all look like "nothing happened" to this detector, and a permanent verdict from
+    // that state previously disabled working left presses.
     if (!answered) {
-        LogAndPrint(L"  tray press: gave 0x%04X to %ls and the application did nothing with it (%ls) -- %ls\n",
-                    entry->message, target, outcome ? outcome->answer : L"no answer",
-                    rightClick ? L"nothing is recorded about the left press from this: the two buttons are "
-                                 L"different questions"
-                               : L"recorded as 'none' for that cell");
-        if (!rightClick) MarkCallbackAsIgnored(request);
+        LogAndPrint(L"  tray press: gave 0x%04X to %ls but observed no action (%ls) -- outcome=unconfirmed; "
+                    L"no retry and no permanent left-button verdict\n",
+                    entry->message, target, outcome ? outcome->answer : L"no answer");
         if (outcome) {
-            outcome->result = TrayPressResult::NoEntry;
-            outcome->route = rightClick ? L"its own menu did not come up" : L"its callback is ignored (recorded)";
+            outcome->result = TrayPressResult::SentUnconfirmed;
+            outcome->route = rightClick ? L"native_menu_unconfirmed" : L"callback_sent_unconfirmed";
+            if (rightClick) outcome->menuEvidence = L"unknown";
             wcsncpy_s(outcome->target, sizeof(outcome->target) / sizeof(wchar_t), target, _TRUNCATE);
         }
         // ON THE RIGHT BUTTON, ONE LINE SAYS THE WHOLE STORY: the shape that was sent, that it was sent ONCE,
@@ -1089,10 +1020,12 @@ bool SendTrayCallback(const TrayPressRequest& request, bool rightClick, TrayPres
             const island::TrayRightNote next = island::NextTrayRightNote(rightNote, rightShape, false);
             if (next != rightNote) WriteRightNote(request, next);
             LogAndPrint(L"  tray context-menu: app=%ls version=%u strategy=%ls attempts=%d busy_ms=%lld "
-                        L"outcome=failed evidence='%ls' elapsed_ms=%lld -- next press of this cell: %ls\n",
+                        L"outcome=unknown evidence=%ls detail='%ls' elapsed_ms=%lld -- next press of this cell: %ls\n",
                         BaseNameLower(request.exePath).c_str(), entry->version,
                         island::TrayRightShapeName(rightShape), attemptCount,
-                        outcome ? outcome->busyMs : 0, outcome ? outcome->answer : L"no answer",
+                        outcome ? outcome->busyMs : 0,
+                        outcome ? outcome->menuEvidence : L"unknown",
+                        outcome ? outcome->answer : L"no answer",
                         MillisSince(rightPressStart), island::TrayRightNoteName(next));
             std::fflush(stdout);
         }
@@ -1102,6 +1035,7 @@ bool SendTrayCallback(const TrayPressRequest& request, bool rightClick, TrayPres
     if (outcome) {
         outcome->route = L"its own callback";
         outcome->result = TrayPressResult::Pressed;
+        if (rightClick) outcome->menuEvidence = L"probable";
         outcome->appAnswered = answered;
         wcsncpy_s(outcome->target, sizeof(outcome->target) / sizeof(wchar_t), target, _TRUNCATE);
     }
@@ -1119,9 +1053,10 @@ bool SendTrayCallback(const TrayPressRequest& request, bool rightClick, TrayPres
         const island::TrayRightNote next = island::NextTrayRightNote(rightNote, rightShape, true);
         if (next != rightNote) WriteRightNote(request, next);
         LogAndPrint(L"  tray context-menu: app=%ls version=%u strategy=%ls attempts=%d busy_ms=%lld "
-                    L"outcome=native_menu evidence='%ls' elapsed_ms=%lld\n",
+                    L"outcome=native_menu evidence=%ls detail='%ls' elapsed_ms=%lld\n",
                     BaseNameLower(request.exePath).c_str(), entry->version,
                     island::TrayRightShapeName(rightShape), attemptCount, outcome ? outcome->busyMs : 0,
+                    outcome ? outcome->menuEvidence : L"probable",
                     outcome ? outcome->answer : L"answered", MillisSince(rightPressStart));
         std::fflush(stdout);
     }
@@ -1146,9 +1081,8 @@ bool TrayPressReachable(const TrayPressRequest& request) {
         } else {
             continue;
         }
-        if (candidate.ignoresCallback) return false;
         HWND window = nullptr;
-        return CallbackWindowFor(request, candidate, &window);
+        return CallbackWindowFor(request, candidate, &window) == CallbackWindowCheck::Found;
     }
     return false;
 }
@@ -1156,6 +1090,7 @@ bool TrayPressReachable(const TrayPressRequest& request) {
 const wchar_t* TrayPressResultName(TrayPressResult result) {
     switch (result) {
         case TrayPressResult::Pressed: return L"pressed";
+        case TrayPressResult::SentUnconfirmed: return L"sent, unconfirmed";
         case TrayPressResult::NoEntry: return L"nothing is known about this icon yet";
         case TrayPressResult::NoWindow: return L"that application has no such window right now";
         case TrayPressResult::Refused: return L"the message could not be delivered";

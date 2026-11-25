@@ -225,10 +225,10 @@ public:
     // The card's tray page: the header, the section row, the icons in a five-column grid, the live system-load
     // well and the footer -- the reference at the shared card's size.
     //
-    // `revision` is the list's own, so a decoded bitmap is kept until the icons themselves change: the bar
-    // draws at the compositor's rate and a PNG decode per frame per icon would be the most expensive thing
-    // on it. `hoveredIndex` is a cell of the grid (see TrayPageFor). The resource well has a fixed rectangle,
-    // so the footer and grid cannot move with a changing load reading.
+    // `revision` invalidates the page's data, while each decoded icon bitmap is keyed by its PNG hash so a
+    // tooltip-only change does not decode pictures again. `hoveredIndex` is a cell of the grid (see
+    // TrayPageFor). The resource well has a fixed rectangle, so the footer and grid cannot move with a changing
+    // load reading.
     void DrawTrayPage(ID2D1DeviceContext2* context, const RoundedBox& card, const TrayPageText& text,
                       const TrayIcon* icons, int count, unsigned long long revision, float opacity,
                       int hoveredIndex);
@@ -893,15 +893,12 @@ private:
     };
     SoundIconSlot soundIcons_[SoundPageText::kMaxMixRows];
 
-    // The tray icons, one decoded bitmap each, kept until the list's revision changes.
-    //
-    // The REVISION is what makes the index a safe key: the list bumps it when its contents change, and
-    // its contents include which icon sits at which index (an application starting shifts the order), so
-    // a bitmap cached under index 3 cannot survive into a list where index 3 is a different icon.
+    // The tray icons, one decoded bitmap each, keyed by the PNG content hash. Tooltip-only revisions therefore
+    // do not throw away decoded pictures, while a changed image at the same index does replace its bitmap.
     struct TrayIconSlot {
         ID2D1Bitmap1* bitmap = nullptr;
-        unsigned long long revision = 0;
-        int index = -1;
+        uint64_t pngHash = 0;
+        size_t pngSize = 0;
         float sourceSide = 0.0f;
     };
     TrayIconSlot trayIconSlots_[kMaxTrayIcons];
@@ -924,10 +921,9 @@ private:
     ID2D1Bitmap1* CallIconBitmap(ID2D1DeviceContext2* context, const uint8_t* pixels, int width,
                                  int height, unsigned long long revision);
 
-    // The decoded bitmap for one tray icon, cached until the list's revision changes. One place knows how
-    // to turn a registry PNG into something drawable, and it is called by the tray page.
-    ID2D1Bitmap1* TrayIconBitmap(ID2D1DeviceContext2* context, int index, const TrayIcon& icon,
-                                 unsigned long long revision);
+    // The decoded bitmap for one tray icon, cached by PNG hash. One place knows how to turn a registry PNG into
+    // something drawable, and it is called by the tray page.
+    ID2D1Bitmap1* TrayIconBitmap(ID2D1DeviceContext2* context, int index, const TrayIcon& icon);
 
     // The Start card's own bitmaps: one per pinned tile and one for the account picture.
     //

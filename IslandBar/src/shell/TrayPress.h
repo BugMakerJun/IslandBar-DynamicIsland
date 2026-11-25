@@ -58,11 +58,11 @@ struct TrayPressRequest {
 };
 
 enum class TrayPressResult {
-    Pressed,    // the application's own callback was delivered and it answered
-    NoEntry,    // nothing is known about this icon: it has never been learned (the card offers its own menu)
-    NoWindow,   // an entry exists but the application has no such window right now (not running, or not yet
-                // registered)
-    Refused,    // the message could not be delivered at all
+    Pressed,          // the application's own callback was delivered and it answered
+    SentUnconfirmed,  // the message left successfully, but no visible evidence of an application action arrived
+    NoEntry,          // nothing is known about this icon: it has never been learned
+    NoWindow,         // an entry exists but its exact callback window is missing or stale
+    Refused,          // the message could not be delivered at all
 };
 
 struct TrayPressOutcome {
@@ -77,6 +77,9 @@ struct TrayPressOutcome {
     long long busyMs = 0;
     wchar_t target[192] = {};   // the window it went to, described: "class 'X' of pid N"
     wchar_t answer[192] = {};   // what the application was seen to do, in words
+    // confirmed / probable / unknown / failed / not_applicable. The current detector cannot identify every
+    // custom native menu, so it never claims "confirmed".
+    const wchar_t* menuEvidence = L"not_applicable";
     bool appAnswered = false;
     long long ms = 0;           // the whole press
 };

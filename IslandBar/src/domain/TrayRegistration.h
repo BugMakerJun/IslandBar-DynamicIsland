@@ -22,6 +22,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 
 namespace island {
@@ -60,7 +61,9 @@ inline constexpr size_t kTrayTipCharacters = 128;
 struct TrayRegistration {
     bool valid = false;
     unsigned command = 0;
-    unsigned trayWindow = 0;
+    // The shell's private payload currently stores a DWORD here, but the decoded form is our ABI: keeping it
+    // 64-bit prevents the rest of the product from treating a Win64 HWND as permanently 32-bit.
+    std::uint64_t trayWindow = 0;
     unsigned uid = 0;
     unsigned flags = 0;
     unsigned callback = 0;
@@ -90,7 +93,9 @@ inline TrayRegistration DecodeTrayRegistration(const void* bytes, size_t size) {
     if (command > kTrayCopySetVersion) return out;
     out.command = command;
 
-    std::memcpy(&out.trayWindow, raw + kTrayCopyOffsetWindow, sizeof(out.trayWindow));
+    unsigned trayWindow32 = 0;
+    std::memcpy(&trayWindow32, raw + kTrayCopyOffsetWindow, sizeof(trayWindow32));
+    out.trayWindow = trayWindow32;
     std::memcpy(&out.uid, raw + kTrayCopyOffsetUid, sizeof(out.uid));
     std::memcpy(&out.flags, raw + kTrayCopyOffsetFlags, sizeof(out.flags));
     std::memcpy(&out.callback, raw + kTrayCopyOffsetCallback, sizeof(out.callback));

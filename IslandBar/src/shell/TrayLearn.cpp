@@ -1,17 +1,16 @@
 // =====================================================================
 //  TrayLearn.cpp -- the driver behind TrayLearn.h
 //
-//  Four steps, and the third one is the only interesting one:
+//  The production path is now Shell-scoped:
 //
-//      1. offer the hook module to every running tray application (one thread hook per thread);
-//      2. ask every application to register its icon again -- TaskbarCreated;
-//      3. read what the module wrote down, resolve each window's class, merge into the cache;
-//      4. report coverage: how many of the card's icons can now be pressed without a real click.
+//      1. offer the observer module to the process owning Shell_TrayWnd;
+//      2. wait for the sent-message observer and ask every application to register again;
+//      3. drain the versioned ring, update the live ledger, and atomically merge callback cache v2;
+//      4. report coverage and the exact HWND/PID/thread/Shell generation used by later presses.
 //
-//  THE REPORT IS A FILE, and that is a decision rather than a shortcut. The module runs inside someone
-//  else's process, in one process per application, and a file append is the one channel that needs no
-//  protocol, no lifetime agreement and no extra process -- and it survives the module being unable to ask us
-//  anything. It is truncated at the start of every run, so it never grows without bound.
+//  THE REPORT FILE IS THE DURABLE DEBUG COPY, not the live channel: registration records travel through the
+//  fixed ABI ring, and the bar writes the report only after draining it. The callback cache itself is
+//  published with a same-directory temporary file and an atomic replacement.
 //
 //  ASCII-only on purpose. Do not add non-ASCII text to this file.
 // =====================================================================
@@ -26,6 +25,7 @@
 #include "platform/TrayRing.h"
 #include "platform/UiWake.h"
 #include "platform/WorkerThread.h"
+#include "shell/TrayCallbackCache.h"
 #include "shell/TrayReport.h"
 
 #include <psapi.h>   // GetProcessMemoryInfo: which of an application's processes carries its tray icon
@@ -383,6 +383,10 @@ struct Learned {
     unsigned uid = 0;
     unsigned version = 0;
     std::wstring guid;   // "{...}" for an application that named its icon with a GUID instead of a uid
+    unsigned long long window = 0;
+    unsigned ownerPid = 0;
+    unsigned ownerThread = 0;
+    unsigned shellPid = 0;
 };
 
 // THE ONE GLOBAL HOOK, HELD FOR THE WHOLE SESSION -- MYDOCKFINDER'S OWN MECHANISM, MEASURED ON THIS MACHINE.
@@ -423,13 +427,7 @@ const wchar_t* StagedLeaf() {
 // application that changed its callback message).
 std::vector<std::wstring> ReadCacheLines() {
     std::vector<std::wstring> lines;
-    const std::wstring file = HomePath(kCacheFile);
-    if (file.empty()) return lines;
-    FILE* stream = nullptr;
-    if (_wfopen_s(&stream, file.c_str(), L"r, ccs=UTF-8") != 0 || !stream) return lines;
-    wchar_t buffer[1024] = {};
-    while (fgetws(buffer, 1024, stream)) lines.push_back(buffer);
-    fclose(stream);
+    (void)TrayCallbackCache::Read(&lines);
     return lines;
 }
 
@@ -628,6 +626,8 @@ void HarvestReport(TrayLearnResult* result) {
                 if (message == 0) continue;
                 const HWND window = reinterpret_cast<HWND>(wcstoull(hwndText, nullptr, 16));
                 if (!window || !IsWindow(window)) continue;
+                DWORD ownerPid = 0;
+                const DWORD ownerThread = GetWindowThreadProcessId(window, &ownerPid);
                 wchar_t cls[128] = {};
                 if (GetClassNameW(window, cls, 128) == 0 || !cls[0]) continue;
                 item.exe = BaseNameLower(exe);
@@ -636,6 +636,10 @@ void HarvestReport(TrayLearnResult* result) {
                 item.uid = uid;
                 item.version = version;
                 item.guid = guid;
+                item.window = static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(window));
+                item.ownerPid = ownerPid;
+                item.ownerThread = ownerThread;
+                item.shellPid = TrayShellProcessId();
                 // ... and the version from the NIM_SETVERSION call wins when there was one: see pass one.
                 const unsigned stated = statedVersion(item.exe, item.uid, item.guid);
                 if (stated) item.version = stated;
@@ -646,61 +650,69 @@ void HarvestReport(TrayLearnResult* result) {
         }
     }
 
-    std::vector<std::wstring> lines = ReadCacheLines();
-    for (const Learned& item : learned) {
-        bool replaced = false;
-        bool duplicate = false;
-        for (std::wstring& line : lines) {
-            // THE SAME ICON, AND THAT IS NOT THE SAME QUESTION AS "THE SAME LINE" since GUIDs were added.
-            //
-            // A line written before this build knows nothing about the GUID (field 8 did not exist), and the
-            // identity a press matches on is the GUID -- so matching the merge on the GUID alone would fail to
-            // find that line and append a second one for the same icon, once per pass. Measured: Explorer's
-            // Bluetooth icon ended up in the cache four times before this rule existed. The merge therefore
-            // matches by executable and uid, and by GUID when both sides have one.
-            const bool sameUid = LineIsFor(line, item.exe, item.uid);
-            const std::wstring lineGuid = LineGuid(line);
-            const bool sameGuid = !item.guid.empty() && !lineGuid.empty() && lineGuid == item.guid;
-            const bool legacy = !item.guid.empty() && lineGuid.empty() && sameUid;
-            if (!LineIsFor(line, item.exe, item.uid, item.guid) && !sameGuid && !legacy) continue;
-            if (!item.guid.empty() && !lineGuid.empty() && lineGuid != item.guid) continue;
-            if (item.guid.empty() && !lineGuid.empty()) continue;
-            // A line that says `click` is a verdict from a press: this application ignores its own posted
-            // callback. Learning must not talk the press path back into trying again every session.
-            if (wcsstr(line.c_str(), L"|none") != nullptr || wcsstr(line.c_str(), L"|click") != nullptr) {
-                duplicate = true;
+    int added = 0;
+    const bool updated = TrayCallbackCache::Update([&](std::vector<std::wstring>& lines) {
+        for (const Learned& item : learned) {
+            bool replaced = false;
+            bool duplicate = false;
+            for (std::wstring& line : lines) {
+                // THE SAME ICON, AND THAT IS NOT THE SAME QUESTION AS "THE SAME LINE" since GUIDs were added.
+                //
+                // A line written before this build knows nothing about the GUID (field 8 did not exist), and the
+                // identity a press matches on is the GUID -- so matching the merge on the GUID alone would fail to
+                // find that line and append a second one for the same icon, once per pass. Measured: Explorer's
+                // Bluetooth icon ended up in the cache four times before this rule existed. The merge therefore
+                // matches by executable and uid, and by GUID when both sides have one.
+                const bool sameUid = LineIsFor(line, item.exe, item.uid);
+                const std::wstring lineGuid = LineGuid(line);
+                const bool sameGuid = !item.guid.empty() && !lineGuid.empty() && lineGuid == item.guid;
+                const bool legacy = !item.guid.empty() && lineGuid.empty() && sameUid;
+                if (!LineIsFor(line, item.exe, item.uid, item.guid) && !sameGuid && !legacy) continue;
+                if (!item.guid.empty() && !lineGuid.empty() && lineGuid != item.guid) continue;
+                if (item.guid.empty() && !lineGuid.empty()) continue;
+                // Legacy `none`/`click` lines are refreshed like any other line: an observed non-answer was
+                // never proof that the callback is ignored permanently.
+                wchar_t exact[160] = {};
+                _snwprintf_s(exact, 160, _TRUNCATE, L"hwnd=0x%llX|pid=%u|tid=%u|shell_pid=%u",
+                             item.window, item.ownerPid, item.ownerThread, item.shellPid);
+                wchar_t messageMarker[96] = {};
+                _snwprintf_s(messageMarker, 96, _TRUNCATE, L"%ls|0x%04X|", item.exe.c_str(), item.message);
+                wchar_t versionMarker[32] = {};
+                _snwprintf_s(versionMarker, 32, _TRUNCATE, L"|both|%u", item.version);
+                if (line.rfind(messageMarker, 0) == 0 && line.find(versionMarker) != std::wstring::npos &&
+                    line.find(exact) != std::wstring::npos) {
+                    duplicate = true;   // same registration and same exact callback identity: nothing to say
+                    break;
+                }
+                wchar_t fresh[512] = {};
+                _snwprintf_s(fresh, 512, _TRUNCATE,
+                             L"%ls|0x%04X|%ls|%u|both|%u%ls%ls|hwnd=0x%llX|pid=%u|tid=%u|shell_pid=%u",
+                             item.exe.c_str(), item.message, item.windowClass.c_str(), item.uid, item.version,
+                             item.guid.empty() ? L"" : L"|", item.guid.c_str(), item.window, item.ownerPid,
+                             item.ownerThread, item.shellPid);
+                line = fresh;
+                replaced = true;
                 break;
             }
-            if (wcsstr(line.c_str(), item.windowClass.c_str()) != nullptr) {
-                duplicate = true;   // same application, same icon, same window class: nothing to say
-                break;
+            if (duplicate) continue;
+            if (!replaced) {
+                wchar_t fresh[512] = {};
+                _snwprintf_s(fresh, 512, _TRUNCATE,
+                             L"%ls|0x%04X|%ls|%u|both|%u%ls%ls|hwnd=0x%llX|pid=%u|tid=%u|shell_pid=%u",
+                             item.exe.c_str(), item.message, item.windowClass.c_str(), item.uid, item.version,
+                             item.guid.empty() ? L"" : L"|", item.guid.c_str(), item.window, item.ownerPid,
+                             item.ownerThread, item.shellPid);
+                lines.emplace_back(fresh);
             }
-            wchar_t fresh[512] = {};
-            _snwprintf_s(fresh, 512, _TRUNCATE, L"%ls|0x%04X|%ls|%u|both|%u%ls%ls\n", item.exe.c_str(),
-                         item.message, item.windowClass.c_str(), item.uid, item.version,
-                         item.guid.empty() ? L"" : L"|", item.guid.c_str());
-            line = fresh;
-            replaced = true;
-            break;
+            ++added;
         }
-        if (duplicate) continue;
-        if (!replaced) {
-            wchar_t fresh[512] = {};
-            _snwprintf_s(fresh, 512, _TRUNCATE, L"%ls|0x%04X|%ls|%u|both|%u%ls%ls\n", item.exe.c_str(),
-                         item.message, item.windowClass.c_str(), item.uid, item.version,
-                         item.guid.empty() ? L"" : L"|", item.guid.c_str());
-            lines.push_back(fresh);
-        }
-        ++result->newEntries;
-    }
-
-    if (result->newEntries > 0) {
-        const std::wstring file = HomePath(kCacheFile);
-        FILE* stream = nullptr;
-        if (!file.empty() && _wfopen_s(&stream, file.c_str(), L"w, ccs=UTF-8") == 0 && stream) {
-            for (const std::wstring& line : lines) fputws(line.c_str(), stream);
-            fclose(stream);
-        }
+        return added > 0;
+    });
+    if (!updated) {
+        LogAndPrint("  tray learn: the callback cache could not be read or atomically replaced; no entry was "
+                    "reported as added\n");
+    } else {
+        result->newEntries = added;
     }
 }
 

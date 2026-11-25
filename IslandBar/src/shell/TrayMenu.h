@@ -38,6 +38,10 @@ namespace island {
 // belongs to the tray -- main.cpp used to own it only because the code that wrote it lived there.
 extern std::atomic<int> trayMenuRequestCell;
 
+// A successful LEFT press asks the UI owner to put the tray page away. It is a request rather than a direct
+// call because the press runs on a worker; an unconfirmed press does not set this.
+extern std::atomic<int> trayPressDismissCell;
+
 // One icon's press, copied out of the list: the press runs on a worker thread and the list refreshes under it.
 TrayPressRequest MakeTrayPressRequest(const TrayIcon& icon, const wchar_t* exePath);
 

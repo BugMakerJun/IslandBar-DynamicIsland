@@ -101,6 +101,7 @@ add_library(island_shell STATIC
     shell/StartMenu.cpp
     shell/SystemStatus.cpp
     shell/SystemToggles.cpp
+    shell/TrayCallbackCache.cpp
     shell/TrayIcons.cpp
     shell/TrayLearn.cpp
     shell/TrayMenu.cpp

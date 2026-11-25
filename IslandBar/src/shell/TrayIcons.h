@@ -63,12 +63,10 @@
 //  combine the two ("or its process is running") was what re-introduced the duplicates, and it
 //  is gone: the question "is this icon in the tray" has one answer, and it is the ledger's.
 //
-//  AND WHAT EACH ONE *IS*, for pressing it. The same registry entry the icon is drawn from carries the
-//  identity the shell itself uses for that icon -- an IconGuid, or a UID belonging to one of the
-//  application's windows -- and Shell_NotifyIconGetRect answers WHERE the icon is from that identity
-//  alone. That is what makes a click in the card possible without matching names: the shell's own name
-//  for an icon is the application's runtime tooltip (" 微信"), while the bar's is the registry's
-//  ("Weixin.exe"), and no amount of string work reconciles the two. See TrayPress.
+//  AND WHAT EACH ONE *IS*, for pressing it. The registry entry carries a GUID or UID, and the observer carries
+//  the exact callback HWND, message, version, PID and thread learned at registration time. TrayPress validates
+//  that exact identity before sending anything. The card does not use Shell_NotifyIconGetRect: it only answers
+//  a known icon's rectangle and cannot enumerate the tray.
 // =====================================================================
 #pragma once
 
@@ -97,10 +95,14 @@ struct TrayIcon {
     // Verge's carries a version and a rule count over several lines. The tray shows that on HOVER; a cell is
     // one line wide and wants the name.
     wchar_t name[96] = {};
+    // The latest live registration tooltip. `name` stays the stable cell label; this field is what a hover
+    // surface should show and may change every few seconds without forcing the PNG bitmap to decode again.
+    wchar_t tooltip[256] = {};
     // The PNG the shell stores for it: not owned by this struct's caller's frame, but held by the list
     // that produced it, which keeps it alive until the next refresh.
     const uint8_t* png = nullptr;
     size_t pngSize = 0;
+    uint64_t pngHash = 0;
     // 1 when the shell shows it in the tray proper rather than in the overflow.
     bool promoted = false;
     // The shell's own identity for this icon, straight out of the same registry entry: the `UID` of one
@@ -198,7 +200,12 @@ private:
     std::vector<std::wstring> seenIdentities;
     // Registry snapshots are frequently 16x16. Application executables usually carry a much better icon, so
     // the UI-thread refresh can substitute one after the first successful extraction and keep that work cached.
-    std::unordered_map<std::wstring, std::vector<std::uint8_t>> upgradedIcons_;
+    struct UpgradedIcon {
+        std::vector<std::uint8_t> png;
+        unsigned long long lastUsedTick = 0;
+    };
+    static constexpr size_t kUpgradedIconCapacity = 64;
+    std::unordered_map<std::wstring, UpgradedIcon> upgradedIcons_;
 };
 
 } // namespace island

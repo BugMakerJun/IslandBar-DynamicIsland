@@ -9,17 +9,13 @@
 //  bar started (by the user, by an auto-hide setting, or by a previous crashed
 //  run) then restoring must not fight that choice.
 //
-//  THREE MODES, and the middle one is the default since 2026-10-15:
+//  THREE MODES, and the first one is the current default:
 //
-//    * KEEP THE REAL TRAY (the default): the taskbar is not hidden but CLIPPED to the notification
-//      area, so the system tray itself -- the shell's own icons, its own menus, its own overflow, the
-//      clock -- stays on screen and every click on it is the real thing. Measured on this build:
-//      the region survives icon changes, clicks in the clipped part fall through to the desktop, and
-//      the tray keeps working. See HANDOFF 8.133 for the three experiments behind it (a same-named
-//      window cannot take over the tray; the tray window cannot be moved -- its pixels are painted by
-//      a composition surface belonging to the whole taskbar; clipping the taskbar works).
-//    * HIDE IT (`--hide-taskbar`): the original behaviour, for comparing the two and for a desktop
-//      with no room for the tray.
+//    * HIDE IT (`--hide-taskbar`, and the default when neither switch is supplied): the primary and
+//      secondary taskbars are hidden while IslandBar owns the tray UI.
+//    * KEEP THE REAL TRAY (`--native-tray`): the taskbar is CLIPPED to the notification area so the
+//      Shell continues to draw its own tray. Measured on this build: the region survives icon changes,
+//      and clicks in the clipped part fall through to the desktop.
 //    * LEAVE IT ALONE (`--keep-taskbar`): the debug mode, where the real taskbar is the taskbar.
 // =====================================================================
 #pragma once

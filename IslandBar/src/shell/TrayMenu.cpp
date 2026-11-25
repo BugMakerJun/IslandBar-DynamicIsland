@@ -33,6 +33,7 @@ namespace island {
 
 // The cell a press could not deal with, for the frame loop to open the bar's own menu over (see TrayMenu.h).
 std::atomic<int> trayMenuRequestCell{-1};
+std::atomic<int> trayPressDismissCell{-1};
 // One icon's press request, copied out of the list: a press runs on a worker thread and the list refreshes
 // under it (see TrayPressRequest).
 island::TrayPressRequest MakeTrayPressRequest(const island::TrayIcon& icon, const wchar_t* exePath) {
@@ -265,8 +266,9 @@ void StartTrayPress(const island::TrayIcons& icons, int cell, bool rightClick) {
         // whenever the shell's name for the icon held a non-ASCII character (" 微信"), because the narrow
         // CRT cannot convert that to bytes and MSVC empties the whole line instead of failing loudly. Three
         // presses were diagnosed as "the Invoke hung" on the strength of those blank lines. See Log.h.
-        island::LogAndPrint(L"  tray press: '%ls' -> %ls via %ls, press %lld ms\n", request.name,
-                            island::TrayPressResultName(outcome.result), outcome.route, outcome.ms);
+        island::LogAndPrint(L"  tray press: '%ls' -> %ls via %ls, menu_evidence=%ls, press %lld ms\n",
+                            request.name, island::TrayPressResultName(outcome.result), outcome.route,
+                            outcome.menuEvidence, outcome.ms);
         // "THE POINTER NEVER MOVED" IS NOT A CLAIM ANY MORE, it is a property of the code: there is no
         // SetCursorPos and no SendInput left in this program (see TrayPress.h). What is worth a line is what
         // the application was seen to do, which is the only thing that says whether the press worked.
@@ -276,8 +278,12 @@ void StartTrayPress(const island::TrayIcons& icons, int cell, bool rightClick) {
         // A right press can lose its callback window between the synchronous check and delivery. That cell
         // then opens the bar's fallback menu; the request is handed to the frame loop because this runs on a
         // worker thread (see the tray menu's state).
-        if (outcome.result == island::TrayPressResult::NoEntry) {
+        if (outcome.result == island::TrayPressResult::NoEntry ||
+            outcome.result == island::TrayPressResult::NoWindow ||
+            outcome.result == island::TrayPressResult::Refused) {
             trayMenuRequestCell.store(cell);
+        } else if (outcome.result == island::TrayPressResult::Pressed && !rightClick) {
+            trayPressDismissCell.store(cell);
         }
         std::fflush(stdout);
         if (SUCCEEDED(comHr)) CoUninitialize();

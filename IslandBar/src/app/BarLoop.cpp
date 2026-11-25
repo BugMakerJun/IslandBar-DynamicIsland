@@ -1715,7 +1715,11 @@ static void OpenBarTrayMenu(island::BarState& bar, island::BarSystems& systems, 
 // Moved out of the frame loop verbatim (indentation aside). It needs BarState and the window services and
 // nothing else, which is why it takes exactly those. The worker request is read here too, because it is
 // answered on the thread that owns the window -- see island::trayMenuRequestCell.
-static void ApplyRightClicks(island::BarState& bar, island::BarSystems& systems) {
+static void DismissPanelSurface(island::BarState& bar, island::BarSystems& systems,
+                                const island::Notification* active, island::IslandState resting);
+
+static void ApplyRightClicks(island::BarState& bar, island::BarSystems& systems,
+                             const island::Notification* active, island::IslandState resting) {
     // --- a RIGHT click, which so far means one thing -------------------------------------------
     //
     // A cell of the tray page: right-clicking asks the application for its own menu -- the menu
@@ -1729,6 +1733,10 @@ static void ApplyRightClicks(island::BarState& bar, island::BarSystems& systems)
     // and delivery. It then records the cell here, and the next frame opens the fallback menu while
     // the tray page is still open.
     const auto openBarTrayMenu = [&](int cell) { OpenBarTrayMenu(bar, systems, cell); };
+    const int dismissCell = island::trayPressDismissCell.exchange(-1);
+    if (dismissCell >= 0 && bar.systemPanelOpen) {
+        DismissPanelSurface(bar, systems, active, resting);
+    }
     // The worker's request, answered on the thread that owns the window (see island::trayMenuRequestCell).
     const int menuRequestCell = island::trayMenuRequestCell.exchange(-1);
     if (menuRequestCell >= 0 && menuRequestCell < systems.trayIcons.Count()) {
@@ -3835,26 +3843,32 @@ static void ApplyPressesAndClicks(island::BarState& bar, island::BarSystems& sys
             // not fall through to the panel's generic "click elsewhere closes".
         } else if (island::LevelAnswersInput(bar.panelLevel, island::PanelLevel::Tray) &&
                    systems.window.TrayCellAtScreen(cursor) >= 0) {
-            // A LEFT click on a tray cell has one product meaning regardless of the application's
-            // own left-button callback: enter the application. A normal task window is activated;
-            // otherwise the recorded executable is handed back to the application's own
-            // single-instance startup. This prevents some icons opening a window while others open
-            // a settings flyout or do nothing.
+            // A LEFT click first asks the application through its own learned callback. Only a cell whose
+            // callback cannot be reached uses the older activate-or-launch fallback.
             const int cell = systems.window.TrayCellAtScreen(cursor);
             if (cell >= 0 && cell < systems.trayIcons.Count()) {
-                const island::TrayLaunchResult result = island::LaunchOrActivateTrayApplication(
-                    systems.trayIcons, systems.taskWindows, cell);
-                const bool acted = result == island::TrayLaunchResult::Activated ||
-                                   result == island::TrayLaunchResult::Launched;
+                const island::TrayPressRequest request = island::MakeTrayPressRequest(
+                    systems.trayIcons.At(cell), systems.trayIcons.ExePathAt(cell));
                 wchar_t flat[128] = {};
-                island::LogAndPrint(
-                    L"  tray: click cell %d '%ls' button=left action=%ls result=%ls\n", cell,
-                    island::FlatName(systems.trayIcons.At(cell).name, flat, 128),
-                    island::TrayLaunchResultName(result), acted ? L"ok" : L"fallback-menu");
-                if (acted) {
-                    DismissPanelSurface(bar, systems, active, resting);
+                if (island::TrayPressReachable(request)) {
+                    island::LogAndPrint(
+                        L"  tray: click cell %d '%ls' button=left action=callback result=pending\n", cell,
+                        island::FlatName(systems.trayIcons.At(cell).name, flat, 128));
+                    island::StartTrayPress(systems.trayIcons, cell, false);
                 } else {
-                    OpenBarTrayMenu(bar, systems, cell);
+                    const island::TrayLaunchResult result = island::LaunchOrActivateTrayApplication(
+                        systems.trayIcons, systems.taskWindows, cell);
+                    const bool acted = result == island::TrayLaunchResult::Activated ||
+                                       result == island::TrayLaunchResult::Launched;
+                    island::LogAndPrint(
+                        L"  tray: click cell %d '%ls' button=left action=%ls result=%ls\n", cell,
+                        island::FlatName(systems.trayIcons.At(cell).name, flat, 128),
+                        island::TrayLaunchResultName(result), acted ? L"ok" : L"fallback-menu");
+                    if (acted) {
+                        DismissPanelSurface(bar, systems, active, resting);
+                    } else {
+                        OpenBarTrayMenu(bar, systems, cell);
+                    }
                 }
             } else {
                 DismissPanelSurface(bar, systems, active, resting);
@@ -7743,7 +7757,7 @@ int RunBar(bool hideNativeTaskbar, bool claimAppBar, bool keepStrip, const wchar
 
             // The right-click handling: application tray menus, their fallback, and unpinning from the
             // Start card. The phase lives above RunBar.
-            ApplyRightClicks(bar, systems);
+            ApplyRightClicks(bar, systems, active, resting);
 
             // Held open for a photograph, if the diagnostic asked for it. Re-asserted AFTER the clicks above,
             // which is the only place either flag is cleared -- so the next frame draws the same level

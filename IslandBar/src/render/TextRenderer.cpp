@@ -663,8 +663,8 @@ void TextRenderer::Shutdown() {
     SafeRelease(&factory_);
     for (TrayIconSlot& slot : trayIconSlots_) {
         SafeRelease(&slot.bitmap);
-        slot.revision = 0;
-        slot.index = -1;
+        slot.pngHash = 0;
+        slot.pngSize = 0;
     }
     haveTime_ = false;
     timeText_[0] = L'\0';
@@ -1188,13 +1188,12 @@ float TextRenderer::MeasureStatusLine(const wchar_t* weekday, const wchar_t* day
 //
 // One helper for the button's card and the old inline row alike: the decode is the expensive part (a PNG
 // per icon), and there is exactly one place that knows how to do it.
-ID2D1Bitmap1* TextRenderer::TrayIconBitmap(ID2D1DeviceContext2* context, int index, const TrayIcon& icon,
-                                           unsigned long long revision) {
+ID2D1Bitmap1* TextRenderer::TrayIconBitmap(ID2D1DeviceContext2* context, int index, const TrayIcon& icon) {
     if (!context || index < 0 || index >= kMaxTrayIcons) return nullptr;
     if (!icon.png || icon.pngSize == 0) return nullptr;
 
     TrayIconSlot& slot = trayIconSlots_[index];
-    if (slot.bitmap && slot.revision == revision && slot.index == index) return slot.bitmap;
+    if (slot.bitmap && slot.pngHash == icon.pngHash && slot.pngSize == icon.pngSize) return slot.bitmap;
 
     ID2D1Bitmap1* bitmap = nullptr;
     DecodedImage decoded;
@@ -1214,8 +1213,8 @@ ID2D1Bitmap1* TextRenderer::TrayIconBitmap(ID2D1DeviceContext2* context, int ind
     }
     SafeRelease(&slot.bitmap);
     slot.bitmap = bitmap;
-    slot.revision = revision;
-    slot.index = index;
+    slot.pngHash = icon.pngHash;
+    slot.pngSize = icon.pngSize;
 
     if (!bitmap) {
         // Reported once: a picture that will not decode and a picture drawn where the region clips it look
@@ -1569,7 +1568,8 @@ void TextRenderer::DrawTrayPage(ID2D1DeviceContext2* context, const RoundedBox& 
             }
         }
 
-        ID2D1Bitmap1* bitmap = TrayIconBitmap(context, i, icons[i], revision);
+        (void)revision;
+        ID2D1Bitmap1* bitmap = TrayIconBitmap(context, i, icons[i]);
         if (bitmap) {
             // The picture is capped near its SOURCE resolution: Windows' registry snapshots are commonly only
             // 16 or 32 pixels, and stretching a 16-pixel state icon to 42 DIP is what made the page look soft.
@@ -1764,6 +1764,43 @@ void TextRenderer::DrawTrayPage(ID2D1DeviceContext2* context, const RoundedBox& 
                     context->FillRoundedRectangle(&shape, mark);
                 }
             }
+        }
+    }
+
+    // --- the hover tooltip: current live registration text, not the stable cell label --------------------
+    if (bodyFormat_ && icons && hoveredIndex >= 0 && hoveredIndex < layout.count &&
+        icons[hoveredIndex].tooltip[0] != L'\0') {
+        const island::RectF& cell = layout.cells[hoveredIndex];
+        int lines = 1;
+        for (const wchar_t* p = icons[hoveredIndex].tooltip; *p; ++p) {
+            if (*p == L'\n' && lines < 4) ++lines;
+        }
+        const float pad = 10.0f;
+        const float cardWidth = card.rect.right - card.rect.left;
+        const float tooltipWidth = std::min(280.0f, cardWidth - pad * 2.0f);
+        const float tooltipHeight = 18.0f + static_cast<float>(lines) * 15.0f;
+        float left = (cell.left + cell.right) * 0.5f - tooltipWidth * 0.5f;
+        left = std::max(card.rect.left + pad, std::min(left, card.rect.right - pad - tooltipWidth));
+        float top = cell.top - tooltipHeight - 8.0f;
+        if (top < card.rect.top + pad) top = cell.bottom + 8.0f;
+        if (top + tooltipHeight > card.rect.bottom - pad) top = card.rect.bottom - pad - tooltipHeight;
+
+        const D2D1_ROUNDED_RECT surface = {
+            D2D1::RectF(left, top, left + tooltipWidth, top + tooltipHeight), 9.0f, 9.0f};
+        if (ID2D1SolidColorBrush* fill =
+                BrushFor(context, D2D1::ColorF(0.075f, 0.08f, 0.10f, 0.94f * opacity))) {
+            context->FillRoundedRectangle(&surface, fill);
+        }
+        if (ID2D1SolidColorBrush* edge =
+                BrushFor(context, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.18f * opacity))) {
+            context->DrawRoundedRectangle(&surface, edge, 1.0f);
+        }
+        if (ID2D1SolidColorBrush* ink =
+                BrushFor(context, D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.94f * opacity))) {
+            DrawTextIn(context, bodyFormat_, icons[hoveredIndex].tooltip,
+                       island::RectF{left + 9.0f, top + 5.0f, left + tooltipWidth - 9.0f,
+                                     top + tooltipHeight - 5.0f},
+                       ink, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         }
     }
 }

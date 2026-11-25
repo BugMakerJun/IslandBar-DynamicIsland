@@ -82,6 +82,15 @@ int PngSide(const std::vector<std::uint8_t>& png) {
     return width < height ? width : height;
 }
 
+uint64_t PngHash(const std::vector<std::uint8_t>& png) {
+    uint64_t hash = 14695981039346656037ull;
+    for (uint8_t byte : png) {
+        hash ^= byte;
+        hash *= 1099511628211ull;
+    }
+    return hash;
+}
+
 bool UseExecutableIcon(const std::wstring& exePath) {
     if (exePath.empty()) return false;
     const std::wstring leaf = FileName(exePath);
@@ -224,9 +233,21 @@ int TrayIcons::Refresh(bool upgradeLowResolutionIcons) {
             if (cached == upgradedIcons_.end()) {
                 std::vector<std::uint8_t> upgraded;
                 StartAppIconPng(entry.exePath.c_str(), 64, &upgraded);
-                cached = upgradedIcons_.emplace(cacheKey, std::move(upgraded)).first;
+                if (upgradedIcons_.size() >= kUpgradedIconCapacity) {
+                    auto oldest = upgradedIcons_.begin();
+                    for (auto candidate = upgradedIcons_.begin(); candidate != upgradedIcons_.end(); ++candidate) {
+                        if (candidate->second.lastUsedTick < oldest->second.lastUsedTick) oldest = candidate;
+                    }
+                    upgradedIcons_.erase(oldest);
+                }
+                UpgradedIcon cachedUpgrade;
+                cachedUpgrade.png = std::move(upgraded);
+                cachedUpgrade.lastUsedTick = GetTickCount64();
+                cached = upgradedIcons_.emplace(std::move(cacheKey), std::move(cachedUpgrade)).first;
+            } else {
+                cached->second.lastUsedTick = GetTickCount64();
             }
-            if (!cached->second.empty()) entry.png = cached->second;
+            if (!cached->second.png.empty()) entry.png = cached->second.png;
         }
         // Read here, once: it is the label the card shows AND the second chance at matching a registration
         // whose executable name is not the one the registry stored (see TrayLedger::FindByTip).
@@ -351,12 +372,16 @@ int TrayIcons::Refresh(bool upgradeLowResolutionIcons) {
         // The name: the registry's InitialTooltip first, then the tip the application sent the shell, then the
         // file name -- see TrayIcon for why the stable one goes first. Only the first line: a cell is one line
         // wide, and an application's tip is live status text rather than a label.
+        const std::wstring currentTooltip = live ? registration.tip : std::wstring();
         std::wstring name = entry.tooltip;
-        if (name.empty() && live) name = registration.tip;
+        if (name.empty() && !currentTooltip.empty()) name = FirstLine(currentTooltip);
         if (name.empty()) name = leaf;
         name = FirstLine(name);
         wcsncpy_s(entry.icon.name, 96, name.c_str(), _TRUNCATE);
+        wcsncpy_s(entry.icon.tooltip, 256,
+                  currentTooltip.empty() ? entry.icon.name : currentTooltip.c_str(), _TRUNCATE);
         entry.icon.pngSize = entry.png.size();
+        entry.icon.pngHash = PngHash(entry.png);
         entry.writtenAt = KeyLastWriteTime(subKeyName);
 
         fresh.push_back(std::move(entry));
@@ -378,6 +403,8 @@ int TrayIcons::Refresh(bool upgradeLowResolutionIcons) {
     if (!changed) {
         for (size_t i = 0; i < fresh.size(); ++i) {
             if (std::wcscmp(fresh[i].icon.name, entries_[i].icon.name) != 0 ||
+                std::wcscmp(fresh[i].icon.tooltip, entries_[i].icon.tooltip) != 0 ||
+                fresh[i].icon.pngHash != entries_[i].icon.pngHash ||
                 fresh[i].png.size() != entries_[i].png.size() ||
                 std::memcmp(fresh[i].png.data(), entries_[i].png.data(), fresh[i].png.size()) != 0) {
                 changed = true;   // a different icon, or the same application's icon redrawn

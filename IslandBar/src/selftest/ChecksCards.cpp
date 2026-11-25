@@ -5347,8 +5347,8 @@ void TestMusicCardLayout() {
                 // Every result has a sentence, because these are what the log shows a user who asks why a
                 // press did not work. A case the switch forgot would print "?".
                 const TrayPressResult all[] = {
-                    TrayPressResult::Pressed, TrayPressResult::NoEntry, TrayPressResult::NoWindow,
-                    TrayPressResult::Refused,
+                    TrayPressResult::Pressed, TrayPressResult::SentUnconfirmed, TrayPressResult::NoEntry,
+                    TrayPressResult::NoWindow, TrayPressResult::Refused,
                 };
                 bool named = true;
                 for (TrayPressResult result : all) {
@@ -5364,7 +5364,8 @@ void TestMusicCardLayout() {
                     ShouldTryTrayUiaFallback(TrayPressResult::NoEntry, false, true) &&
                     !ShouldTryTrayUiaFallback(TrayPressResult::NoEntry, false, false) &&
                     !ShouldTryTrayUiaFallback(TrayPressResult::NoEntry, true, true) &&
-                    !ShouldTryTrayUiaFallback(TrayPressResult::Pressed, false, true);
+                    !ShouldTryTrayUiaFallback(TrayPressResult::Pressed, false, true) &&
+                    !ShouldTryTrayUiaFallback(TrayPressResult::SentUnconfirmed, false, true);
                 wchar_t fallbackDetail[256] = {};
                 std::swprintf(fallbackDetail, 256,
                               L"left+missing+enabled=%d, default=%d, right=%d, pressed=%d",
