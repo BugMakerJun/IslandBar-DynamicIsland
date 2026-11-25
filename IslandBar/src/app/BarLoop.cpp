@@ -3907,8 +3907,9 @@ static void ApplyPressesAndClicks(island::BarState& bar, island::BarSystems& sys
                                     startWasShown ? L"the tiles replace the start card"
                                                   : L"the panel was closed");
                 island::LogAndPrint(
-                    "  [QuickPanel] size=480x408 tile=74x2+8 tile_total=156 slider_panel=132 "
-                    "row=54 track=32 hit=36 footer=60 wheel=tiles_only dpi=%u\n",
+                    "  [UI_LAYOUT] page=System card=880x540 tiles=2x3 "
+                    "gap_tiles_slider=16dip gap_slider_footer=16dip dpi=%u "
+                    "layout_snapshot=valid draw_hit_test=input=shared\n",
                     systems.window.Monitor().dpi);
             } else {
                 island::LogAndPrint("  system panel: closed\n");

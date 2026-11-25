@@ -1178,24 +1178,37 @@ inline int StartSearchResultAt(const StartSearchListLayout& layout, float x, flo
 
 // One pinned application's cell, by index. Rows are read left to right, top to bottom, which is also the
 // order they were pinned in.
-inline RectF StartPinCellFor(const StartPageLayout& layout, int index) {
+inline float StartGridTopFor(const StartPageLayout& layout, int itemCount) {
+    if (!layout.valid || itemCount <= 0) return layout.grid.top;
+    int rows = (itemCount + kStartColumns - 1) / kStartColumns;
+    if (rows > kStartRows) rows = kStartRows;
+    const float used = static_cast<float>(rows) * kStartCellHeight +
+                       static_cast<float>(rows - 1) * kStartRowGap;
+    const float spare = (layout.grid.bottom - layout.grid.top) - used;
+    return layout.grid.top + (spare > 0.0f ? spare * 0.5f : 0.0f);
+}
+
+inline RectF StartPinCellFor(const StartPageLayout& layout, int index,
+                             int itemCount = kStartColumns * kStartRows) {
     RectF cell;
     if (!layout.valid || index < 0) return cell;
     const int column = index % kStartColumns;
     const int row = index / kStartColumns;
     cell.left = layout.grid.left + static_cast<float>(column) * (kStartCellWidth + kStartColumnGap);
-    cell.top = layout.grid.top + static_cast<float>(row) * (kStartCellHeight + kStartRowGap);
+    cell.top = StartGridTopFor(layout, itemCount) +
+               static_cast<float>(row) * (kStartCellHeight + kStartRowGap);
     cell.right = cell.left + kStartCellWidth;
     cell.bottom = cell.top + kStartCellHeight;
     return cell;
 }
 
-// The 44 DIP icon inside a cell: centred horizontally, against the cell's top. The name is under it, so
+// The 58 DIP icon inside a cell: centred horizontally, against the cell's top. The name is under it, so
 // the two are separate rectangles rather than one tile: the drawing rounds the icon (radius 10) and centres
 // the caption in the room that is left, and neither has to guess where the other is.
-inline RectF StartPinIconFor(const StartPageLayout& layout, int index) {
+inline RectF StartPinIconFor(const StartPageLayout& layout, int index,
+                             int itemCount = kStartColumns * kStartRows) {
     RectF icon;
-    const RectF cell = StartPinCellFor(layout, index);
+    const RectF cell = StartPinCellFor(layout, index, itemCount);
     if (cell.right <= cell.left) return icon;
     icon.left = cell.left + (kStartCellWidth - kStartAppIconDip) * 0.5f;
     icon.top = cell.top;
@@ -1206,10 +1219,11 @@ inline RectF StartPinIconFor(const StartPageLayout& layout, int index) {
 
 // The application's name under its icon, INSIDE the cell: the caption is part of the target, so a press on
 // the word is a press on the application (see StartPinCellAt, which divides the whole cell area).
-inline RectF StartPinLabelFor(const StartPageLayout& layout, int index) {
+inline RectF StartPinLabelFor(const StartPageLayout& layout, int index,
+                              int itemCount = kStartColumns * kStartRows) {
     RectF label;
-    const RectF cell = StartPinCellFor(layout, index);
-    const RectF icon = StartPinIconFor(layout, index);
+    const RectF cell = StartPinCellFor(layout, index, itemCount);
+    const RectF icon = StartPinIconFor(layout, index, itemCount);
     if (cell.right <= cell.left) return label;
     label.left = cell.left + 2.0f;
     label.right = cell.right - 2.0f;
@@ -1252,8 +1266,10 @@ inline int StartPinCellAt(const StartPageLayout& layout, int count, float x, flo
     // meant to fill by hand. Dividing the offset by the pitch makes the whole area belong to some tile.
     const float pitchX = kStartCellWidth + kStartColumnGap;
     const float pitchY = kStartCellHeight + kStartRowGap;
+    const float gridTop = StartGridTopFor(layout, count);
+    if (x < layout.grid.left || y < gridTop) return -1;
     const int column = static_cast<int>((x - layout.grid.left) / pitchX);
-    const int row = static_cast<int>((y - layout.grid.top) / pitchY);
+    const int row = static_cast<int>((y - gridTop) / pitchY);
     if (column < 0 || column >= kStartColumns || row < 0 || row >= kStartRows) return -1;
     const int index = row * kStartColumns + column;
     const int capacity = StartPinCapacity();
@@ -1267,10 +1283,16 @@ inline int StartPinCellAt(const StartPageLayout& layout, int count, float x, flo
 inline int StartPickerCellAt(const RoundedBox& card, int scrollRow, int count, float x, float y) {
     const StartPageLayout layout = StartPageFor(card);
     if (!layout.valid || !StartRectHasPoint(layout.grid, x, y)) return -1;
+    const int first = scrollRow * kStartColumns;
+    const int remaining = count > first ? count - first : 0;
+    const int visibleCount = remaining < StartPinCapacity() ? remaining : StartPinCapacity();
+    if (visibleCount <= 0) return -1;
+    const float gridTop = StartGridTopFor(layout, visibleCount);
     const float pitchX = kStartCellWidth + kStartColumnGap;
     const float pitchY = kStartCellHeight + kStartRowGap;
+    if (x < layout.grid.left || y < gridTop) return -1;
     const int column = static_cast<int>((x - layout.grid.left) / pitchX);
-    const int row = static_cast<int>((y - layout.grid.top) / pitchY);
+    const int row = static_cast<int>((y - gridTop) / pitchY);
     if (column < 0 || column >= kStartColumns || row < 0 || row >= kStartRows) return -1;
     const int index = (scrollRow + row) * kStartColumns + column;
     return index < count ? index : -1;
@@ -1369,7 +1391,7 @@ inline StartPageHit StartPageHitFor(const RoundedBox& card, int page, int pinCou
         // The add tile is the cell AFTER the last pin, and it is a real one: pressing it opens the picker,
         // the same as pressing the empty part of the grid. It only exists while there is room for it.
         if (pinCount < StartPinCapacity()) {
-            const RectF addCell = StartPinCellFor(layout, pinCount);
+            const RectF addCell = StartPinCellFor(layout, pinCount, pinCount + 1);
             if (StartRectHasPoint(addCell, x, y)) {
                 hit.target = StartPageTarget::AddTile;
                 return hit;
@@ -1412,6 +1434,9 @@ inline StartPageHit StartPageHitFor(const RoundedBox& card, int page, int pinCou
 // for. The compact card is 520 x 500 (Motion.h), and the bands below add up to 500.
 inline constexpr float kSystemTileHeightDip = 96.0f;
 inline constexpr float kSystemTileGapDip = 12.0f;
+inline constexpr float kSystemTileSliderGapDip = 16.0f;
+inline constexpr float kSystemSliderPanelHeightDip = 184.0f;
+inline constexpr float kSystemSliderFooterGapDip = 16.0f;
 
 inline constexpr int kSystemTileColumns = 3;
 inline constexpr int kSystemTileRows = 2;
@@ -1479,9 +1504,9 @@ struct SystemPanelLayout {
 //
 //     padding top                                    24
 //     2 rows of 96 tiles + one 12 gap               204
-//     gap to the inset panel                          40
-//     inset with two 64 DIP rows + 10 gap           164
-//     gap to the footer                               12
+//     gap to the inset panel                          16
+//     inset with two 64 DIP rows + 10 gap           184
+//     gap to the footer                               16
 //     footer (three buttons, inset plate)             72
 //     padding bottom                                  24
 //                                                   ----
@@ -1607,17 +1632,16 @@ inline SystemPanelLayout SystemPanelFor(const RoundedBox& box, int tileCount, in
     const float rowGap = 10.0f;
     const float panelInset = 24.0f;
     const float rowHeight = headerHeight + headerGap + trackRowHeight;
-    constexpr float kSliderPanelHeight = 164.0f;
     if (sliderCount > 0) {
         layout.sliderPanel.left = left;
         layout.sliderPanel.right = right;
-        layout.sliderPanel.bottom = layout.footer.top - 12.0f;
-        layout.sliderPanel.top = layout.sliderPanel.bottom - kSliderPanelHeight;
+        layout.sliderPanel.bottom = layout.footer.top - kSystemSliderFooterGapDip;
+        layout.sliderPanel.top = layout.sliderPanel.bottom - kSystemSliderPanelHeightDip;
 
         const float rowsHeight = static_cast<float>(sliderCount) * rowHeight +
                                  static_cast<float>(sliderCount - 1) * rowGap;
         const float rowsTop =
-            layout.sliderPanel.top + (kSliderPanelHeight - rowsHeight) * 0.5f;
+            layout.sliderPanel.top + (kSystemSliderPanelHeightDip - rowsHeight) * 0.5f;
 
         for (int i = 0; i < sliderCount; ++i) {
             const float rowTop = rowsTop + static_cast<float>(i) * (rowHeight + rowGap);

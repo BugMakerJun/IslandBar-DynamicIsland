@@ -1450,11 +1450,10 @@ void TextRenderer::DrawTrayPage(ID2D1DeviceContext2* context, const RoundedBox& 
     constexpr float kGreenR = 0.2039f;
     constexpr float kGreenG = 0.8275f;
     constexpr float kGreenB = 0.6000f;
-    // The reference's accent, #0078d4. Marked here rather than taken from the theme because the page's
-    // interactive highlight language uses the same blue on every theme.
-    constexpr float kAccentR = 0.0f;
-    constexpr float kAccentG = 0.4706f;
-    constexpr float kAccentB = 0.8314f;
+    // The page's interactive highlight takes the one Niri accent. Keeping it here as a local value means
+    // every hover, footer mark and edge on the page still comes from one source.
+    const island::Theme& theme = island::CurrentTheme();
+    const D2D1_COLOR_F accent = theme.accent;
 
     if (ID2D1SolidColorBrush* dot =
             BrushFor(context, D2D1::ColorF(kGreenR, kGreenG, kGreenB, opacity))) {
@@ -1515,21 +1514,13 @@ void TextRenderer::DrawTrayPage(ID2D1DeviceContext2* context, const RoundedBox& 
     }
 
     // --- the grid ---------------------------------------------------------------------------------
-    const island::Theme& theme = island::CurrentTheme();
     for (int i = 0; i < layout.count && icons; ++i) {
         const RectF& cell = layout.cells[i];
 
-        // THE CELL IS DARKER THAN THE CARD for the PAINTED themes, not for the glass one.
-        //
-        // The shell snapshots these icons onto a near-black background, so a LIGHTER tile shows every one of
-        // them as a black square sitting inside it -- which is what "看着不协调" was, past the empty card.
-        // A dark tile makes the pictures' own backgrounds disappear into it, and the hairline plus the hover
-        // wash are what still say "this is a control". (The panel's own tiles stay light: nothing is drawn
-        // inside them but a glyph we choose.)
-        //
-        // The glass card is the exception: its surface IS the card's own material, and a 0.28 black fill on
-        // top of it read as grey squares floating in the glass. The tile there is the same 2.5 DIP rim band
-        // as the island's edge, with a white hover -- the card shows through, the icon sits on the glass.
+        // The cell is a quiet pale plate rather than the old 25% black sheet. The icons remain the
+        // strongest marks on the page; the plate only gives transparent artwork a stable edge and gives
+        // hover a place to become visible. The lens fallback keeps its rim-band treatment for self-test
+        // material variants.
         //
         // RADIUS 14, the panel's tiles' own 16 less two: an icon cell is smaller than a panel tile and the
         // same 16 would eat a sixth of its edge.
@@ -1547,15 +1538,16 @@ void TextRenderer::DrawTrayPage(ID2D1DeviceContext2* context, const RoundedBox& 
         } else {
             const bool hot = i == hoveredIndex;
             const D2D1_COLOR_F base = hot
-                                          ? D2D1::ColorF(kAccentR, kAccentG, kAccentB,
-                                                         0.16f * opacity)
-                                          : D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.25f * opacity);
+                                          ? D2D1::ColorF(0.84f, 0.79f, 0.94f,
+                                                         0.92f * opacity)
+                                          : D2D1::ColorF(0.91f, 0.90f, 0.96f,
+                                                         0.82f * opacity);
             if (ID2D1SolidColorBrush* tileFill = BrushFor(context, base)) {
                 context->FillRoundedRectangle(&tile, tileFill);
             }
             const D2D1_COLOR_F tileEdgeColour =
-                hot ? D2D1::ColorF(kAccentR, kAccentG, kAccentB, 0.58f * opacity)
-                    : island::CardInk(0.07f * opacity);
+                hot ? D2D1::ColorF(accent.r, accent.g, accent.b, 0.46f * opacity)
+                    : island::CardInk(0.075f * opacity);
             if (ID2D1SolidColorBrush* tileEdge = BrushFor(context, tileEdgeColour)) {
                 context->DrawRoundedRectangle(&tile, tileEdge, 1.0f);
             }
@@ -1599,10 +1591,10 @@ void TextRenderer::DrawTrayPage(ID2D1DeviceContext2* context, const RoundedBox& 
                         layout.resources.bottom),
             kWellRadius, kWellRadius};
         if (ID2D1SolidColorBrush* fill =
-                BrushFor(context, D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.20f * opacity))) {
+                BrushFor(context, D2D1::ColorF(0.94f, 0.92f, 0.98f, 0.58f * opacity))) {
             context->FillRoundedRectangle(&well, fill);
         }
-        if (ID2D1SolidColorBrush* edge = BrushFor(context, island::CardInk(0.07f * opacity))) {
+        if (ID2D1SolidColorBrush* edge = BrushFor(context, island::CardInk(0.065f * opacity))) {
             context->DrawRoundedRectangle(&well, edge, 1.0f);
         }
 
@@ -1752,7 +1744,7 @@ void TextRenderer::DrawTrayPage(ID2D1DeviceContext2* context, const RoundedBox& 
             const float centreY =
                 (layout.footerGear.top + layout.footerGear.bottom) * 0.5f;
             if (ID2D1SolidColorBrush* mark = BrushFor(
-                    context, D2D1::ColorF(kAccentR, kAccentG, kAccentB,
+                    context, D2D1::ColorF(accent.r, accent.g, accent.b,
                                           (hot ? 0.96f : 0.72f) * opacity))) {
                 constexpr float kBarWidth = 3.0f;
                 constexpr float heights[3] = {7.0f, 13.0f, 10.0f};
@@ -2783,12 +2775,11 @@ void TextRenderer::DrawCommandCenter(ID2D1DeviceContext2* context, const Rounded
     const CommandCenterLayout layout =
         CommandCenterFor(card, text.filteredCount, text.scrollFirst);
     const D2D1_COLOR_F white = D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.98f * opacity);
-    const D2D1_COLOR_F inkColour = D2D1::ColorF(45.0f / 255.0f, 38.0f / 255.0f,
-                                                75.0f / 255.0f, 0.97f * opacity);
-    const D2D1_COLOR_F mutedColour = D2D1::ColorF(111.0f / 255.0f, 105.0f / 255.0f,
-                                                  130.0f / 255.0f, 0.88f * opacity);
-    const D2D1_COLOR_F accentColour = D2D1::ColorF(107.0f / 255.0f, 82.0f / 255.0f,
-                                                   174.0f / 255.0f, 0.98f * opacity);
+    const D2D1_COLOR_F inkColour = island::CardInk(0.97f * opacity);
+    const D2D1_COLOR_F mutedColour = island::CardInk(0.62f * opacity);
+    const D2D1_COLOR_F themeAccent = island::CurrentTheme().accent;
+    const D2D1_COLOR_F accentColour =
+        D2D1::ColorF(themeAccent.r, themeAccent.g, themeAccent.b, 0.98f * opacity);
     const D2D1_COLOR_F cardBorder = D2D1::ColorF(235.0f / 255.0f, 230.0f / 255.0f,
                                                   245.0f / 255.0f, 0.70f * opacity);
     const D2D1_COLOR_F mediaBorder = D2D1::ColorF(233.0f / 255.0f, 213.0f / 255.0f,
@@ -3395,9 +3386,29 @@ void TextRenderer::DrawCommandCenter(ID2D1DeviceContext2* context, const Rounded
                        DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         }
     } else {
-        DrawTextIn(context, niriMetricFormat_, L"暂无通知",
-                   {layout.notifications.left + 14.0f, layout.notifications.top + 58.0f,
-                    layout.notifications.right - 14.0f, layout.notifications.bottom - 58.0f},
+        const float centreX =
+            (layout.notifications.left + layout.notifications.right) * 0.5f;
+        const float centreY =
+            (layout.notifications.top + layout.notifications.bottom) * 0.5f - 18.0f;
+        const RectF emptyPlate = {centreX - 24.0f, centreY - 32.0f, centreX + 24.0f,
+                                  centreY + 16.0f};
+        FillRounded(context, emptyPlate, 20.0f,
+                    D2D1::ColorF(0.96f, 0.94f, 0.99f, 0.78f * opacity));
+        strokeRounded(emptyPlate, 20.0f, cardBorder, 1.0f);
+        if (gearGlyphFormat_) {
+            const wchar_t bell[] = {L'\uE7ED', L'\0'};   // Ringer, Segoe Fluent Icons
+            const D2D1_RECT_F bellArea =
+                D2D1::RectF(emptyPlate.left, emptyPlate.top, emptyPlate.right, emptyPlate.bottom);
+            context->DrawTextW(bell, 1, gearGlyphFormat_, bellArea, accent,
+                               D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        }
+        DrawTextIn(context, niriNotificationTitleFormat_, L"暂无通知",
+                   {layout.notifications.left + 14.0f, centreY + 26.0f,
+                    layout.notifications.right - 14.0f, centreY + 50.0f},
+                   ink, DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        DrawTextIn(context, niriNotificationMetaFormat_, L"新消息会显示在这里",
+                   {layout.notifications.left + 14.0f, centreY + 50.0f,
+                    layout.notifications.right - 14.0f, centreY + 70.0f},
                    muted ? muted : ink, DWRITE_TEXT_ALIGNMENT_CENTER,
                    DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     }
@@ -5730,10 +5741,18 @@ void TextRenderer::DrawSystemPanel(ID2D1DeviceContext2* context, const RoundedBo
         }
     }
 
-    // THE TILE'S BLUE, from the reference: #0078d4 at the top left to #0262b0 at the bottom right. Its
-    // own brush rather than a solid one because the diagonal is most of what makes the tile read as lit.
-    const D2D1_COLOR_F onFillTop = D2D1::ColorF(0.086f, 0.537f, 0.910f, 0.96f * opacity);
-    const D2D1_COLOR_F onFillBottom = D2D1::ColorF(0.0078f, 0.3843f, 0.6902f, 0.96f * opacity);
+    // The ON tile takes Niri's accent instead of the shell's saturated blue. The gradient remains
+    // because it gives the surface the same lit direction as the rest of the card, but its lightness
+    // and hue now come from the one theme the product actually has.
+    const D2D1_COLOR_F onThemeAccent = island::CurrentTheme().accent;
+    const auto lift = [](float channel) { return channel + (1.0f - channel) * 0.18f; };
+    const auto deepen = [](float channel) { return channel * 0.78f; };
+    const D2D1_COLOR_F onFillTop =
+        D2D1::ColorF(lift(onThemeAccent.r), lift(onThemeAccent.g), lift(onThemeAccent.b),
+                     0.88f * opacity);
+    const D2D1_COLOR_F onFillBottom =
+        D2D1::ColorF(deepen(onThemeAccent.r), deepen(onThemeAccent.g), deepen(onThemeAccent.b),
+                     0.92f * opacity);
     const auto fillOnTile = [&](const D2D1_ROUNDED_RECT& rounded, float amount) {
         if (amount <= 0.001f) return;
         D2D1_COLOR_F top = onFillTop;
@@ -5778,7 +5797,7 @@ void TextRenderer::DrawSystemPanel(ID2D1DeviceContext2* context, const RoundedBo
             D2D1::RectF(rect.left, rect.top, rect.right, rect.bottom), kTileRadius, kTileRadius};
 
         // ON and OFF are different FILLS, which is the whole point of a tile as against a row of text:
-        // the state is visible before the label is read. ON takes the reference's blue gradient; OFF is
+        // the state is visible before the label is read. ON takes Niri's low-saturation accent; OFF is
         // the card's ink at 6%, with a hairline so it still reads as a surface.
         if (onAmount < 0.999f) {
             if (ID2D1SolidColorBrush* fill =
@@ -5793,8 +5812,7 @@ void TextRenderer::DrawSystemPanel(ID2D1DeviceContext2* context, const RoundedBo
         if (onAmount > 0.001f) {
             fillOnTile(rounded, onAmount);
             if (ID2D1SolidColorBrush* edge =
-                    BrushFor(context, D2D1::ColorF(
-                                           0.49f, 0.83f, 0.99f, 0.32f * onAmount * opacity))) {
+                    BrushFor(context, island::ThemeHighlight(0.24f * onAmount * opacity))) {
                 context->DrawRoundedRectangle(&rounded, edge, 1.0f);
             }
         }
@@ -6893,6 +6911,9 @@ void TextRenderer::DrawStartPage(ID2D1DeviceContext2* context, const RoundedBox&
     } else if (text.page == 1) {
         // --- THE ALL-APPLICATIONS / SEARCH GRID: the same six-column cells the pins use ---------------
         const int columns = island::kStartColumns;
+        const int visibleCount =
+            std::min(island::StartPinCapacity(),
+                     std::max(0, text.listCount - text.pickerScrollRow * columns));
         if (text.listCount == 0) {
             drawText(startRowFormat_, L"\u6CA1\u6709\u53EF\u663E\u793A\u7684\u5E94\u7528",
                      {layout.grid.left, layout.grid.top, layout.grid.right,
@@ -6904,9 +6925,9 @@ void TextRenderer::DrawStartPage(ID2D1DeviceContext2* context, const RoundedBox&
             const int shownIndex = text.pickerScrollRow * columns + visible;
             if (shownIndex < 0 || shownIndex >= text.listCount) break;
             const int index = text.listOrder ? text.listOrder[shownIndex] : shownIndex;
-            const RectF cell = island::StartPinCellFor(layout, visible);
-            const RectF iconBox = island::StartPinIconFor(layout, visible);
-            const RectF labelBox = island::StartPinLabelFor(layout, visible);
+            const RectF cell = island::StartPinCellFor(layout, visible, visibleCount);
+            const RectF iconBox = island::StartPinIconFor(layout, visible, visibleCount);
+            const RectF labelBox = island::StartPinLabelFor(layout, visible, visibleCount);
             const float wash = washAt(text.rowWashes, shownIndex, text.hoveredPickerRow);
             const uint8_t* png = text.listIcons ? text.listIcons[index] : nullptr;
             const size_t pngSize = text.listIconSizes ? text.listIconSizes[index] : 0;
@@ -6934,10 +6955,11 @@ void TextRenderer::DrawStartPage(ID2D1DeviceContext2* context, const RoundedBox&
         // --- the pins, and the add tile at their end -------------------------------------------------
         const int capacity = island::StartPinCapacity();
         const int shown = text.pinCount < capacity ? text.pinCount : capacity;
+        const int visibleCount = shown + (shown < capacity ? 1 : 0);
         for (int i = 0; i < shown; ++i) {
-            const RectF cell = island::StartPinCellFor(layout, i);
-            const RectF iconBox = island::StartPinIconFor(layout, i);
-            const RectF labelBox = island::StartPinLabelFor(layout, i);
+            const RectF cell = island::StartPinCellFor(layout, i, visibleCount);
+            const RectF iconBox = island::StartPinIconFor(layout, i, visibleCount);
+            const RectF labelBox = island::StartPinLabelFor(layout, i, visibleCount);
             const float wash = washAt(text.pinWashes, i, text.hoveredPin);
             const uint8_t* png =
                 (text.pinIcons && i < static_cast<int>(sizeof(startPinBitmaps_) /
@@ -6953,9 +6975,9 @@ void TextRenderer::DrawStartPage(ID2D1DeviceContext2* context, const RoundedBox&
         // is what makes "the upper area is yours to fill" visible without pressing the blank area first. It
         // is a real target (StartPageTarget::AddTile) and opens the same picker the empty grid does.
         if (shown < capacity) {
-            const RectF cell = island::StartPinCellFor(layout, shown);
-            const RectF iconBox = island::StartPinIconFor(layout, shown);
-            const RectF labelBox = island::StartPinLabelFor(layout, shown);
+            const RectF cell = island::StartPinCellFor(layout, shown, visibleCount);
+            const RectF iconBox = island::StartPinIconFor(layout, shown, visibleCount);
+            const RectF labelBox = island::StartPinLabelFor(layout, shown, visibleCount);
             const float wash = text.addTileHovered ? 1.0f : 0.0f;
             if (wash > 0.01f) {
                 fillRect(cell, 16.0f, CardInk(0.055f * wash * opacity));

@@ -4856,6 +4856,18 @@ void TestMusicCardLayout() {
                 }
                 Check(cellsInside,
                       L"every cell, icon and name of a full grid is inside the pins area", startDetail);
+                const RectF sixFirst = StartPinCellFor(startLayout, 0, 6);
+                const RectF sixLast = StartPinCellFor(startLayout, 5, 6);
+                std::swprintf(startDetail, 384,
+                              L"six-item grid y[%.1f,%.1f] in area y[%.1f,%.1f]; "
+                              L"top spare %.1f, bottom spare %.1f",
+                              sixFirst.top, sixLast.bottom, startLayout.grid.top,
+                              startLayout.grid.bottom, sixFirst.top - startLayout.grid.top,
+                              startLayout.grid.bottom - sixLast.bottom);
+                Check(Nearly(sixFirst.top - startLayout.grid.top,
+                             startLayout.grid.bottom - sixLast.bottom, 0.01f),
+                      L"a short Start grid is vertically balanced instead of pinned to the top",
+                      startDetail);
                 Check(StartPinCapacity() >= 12,
                       L"the grid holds enough tiles to be worth filling by hand", startDetail);
 
@@ -4943,9 +4955,11 @@ void TestMusicCardLayout() {
                 // THE HIT TESTS, at the points a user would press -- and, for the two decorations, at the
                 // points a user would press and get NOTHING, which is the rule for a mark that is drawn but
                 // does not answer.
-                const float firstX = (firstCell.left + firstCell.right) * 0.5f;
-                const float firstY = (firstCell.top + firstCell.bottom) * 0.5f;
-                const RectF third = StartPinCellFor(startLayout, 3);
+                const RectF sixFirstCell = StartPinCellFor(startLayout, 0, 6);
+                const RectF sixThirdCell = StartPinCellFor(startLayout, 3, 6);
+                const float firstX = (sixFirstCell.left + sixFirstCell.right) * 0.5f;
+                const float firstY = (sixFirstCell.top + sixFirstCell.bottom) * 0.5f;
+                const RectF third = sixThirdCell;
                 const float pinCentreY = (third.top + third.bottom) * 0.5f;
                 const float tabX = (startLayout.pinnedTab.left + startLayout.pinnedTab.right) * 0.5f;
                 const float tabY = (startLayout.pinnedTab.top + startLayout.pinnedTab.bottom) * 0.5f;
@@ -4979,8 +4993,9 @@ void TestMusicCardLayout() {
                 const StartPageHit firstHit = hitAt(0, 6, firstX, firstY);
                 Check(firstHit.target == StartPageTarget::Pin && firstHit.index == 0,
                       L"the first tile is the first pin, and it answers its own centre", startDetail);
-                const StartPageHit addHit = hitAt(0, 3, (third.left + third.right) * 0.5f,
-                                                 (third.top + third.bottom) * 0.5f);
+                const RectF addCell = StartPinCellFor(startLayout, 3, 4);
+                const StartPageHit addHit = hitAt(0, 3, (addCell.left + addCell.right) * 0.5f,
+                                                 (addCell.top + addCell.bottom) * 0.5f);
                 const StartPageHit emptyHit =
                     hitAt(0, 3, emptyAfterThreeX, emptyAfterThreeY);
                 Check(addHit.target == StartPageTarget::AddTile &&
@@ -5644,6 +5659,11 @@ void TestMusicCardLayout() {
                           two.sliderPanel.top >= gridCard.rect.top &&
                           two.sliderPanel.bottom <= gridCard.rect.bottom,
                       L"the inset panel is inside the card", dt6);
+                Check(Nearly(two.sliderPanel.top - two.tileArea.bottom,
+                             kSystemTileSliderGapDip, 0.01f) &&
+                          Nearly(two.footer.top - two.sliderPanel.bottom,
+                                 kSystemSliderFooterGapDip, 0.01f),
+                      L"the system page keeps 16 DIP above and below its inset panel", dt6);
                 Check(two.sliderPanel.top >= two.tiles[5].bottom &&
                           two.sliders[0].top >= two.sliderPanel.top &&
                           two.sliders[1].bottom <= two.sliderPanel.bottom,
@@ -5712,7 +5732,8 @@ void TestMusicCardLayout() {
                           two.gearButton.right == two.footerButtons[2].right &&
                           two.gearButton.top == two.footerButtons[2].top,
                       L"the settings button is the footer's third round button", dt6);
-                Check(Nearly(two.sliderPanel.bottom - two.sliderPanel.top, 164.0f, 0.01f) &&
+                Check(Nearly(two.sliderPanel.bottom - two.sliderPanel.top,
+                             kSystemSliderPanelHeightDip, 0.01f) &&
                           Nearly(two.sliders[0].bottom - two.sliders[0].top, 38.0f, 0.01f) &&
                           Nearly(two.sliderHitRows[0].bottom - two.sliderHitRows[0].top, 42.0f,
                                  0.01f) &&
